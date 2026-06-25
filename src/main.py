@@ -592,6 +592,84 @@ def cmd_status(args: argparse.Namespace) -> None:
     console.print(table)
 
 
+def cmd_init(args: argparse.Namespace) -> None:
+    """init 命令：引导式创建配置文件。"""
+    console.rule("[bold green]🚀 Rundown Init[/]")
+    console.print("首次使用？让我帮你创建配置文件。\n")
+
+    # 1. 选择 Provider
+    provider = _ask("运动平台 (garmin/coros)", "garmin")
+    if provider not in ("garmin", "coros"):
+        console.print("[red]无效的平台，请输入 garmin 或 coros[/]")
+        return
+
+    # 2. 账号
+    if provider == "coros":
+        hint = "邮箱或手机号"
+    else:
+        hint = "Garmin Connect 邮箱"
+    account = _ask(f"账号 ({hint})")
+    if not account:
+        console.print("[red]账号不能为空[/]")
+        return
+
+    # 3. 密码
+    password = _ask("密码")
+    if not password:
+        console.print("[red]密码不能为空[/]")
+        return
+
+    # 4. 存储位置
+    console.print("\n[dim]数据存储位置（回车使用默认）[/]")
+    location = _ask("数据库路径", "./data/rundown_data.db")
+    sync_days = _ask("默认同步天数", "30")
+
+    env_content = f"""# Rundown 配置
+RUNDOWN_PROVIDER={provider}
+RUNDOWN_ACCOUNT={account}
+RUNDOWN_PASSWORD={password}
+RUNDOWN_DB_PATH={location}
+RUNDOWN_SYNC_DAYS={sync_days}
+RUNDOWN_LOG_LEVEL=INFO
+"""
+    if provider == "garmin":
+        domain = _ask("Garmin 区域 (garmin.com/garmin.cn)", "garmin.com")
+        env_content += f"GARMIN_DOMAIN={domain}\n"
+
+    # 写入
+    env_path = Path(".env")
+    if env_path.exists():
+        overwrite = _ask(f"{env_path} 已存在，覆盖？(y/n)", "n")
+        if overwrite.lower() != "y":
+            console.print("[yellow]已取消[/]")
+            return
+
+    env_path.write_text(env_content)
+    console.print(f"\n[green]✅ 配置已写入: {env_path}[/]")
+
+    # 询问全局配置
+    make_global = _ask("同时写入全局配置 ~/.rundown/.env？(y/n)", "y")
+    if make_global.lower() == "y":
+        global_dir = Path.home() / ".rundown"
+        global_dir.mkdir(parents=True, exist_ok=True)
+        (global_dir / ".env").write_text(env_content)
+        console.print(f"[green]✅ 全局配置已写入: {global_dir / '.env'}[/]")
+
+    # 询问首次同步
+    do_sync = _ask("\n是否立即同步数据？(y/n)", "y")
+    if do_sync.lower() == "y":
+        console.print("\n[bold]开始首次同步...[/]")
+        # 构造一个简单的 args namespace
+        class SyncArgs:
+            from_date = None
+            to_date = None
+            full = False
+            days = int(sync_days) if sync_days.isdigit() else 30
+            metrics = None
+            no_memory = False
+        cmd_sync(SyncArgs())
+
+
 def cmd_setup(args: argparse.Namespace) -> None:
     """setup 命令：交互式录入个人资料、最佳成绩和目标。"""
     config, auth, fetcher, storage, memory_store, user_id = _setup()
@@ -803,6 +881,9 @@ def build_parser() -> argparse.ArgumentParser:
 
     sub = parser.add_subparsers(dest="command", help="可用命令")
 
+    # ── init ──────────────────────────────────
+    sub.add_parser("init", help="引导式创建配置文件 (.env)")
+
     # ── sync ──────────────────────────────────
     p_sync = sub.add_parser("sync", help="同步数据 + 生成记忆")
     p_sync.add_argument("--days", type=int, help="同步最近 N 天")
@@ -875,6 +956,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 COMMAND_HANDLERS = {
+    "init": cmd_init,
     "sync": cmd_sync,
     "daily": cmd_daily,
     "activities": cmd_activities,
