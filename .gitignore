@@ -1,0 +1,38 @@
+# Environment
+.env
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+*.egg
+*.pyc
+
+# Virtual environments
+.venv/
+venv/
+
+# Data (generated at runtime)
+data/
+
+# HTML output (generated at runtime)
+output/
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# MCP dev config (personal, has absolute paths)
+fastmcp.json
+
+# Garmy token dir
+.garmy/
+
+# Accidental literal tilde directory (code bug: unexpanded ~)
+~/
