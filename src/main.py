@@ -67,7 +67,7 @@ def _setup(config=None):
 
 
 def _get_user_id(auth: AuthManager) -> int:
-    """获取当前用户的 Garmin user_id (int)。
+    """获取当前用户的运动平台 user_id (int)。
 
     通过 APIClient.profile 获取真实 user_id。
     """
@@ -83,7 +83,7 @@ def _get_user_id(auth: AuthManager) -> int:
                 return user_id
     except Exception as exc:
         logger.warning("获取 user_id 失败: %s", exc)
-    raise RuntimeError("无法获取 Garmin user_id，请检查账号配置")
+    raise RuntimeError("无法获取运动平台 user_id，请检查账号配置")
 
 
 def _get_ai_insight(fm: dict[str, Any], target_date: date,
@@ -114,7 +114,7 @@ def cmd_sync(args: argparse.Namespace) -> None:
     config, auth, fetcher, storage, memory_store, user_id = _setup()
 
     console.print(Panel.fit(
-        "[bold blue]🔄 Rundown Sync[/]\n同步 Garmin 数据并生成记忆",
+        "[bold blue]🔄 Rundown Sync[/]\n同步运动数据并生成记忆",
         border_style="blue",
     ))
 
@@ -254,7 +254,7 @@ def cmd_daily(args: argparse.Namespace) -> None:
         output_dir.mkdir(parents=True, exist_ok=True)
         out = str(output_dir / f"{target}.png")
         png_path = render_daily_image(mem, output_path=out, theme=theme)
-        console.print(f"[green]🖼️  PNG 已生成 (纯 Python SVG): {png_path}[/]")
+        console.print(f"[green]🖼️  PNG 已生成: {png_path}[/]")
         return
 
     # 尝试读取已有日报
@@ -820,7 +820,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_daily.add_argument("--html", action="store_true",
                          help="输出为静态 HTML 文件 (output/YYYY-MM-DD.html)")
     p_daily.add_argument("--ai", action="store_true", help="调用 DeepSeek API 生成 AI 教练洞察")
-    p_daily.add_argument("--image", action="store_true", help="导出为 PNG 图片（需 Chrome）")
+    p_daily.add_argument("--image", action="store_true", help="导出为 PNG 图片（Playwright）")
     p_daily.add_argument("--theme", choices=["fresh", "sport", "dark"], default="sport", help="图片/HTML 主题 (默认 sport)")
     p_daily.add_argument("--no-ai", action="store_true", help="不使用任何 AI 洞察")
 

@@ -196,14 +196,15 @@ output/
 
 | 变量 | 必填 | 默认值 | 说明 |
 |------|:---:|--------|------|
-| `GARMIN_EMAIL` | ✅ | — | Garmin Connect 登录邮箱 |
-| `GARMIN_PASSWORD` | ✅ | — | Garmin Connect 登录密码 |
-| `GARMIN_DOMAIN` | — | `garmin.com` | API 域名 |
-| `GARMIN_TOKEN_DIR` | — | `~/.garmy` | Token 持久化目录 |
-| `GARMIN_DB_PATH` | — | `./data/garmin_data.db` | SQLite 数据库路径 |
-| `GARMIN_SYNC_DAYS` | — | `30` | 默认同步天数 |
-| `GARMIN_LOG_LEVEL` | — | `INFO` | 日志级别 |
-| `DEEPSEEK_API_KEY` | — | — | DeepSeek API Key（启用 --ai 功能） |
+| `RUNDOWN_EMAIL` | ✅ | — | 运动平台登录邮箱（兼容旧名 `GARMIN_EMAIL`） |
+| `RUNDOWN_PASSWORD` | ✅ | — | 运动平台登录密码（兼容旧名 `GARMIN_PASSWORD`） |
+| `RUNDOWN_PROVIDER` | — | `garmin` | 数据源: garmin / coros |
+| `RUNDOWN_DB_PATH` | — | `./data/rundown_data.db` | SQLite 数据库路径 |
+| `RUNDOWN_SYNC_DAYS` | — | `30` | 默认同步天数 |
+| `RUNDOWN_LOG_LEVEL` | — | `INFO` | 日志级别 |
+| `GARMIN_DOMAIN` | — | `garmin.com` | Garmin 专用：API 域名 |
+| `GARMIN_TOKEN_DIR` | — | `~/.garmy` | Garmin 专用：Token 目录 |
+| `DEEPSEEK_API_KEY` | — | — | DeepSeek API Key（启用 --ai） |
 
 ### `rundown mcp`
 

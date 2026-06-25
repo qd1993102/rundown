@@ -33,7 +33,7 @@ HEALTH_METRICS = [
 
 
 class Fetcher:
-    """Garmin 数据拉取器。
+    """运动数据拉取器。
 
     封装 APIClient 的 Metrics 系统，
     提供按日期/类型拉取活动和健康指标的便捷方法。

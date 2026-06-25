@@ -1,4 +1,4 @@
-"""记忆存储模块 — 在 Garmin 原始数据之上构建结构化运动知识库。
+"""记忆存储模块 — 在运动数据之上构建结构化运动知识库。
 
 核心设计：
 - 数据层 (SQLite) 存储"事实"，记忆层 (Markdown + YAML FM) 存储"认知"
@@ -291,13 +291,15 @@ class MemoryWriter:
         memory_dir: str,
         db_getter: Callable[[], Any] | None = None,
         api_client_getter: Callable[[], Any] | None = None,
+        memory_store=None,
     ):
         self._root = Path(memory_dir)
         self._db_getter = db_getter  # 延迟获取 HealthDB
         self._api_client_getter = api_client_getter  # 延迟获取 garmy.APIClient
+        self._memory_store = memory_store  # MemoryStore 引用，用于读取 profile/goals
 
     def _api(self):
-        """获取 Garmin API 客户端（用于补全活动距离）。"""
+        """获取数据平台 API 客户端（用于补全活动距离）。"""
         if self._api_client_getter is None:
             return None
         return self._api_client_getter()
@@ -327,7 +329,7 @@ class MemoryWriter:
         - 训练建议
 
         Args:
-            user_id: Garmin 用户 ID。
+            user_id: 运动平台用户 ID。
             target_date: 报告日期，默认今天。
 
         Returns:
@@ -341,7 +343,7 @@ class MemoryWriter:
 
         # 1. 查询今日活动（当天训练数据）
         activities = self._safe_get_activities(db, user_id, target_date, target_date)
-        # 2. 从 Garmin API 补全活动距离
+        # 2. 从数据平台 API 补全活动距离
         activities = self._enrich_activity_distances(activities, self._api())
         # 同时查今日的健康数据（用于步数等全天活动量）
         today_health = self._safe_get_health(db, user_id, target_date)
@@ -396,14 +398,15 @@ class MemoryWriter:
 
         # 10. AI 教练洞察
         if ai_insight is not None:
-            # 使用外部 AI（如 DeepSeek）生成的洞察
             fm["ai_insight"] = ai_insight
         else:
-            # 使用本地规则引擎生成洞察
+            profile = MemoryWriter._load_profile(self) if self._memory_store else None
+            goals = MemoryWriter._load_active_goals(self) if self._memory_store else None
             ai_insight = self._generate_ai_insight(
                 activity_summary, sleep_summary, morning_summary,
                 fm["training_load"], fm["recovery"], fm["anomalies"],
                 seven_day_metrics,
+                profile=profile, goals=goals,
             )
             fm["ai_insight"] = ai_insight
 
@@ -688,9 +691,9 @@ class MemoryWriter:
         activities: list[dict[str, Any]],
         api_client: Any | None = None,
     ) -> list[dict[str, Any]]:
-        """用 Garmin API 补全活动距离数据。
+        """用数据平台 API 补全活动距离。
 
-        对于 distance_meters 为空的活动，从 Garmin API 拉取详情。
+        对于 distance_meters 为空的活动，从数据平台 API 拉取详情。
 
         Args:
             activities: 活动列表（原地修改）。
@@ -1275,15 +1278,33 @@ class MemoryWriter:
         recovery: dict[str, Any],
         anomalies: dict[str, Any],
         seven_day: list[dict[str, Any]],
+        profile: dict[str, Any] | None = None,
+        goals: list[dict[str, Any]] | None = None,
     ) -> dict[str, Any]:
         """基于数据规则生成 AI 教练自然语言洞察。
 
-        模拟真人教练的分析思路——综合各项指标，给出整体评估和可执行建议。
-        不是简单罗列数据，而是发现数据之间的关联和趋势。
+        结合运动员画像（竞技水平、目标）给出个性化分析。
         """
         observations: list[str] = []
         recommendations: list[str] = []
         warnings: list[str] = []
+
+        # ── 运动员画像 ──
+        personal_bests = profile.get("personal_bests", {}) if profile else {}
+        personal_info = profile.get("personal_info", {}) if profile else {}
+        fitness_level = MemoryWriter._infer_fitness_level(personal_bests, personal_info)
+
+        # ── 目标上下文 ──
+        active_goals = goals or []
+        goal_context = ""
+        if active_goals:
+            goal_parts = []
+            for g in active_goals[:2]:
+                gm = g.get("metrics", {}) if isinstance(g, dict) else getattr(g, "front_matter", {}).get("metrics", {})
+                target = list(gm.values())[0] if gm else "?"
+                goal_parts.append(f"目标 {target}")
+            if goal_parts:
+                goal_context = " | ".join(goal_parts)
 
         # ── 恢复分析 ──
         sleep_hours = sleep.get("total_hours", 0) or 0
@@ -1394,21 +1415,32 @@ class MemoryWriter:
         elif rec_level == "fair":
             observations.append(f"综合恢复评分 {rec_score}/100，状态一般，建议适当调整强度")
 
-        # ── 核心结论 ──
+        # ── 运动员画像相关观察 ──
+        if fitness_level:
+            observations.append(f"运动员水平: {fitness_level}")
+        if goal_context:
+            observations.append(f"训练目标: {goal_context}")
+
+        # ── 核心结论（结合画像）──
         if rec_level in ("excellent", "good") and acwr_status == "optimal":
-            conclusion = "整体状态良好，训练负荷合理，按计划执行即可。重点关注技术质量和训练一致性。"
+            if fitness_level and "精英" in fitness_level:
+                conclusion = f"作为{fitness_level}选手，当前状态良好。保持训练质量，关注技术细节和恢复节奏。"
+            elif active_goals:
+                conclusion = f"状态良好，训练负荷合理。{goal_context}——按计划推进，重点关注训练一致性。"
+            else:
+                conclusion = "整体状态良好，训练负荷合理，按计划执行即可。"
             confidence = "high"
         elif rec_level == "poor" or acwr_status in ("overreaching", "high_risk"):
-            conclusion = "身体发出恢复不足的信号，建议今天以轻松恢复为主，优先补觉和补水。今天的让步是为了明天更好的训练。"
+            conclusion = "身体发出恢复不足的信号，建议今天以轻松恢复为主。今天的让步是为了明天更好的训练。"
             confidence = "high"
         elif sleep_hours < 7:
-            conclusion = "除了睡眠，其他指标都还不错。今天最大的训练任务是——早睡。把睡眠补回来，明天你会完全不同。"
+            conclusion = "除了睡眠，其他指标都还不错。今天最大的训练任务是——早睡。把睡眠补回来。"
             confidence = "medium"
         elif activity_level == "very_active" and is_rest:
             conclusion = "虽然没有正式训练，但全天活动量很高，实际上相当于完成了一次有氧。今天维持正常训练节奏即可。"
             confidence = "medium"
         else:
-            conclusion = "各指标处于正常范围，可根据体感灵活调整。记住：最好的训练计划是你能持续执行的那一个。"
+            conclusion = "各指标处于正常范围，可根据体感灵活调整。"
             confidence = "medium"
 
         return {
@@ -1418,6 +1450,67 @@ class MemoryWriter:
             "conclusion": conclusion,
             "confidence": confidence,
         }
+
+    # ── 辅助: 运动员水平 ──────────────────────
+
+    @staticmethod
+    def _load_profile(memory_store) -> dict[str, Any] | None:
+        """从 memory store 加载运动员档案。"""
+        try:
+            mem = memory_store.get("fitness-assessment")
+            return mem.front_matter if mem else None
+        except Exception:
+            return None
+
+    @staticmethod
+    def _load_active_goals(memory_store) -> list[dict[str, Any]]:
+        """从 memory store 加载活跃目标。"""
+        try:
+            goals = memory_store.list_by_type("goal", status="active")
+            return [g.front_matter for g in goals]
+        except Exception:
+            return []
+
+
+    @staticmethod
+    def _infer_fitness_level(pbs: dict[str, Any], info: dict[str, Any]) -> str:
+        """根据个人最佳成绩推断运动员水平。"""
+        if not pbs:
+            return ""
+        level = ""
+        # 5K
+        pb_5k = pbs.get("5k", {}).get("time", "") if isinstance(pbs.get("5k"), dict) else ""
+        if pb_5k:
+            parts = pb_5k.split(":")
+            if len(parts) == 2:
+                secs = int(parts[0]) * 60 + int(parts[1])
+                if secs < 16 * 60: level = "精英"
+                elif secs < 20 * 60: level = "进阶"
+                elif secs < 25 * 60: level = "中级"
+                else: level = "入门"
+        # 10K
+        if not level:
+            pb_10k = pbs.get("10k", {}).get("time", "") if isinstance(pbs.get("10k"), dict) else ""
+            if pb_10k:
+                parts = pb_10k.split(":")
+                if len(parts) == 2:
+                    secs = int(parts[0]) * 60 + int(parts[1])
+                    if secs < 35 * 60: level = "精英"
+                    elif secs < 42 * 60: level = "进阶"
+                    elif secs < 52 * 60: level = "中级"
+                    else: level = "入门"
+        # 半马
+        if not level:
+            pb_hm = pbs.get("half_marathon", {}).get("time", "") if isinstance(pbs.get("half_marathon"), dict) else ""
+            if pb_hm:
+                parts = pb_hm.split(":")
+                if len(parts) == 2:
+                    mins = int(parts[0])
+                    if mins < 80: level = "精英"
+                    elif mins < 95: level = "进阶"
+                    elif mins < 115: level = "中级"
+                    else: level = "入门"
+        return f"{level}跑者" if level else ""
 
     # ── 辅助: 渲染 ────────────────────────────
 
@@ -1681,7 +1774,7 @@ class MemoryStore:
         api_client_getter: Callable[[], Any] | None = None,
     ):
         self.reader = MemoryReader(memory_dir)
-        self.writer = MemoryWriter(memory_dir, db_getter, api_client_getter)
+        self.writer = MemoryWriter(memory_dir, db_getter, api_client_getter, memory_store=self)
         self.validator = MemoryValidator(memory_dir)
 
     # 委托 Reader

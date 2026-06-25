@@ -21,7 +21,7 @@ logger = logging.getLogger(__name__)
 
 
 class Storage:
-    """Garmin 数据存储管理器。
+    """运动数据存储管理器。
 
     在 garmy LocalDB 之上封装：
     - 数据库初始化
@@ -80,7 +80,7 @@ class Storage:
         """同步指定日期范围的数据。
 
         Args:
-            user_id: Garmin 用户 ID (int)。
+            user_id: 运动平台用户 ID (int)。
             start: 起始日期。
             end: 结束日期。
             metrics: 要同步的指标列表，None 表示全部。

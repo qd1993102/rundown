@@ -1,4 +1,4 @@
-"""活动详情模块 — 从 Garmin API 获取并存储每项活动的详细数据。
+"""活动详情模块 — 从运动平台 API 获取并存储每项活动的详细数据。
 
 包括：分段配速、步频、功率、触地时间、步幅、垂直振幅、爬升等。
 数据存储在 activity_details 表和 activity_splits 表中。
@@ -68,7 +68,7 @@ def ensure_tables(storage) -> None:
 
 
 def fetch_activity_detail(api_client: Any, activity_id: str) -> dict[str, Any] | None:
-    """从 Garmin API 获取单条活动的完整详情。
+    """从运动平台 API 获取单条活动的完整详情。
 
     Returns:
         API 返回的完整 dict，失败返回 None。

@@ -24,7 +24,7 @@ logger = logging.getLogger(__name__)
 class Exporter:
     """数据导出器。
 
-    将 Garmin 数据和记忆导出为标准格式。
+    将运动数据和记忆导出为标准格式。
     """
 
     def __init__(self, storage: Storage, memory_store: MemoryStore):

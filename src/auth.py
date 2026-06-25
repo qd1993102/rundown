@@ -33,7 +33,7 @@ def _mask_email(email: str) -> str:
 def _prompt_mfa() -> str:
     """MFA 验证码交互式输入回调。"""
     try:
-        code = input("请输入 Garmin 二次验证码 (MFA): ").strip()
+        code = input("请输入运动平台二次验证码 (MFA): ").strip()
         return code
     except (EOFError, KeyboardInterrupt):
         print()
@@ -41,7 +41,7 @@ def _prompt_mfa() -> str:
 
 
 class AuthManager:
-    """Garmin 认证管理器。
+    """运动平台认证管理器。
 
     封装 AuthClient 的登录和 Token 管理，
     对外提供已认证的 AuthClient 实例。
