@@ -17,7 +17,7 @@ from __future__ import annotations
 import argparse
 import logging
 import sys
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -173,6 +173,15 @@ def _sync_coros(provider, storage, user_id: int, start: date, end: date) -> None
     """Coros 同步：从 API 拉取数据写入 SQLite。"""
     from sqlalchemy import text
 
+    # Ensure distance_meters column exists
+    session = storage.db.get_session()
+    try:
+        session.execute(text("ALTER TABLE activities ADD COLUMN distance_meters FLOAT"))
+        session.commit()
+    except Exception:
+        pass
+    session.close()
+
     console.print("[dim]📥 拉取活动数据...[/]")
     activities = provider.activities.fetch_activities(start, end)
     session = storage.db.get_session()
@@ -183,6 +192,13 @@ def _sync_coros(provider, storage, user_id: int, start: date, end: date) -> None
             {"aid": a.activity_id}
         ).fetchone()
         if not existing:
+            # Convert unix timestamp to date string
+            try:
+                ts = int(a.start_time) if a.start_time and str(a.start_time).isdigit() else 0
+                activity_date = datetime.fromtimestamp(ts).strftime("%Y-%m-%d") if ts > 100000 else str(start)[:10]
+            except Exception:
+                activity_date = str(start)[:10]
+
             session.execute(text("""
                 INSERT INTO activities (user_id, activity_id, activity_date,
                     activity_name, duration_seconds, avg_heart_rate,
@@ -190,7 +206,7 @@ def _sync_coros(provider, storage, user_id: int, start: date, end: date) -> None
                 VALUES (:uid, :aid, :ad, :an, :dur, :hr, :tl, :st, :dist, datetime('now'))
             """), {
                 "uid": user_id, "aid": a.activity_id,
-                "ad": str(a.start_time)[:10] if a.start_time else str(start),
+                "ad": activity_date,
                 "an": a.activity_name, "dur": a.duration_seconds,
                 "hr": a.avg_heart_rate, "tl": a.training_load,
                 "st": a.start_time, "dist": a.distance_meters,

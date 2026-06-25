@@ -17,6 +17,18 @@ from .base import (
 
 logger = logging.getLogger(__name__)
 
+# Region-specific base URLs (ref: coros-mcp)
+_BASE_URLS = {
+    "eu": "https://teameuapi.coros.com", "us": "https://teamapi.coros.com",
+    "cn": "https://teamcnapi.coros.com", "asia": "https://teamcnapi.coros.com",
+}
+
+
+def _base_for_auth(auth) -> str:
+    if hasattr(auth, '_auth') and hasattr(auth._auth, 'region'):
+        return _BASE_URLS.get(auth._auth.region, _BASE_URLS["us"])
+    return _BASE_URLS["us"]
+
 
 def _run(coro):
     """同步包装器。"""
@@ -69,25 +81,38 @@ class CorosActivity(ActivityProvider):
         from coros_mcp.coros_api import fetch_activities as _fetch
         if not self._auth.is_authenticated():
             return []
+        # Coros API requires YYYYMMDD format (no hyphens)
+        start_str = start.strftime("%Y%m%d")
+        end_str = end.strftime("%Y%m%d")
         try:
-            raw = _run(_fetch(self._auth._auth, str(start), str(end)))
+            raw, total = _run(_fetch(self._auth._auth, start_str, end_str))
         except Exception as e:
             logger.warning("Coros 获取活动失败: %s", e)
             return []
         result = []
-        for a in raw:
-            d = a.__dict__ if hasattr(a, '__dict__') else (a if isinstance(a, dict) else {})
+        for a in (raw or []):
+            # coros-mcp ActivitySummary has: activity_id, name, sport_type,
+            # start_time (unix ts), duration_seconds, distance_meters, avg_hr, etc.
+            ts = getattr(a, 'start_time', 0) or 0
+            try:
+                from datetime import datetime
+                start_str = datetime.fromtimestamp(ts).strftime("%Y-%m-%d %H:%M:%S") if ts > 100000 else str(ts)
+            except Exception:
+                start_str = str(ts)
+            sport_map = {"100": "running", "101": "running_indoor", "200": "cycling",
+                         "300": "swimming", "500": "strength"}
+            sport_type = str(getattr(a, 'sport_type', 100))
             result.append(ActivityData(
-                activity_id=str(d.get("id", d.get("labelId", ""))),
-                activity_name=d.get("name", d.get("title", "训练")),
-                activity_type=str(d.get("sportType", d.get("mode", "100"))),
-                start_time=str(d.get("startTime", "")),
-                duration_seconds=int(d.get("totalTime", 0) or 0),
-                distance_meters=float(d.get("totalDistance", 0) or 0),
-                avg_heart_rate=d.get("avgHeartRate"),
-                training_load=float(d.get("trainingLoad", 0) or 0),
-                calories=int(d.get("totalCalories", 0) or 0),
-                elevation_gain=float(d.get("totalAscent", 0) or 0),
+                activity_id=str(getattr(a, 'activity_id', '')),
+                activity_name=getattr(a, 'name', '训练') or '训练',
+                activity_type=sport_map.get(sport_type, sport_type),
+                start_time=start_str,
+                duration_seconds=int(getattr(a, 'duration_seconds', 0) or 0),
+                distance_meters=float(getattr(a, 'distance_meters', 0) or 0),
+                avg_heart_rate=getattr(a, 'avg_hr', None),
+                training_load=float(getattr(a, 'training_load', 0) or 0),
+                calories=int(getattr(a, 'calories', 0) or 0),
+                elevation_gain=float(getattr(a, 'elevation_gain', 0) or 0),
             ))
         logger.info("Coros: %d 条活动 (%s ~ %s)", len(result), start, end)
         return result
@@ -105,51 +130,97 @@ class CorosHealth(HealthProvider):
     def __init__(self, auth: CorosAuth):
         self._auth = auth
 
-    def fetch_daily_health(self, target_date: date) -> DailyHealth | None:
-        ts = str(target_date)
+    def __init__(self, auth: CorosAuth):
+        self._auth = auth
+        self._analyse_cache: dict | None = None
+        self._hrv_cache: list | None = None
 
-        # Try fetch_daily_records first (combines sleep + activity data)
+    def _get_analyse_data(self) -> dict:
+        """获取 analyse/query 数据（缓存）。"""
+        if self._analyse_cache is not None:
+            return self._analyse_cache
+        import httpx
         try:
-            from coros_mcp.coros_api import fetch_daily_records as _fetch
-            records = _run(_fetch(self._auth._auth, ts, ts))
-            if records:
-                r = records[0]
-                d = r.__dict__ if hasattr(r, '__dict__') else (r if isinstance(r, dict) else {})
-                return DailyHealth(
-                    metric_date=target_date,
-                    sleep_duration_hours=float(getattr(r, 'sleep_total_hours', 0) or 0),
-                    deep_sleep_hours=float(getattr(r, 'sleep_deep_hours', 0) or 0),
-                    rem_sleep_hours=float(getattr(r, 'sleep_rem_hours', 0) or 0),
-                    resting_heart_rate=getattr(r, 'resting_heart_rate', None),
-                    hrv_weekly_avg=getattr(r, 'hrv_weekly_avg', None),
-                    hrv_last_night_avg=getattr(r, 'hrv_last_night_avg', None),
-                    hrv_status=getattr(r, 'hrv_status', "balanced") or "balanced",
-                    total_steps=int(getattr(r, 'total_steps', 0) or 0),
-                    total_distance_meters=float(getattr(r, 'total_distance', 0) or 0),
-                    total_calories=int(getattr(r, 'total_calories', 0) or 0),
-                    active_calories=int(getattr(r, 'active_calories', 0) or 0),
-                )
+            r = httpx.get(
+                f"{_base_for_auth(self._auth)}/analyse/query",
+                headers=self._auth.get_headers(),
+                timeout=15,
+            )
+            if r.status_code == 200 and r.json().get("result") == "0000":
+                self._analyse_cache = r.json().get("data", {})
         except Exception:
-            pass
+            self._analyse_cache = {}
+        return self._analyse_cache or {}
 
-        # Fallback: HRV-only data
+    def _get_hrv_data(self) -> list:
+        """获取 HRV 数据（缓存）。"""
+        if self._hrv_cache is not None:
+            return self._hrv_cache
         try:
             from coros_mcp.coros_api import fetch_hrv
-            records = _run(fetch_hrv(self._auth._auth))
-            ts_short = target_date.strftime("%Y%m%d")
-            for r in records:
-                r_date = str(getattr(r, 'date', ''))
-                if r_date == ts_short:
-                    return DailyHealth(
-                        metric_date=target_date,
-                        hrv_weekly_avg=getattr(r, 'avg_sleep_hrv', None),
-                        hrv_last_night_avg=getattr(r, 'avg_sleep_hrv', None),
-                        hrv_status="balanced",
-                    )
+            self._hrv_cache = _run(fetch_hrv(self._auth._auth))
         except Exception:
-            pass
+            self._hrv_cache = []
+        return self._hrv_cache or []
+
+    def fetch_daily_health(self, target_date: date) -> DailyHealth | None:
+        # Build from analyse data (RHR, load, distance, duration)
+        analyse = self._get_analyse_data()
+        day_list = analyse.get("dayList", []) or []
+        t7_list = analyse.get("t7dayList", []) or []
+
+        rhr = None
+        distance = 0.0
+        duration = 0.0
+        training_load = 0.0
+
+        ts_compact = target_date.strftime("%Y%m%d")
+        for item in day_list:
+            if str(item.get("happenDay", "")) == ts_compact:
+                rhr = item.get("rhr")
+                distance = float(item.get("distance", 0) or 0)
+                duration = float(item.get("duration", 0) or 0)
+                training_load = float(item.get("trainingLoad", 0) or 0)
+                break
+
+        # Check t7dayList for RHR if not found
+        if rhr is None:
+            for item in t7_list:
+                if str(item.get("happenDay", "")) == ts_compact:
+                    rhr = item.get("rhr")
+                    break
+
+        # HRV from dashboard
+        hrv_val = None
+        hrv_status = "balanced"
+        for r in self._get_hrv_data():
+            if str(getattr(r, 'date', '')) == ts_compact:
+                hrv_val = getattr(r, 'avg_sleep_hrv', None)
+                break
+
+        # If we have at least HRV or RHR, return data
+        if rhr is not None or hrv_val is not None or distance > 0:
+            return DailyHealth(
+                metric_date=target_date,
+                resting_heart_rate=rhr,
+                hrv_last_night_avg=hrv_val,
+                hrv_weekly_avg=hrv_val,
+                hrv_status=hrv_status,
+                total_distance_meters=distance,
+                total_steps=0,
+            )
 
         return None
+
+    def fetch_health_range(self, start: date, end: date) -> list[DailyHealth]:
+        result = []
+        d = start
+        while d <= end:
+            h = self.fetch_daily_health(d)
+            if h:
+                result.append(h)
+            d += timedelta(days=1)
+        return result
 
     def fetch_health_range(self, start: date, end: date) -> list[DailyHealth]:
         result = []

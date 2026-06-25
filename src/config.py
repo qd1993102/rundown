@@ -111,7 +111,9 @@ def get_config() -> Config:
     优先级: 系统环境变量 > 项目 .env > ~/.rundown/.env > 默认值
     """
     # 每次调用都重新加载当前目录的 .env（override=True 确保覆盖旧值）
-    load_dotenv(override=True)  # 当前目录 .env 优先
+    cwd_env = Path.cwd() / ".env"
+    if cwd_env.exists():
+        load_dotenv(cwd_env, override=True)  # 当前目录 .env 优先
     home_env = Path.home() / ".rundown" / ".env"
     if home_env.exists():
         load_dotenv(home_env, override=False)  # 全局配置只补充缺失项
