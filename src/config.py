@@ -37,15 +37,19 @@ def _mask_email(email: str) -> str:
 class Config:
     """应用配置，所有值从环境变量读取。"""
 
-    # ── 必填 ──────────────────────────────────
+    # ── 必填（RUNDOWN_ 为主，GARMIN_ 兼容旧配置） ──
     email: str = field(
-        default_factory=lambda: os.getenv("GARMIN_EMAIL", "")
+        default_factory=lambda: os.getenv("RUNDOWN_EMAIL") or os.getenv("GARMIN_EMAIL", "")
     )
     password: str = field(
-        default_factory=lambda: os.getenv("GARMIN_PASSWORD", "")
+        default_factory=lambda: os.getenv("RUNDOWN_PASSWORD") or os.getenv("GARMIN_PASSWORD", "")
     )
 
-    # ── 可选（有默认值） ──────────────────────
+    # ── 数据源 ────────────────────────────────
+    provider_type: str = field(
+        default_factory=lambda: os.getenv("RUNDOWN_PROVIDER", "garmin")
+    )
+    # Garmin 专用
     domain: str = field(
         default_factory=lambda: os.getenv("GARMIN_DOMAIN", "garmin.com")
     )
@@ -55,17 +59,19 @@ class Config:
             os.path.expanduser("~/.garmy"),
         )
     )
+
+    # ── 存储 ──────────────────────────────────
     db_path: str = field(
         default_factory=lambda: os.getenv(
-            "GARMIN_DB_PATH",
-            "./data/garmin_data.db",
+            "RUNDOWN_DB_PATH") or os.getenv("GARMIN_DB_PATH",
+            "./data/rundown_data.db",
         )
     )
     sync_days: int = field(
-        default_factory=lambda: int(os.getenv("GARMIN_SYNC_DAYS", "30"))
+        default_factory=lambda: int(os.getenv("RUNDOWN_SYNC_DAYS") or os.getenv("GARMIN_SYNC_DAYS", "30"))
     )
     log_level: str = field(
-        default_factory=lambda: os.getenv("GARMIN_LOG_LEVEL", "INFO")
+        default_factory=lambda: os.getenv("RUNDOWN_LOG_LEVEL") or os.getenv("GARMIN_LOG_LEVEL", "INFO")
     )
 
     # ── 内部路径 ──────────────────────────────
@@ -75,25 +81,28 @@ class Config:
         """校验必填配置项，缺失则抛出 ConfigError。"""
         missing: list[str] = []
         if not self.email:
-            missing.append("GARMIN_EMAIL")
+            missing.append("RUNDOWN_EMAIL")
         if not self.password:
-            missing.append("GARMIN_PASSWORD")
+            missing.append("RUNDOWN_PASSWORD")
 
         if missing:
             raise ConfigError(
                 f"缺少必填环境变量: {', '.join(missing)}\n"
-                f"请复制 .env.example 为 .env 并填入真实值"
+                f"请复制 .env.example 为 .env 并填入真实值\n"
+                f"(也支持旧名 GARMIN_EMAIL / GARMIN_PASSWORD)"
             )
 
     def log_config(self) -> None:
         """打印配置信息（敏感信息脱敏）。"""
         logger.info("配置加载完成:")
-        logger.info("  GARMIN_EMAIL:    %s", _mask_email(self.email))
-        logger.info("  GARMIN_DOMAIN:   %s", self.domain)
-        logger.info("  GARMIN_DB_PATH:  %s", self.db_path)
-        logger.info("  GARMIN_SYNC_DAYS:%s", self.sync_days)
-        logger.info("  GARMIN_LOG_LEVEL:%s", self.log_level)
-        logger.info("  Token 目录:      %s", self.token_dir)
+        logger.info("  Provider:        %s", self.provider_type)
+        logger.info("  Email:           %s", _mask_email(self.email))
+        logger.info("  DB:              %s", self.db_path)
+        logger.info("  Sync days:       %s", self.sync_days)
+        logger.info("  Log level:       %s", self.log_level)
+        if self.provider_type == "garmin":
+            logger.info("  Domain:          %s", self.domain)
+            logger.info("  Token dir:       %s", self.token_dir)
 
 
 def get_config() -> Config:
