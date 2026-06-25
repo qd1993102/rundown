@@ -205,7 +205,7 @@ def _sync_coros(provider, storage, user_id: int, start: date, end: date) -> None
     stored_health = 0
     while d <= end:
         health = provider.health.fetch_daily_health(d)
-        if health and (health.sleep_duration_hours > 0 or health.resting_heart_rate):
+        if health and (health.sleep_duration_hours > 0 or health.resting_heart_rate or health.hrv_last_night_avg):
             session = storage.db.get_session()
             existing = session.execute(
                 text("SELECT 1 FROM daily_health_metrics WHERE user_id = :uid AND metric_date = :md"),

@@ -31,6 +31,9 @@ dependencies = [
 image = [
     "playwright>=1.40",
 ]
+coros = [
+    "coros-mcp @ git+https://github.com/cygnusb/coros-mcp.git",
+]
 dev = [
     "pytest>=8.0.0",
     "pytest-mock>=3.12.0",

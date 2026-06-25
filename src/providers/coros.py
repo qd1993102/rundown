@@ -107,33 +107,49 @@ class CorosHealth(HealthProvider):
 
     def fetch_daily_health(self, target_date: date) -> DailyHealth | None:
         ts = str(target_date)
+
+        # Try fetch_daily_records first (combines sleep + activity data)
         try:
             from coros_mcp.coros_api import fetch_daily_records as _fetch
             records = _run(_fetch(self._auth._auth, ts, ts))
-        except Exception as e:
-            logger.warning("Coros fetch_daily_records 失败: %s", e)
-            return None
+            if records:
+                r = records[0]
+                d = r.__dict__ if hasattr(r, '__dict__') else (r if isinstance(r, dict) else {})
+                return DailyHealth(
+                    metric_date=target_date,
+                    sleep_duration_hours=float(getattr(r, 'sleep_total_hours', 0) or 0),
+                    deep_sleep_hours=float(getattr(r, 'sleep_deep_hours', 0) or 0),
+                    rem_sleep_hours=float(getattr(r, 'sleep_rem_hours', 0) or 0),
+                    resting_heart_rate=getattr(r, 'resting_heart_rate', None),
+                    hrv_weekly_avg=getattr(r, 'hrv_weekly_avg', None),
+                    hrv_last_night_avg=getattr(r, 'hrv_last_night_avg', None),
+                    hrv_status=getattr(r, 'hrv_status', "balanced") or "balanced",
+                    total_steps=int(getattr(r, 'total_steps', 0) or 0),
+                    total_distance_meters=float(getattr(r, 'total_distance', 0) or 0),
+                    total_calories=int(getattr(r, 'total_calories', 0) or 0),
+                    active_calories=int(getattr(r, 'active_calories', 0) or 0),
+                )
+        except Exception:
+            pass
 
-        if not records:
-            return None
+        # Fallback: HRV-only data
+        try:
+            from coros_mcp.coros_api import fetch_hrv
+            records = _run(fetch_hrv(self._auth._auth))
+            ts_short = target_date.strftime("%Y%m%d")
+            for r in records:
+                r_date = str(getattr(r, 'date', ''))
+                if r_date == ts_short:
+                    return DailyHealth(
+                        metric_date=target_date,
+                        hrv_weekly_avg=getattr(r, 'avg_sleep_hrv', None),
+                        hrv_last_night_avg=getattr(r, 'avg_sleep_hrv', None),
+                        hrv_status="balanced",
+                    )
+        except Exception:
+            pass
 
-        r = records[0]
-        d = r.__dict__ if hasattr(r, '__dict__') else (r if isinstance(r, dict) else {})
-
-        return DailyHealth(
-            metric_date=target_date,
-            sleep_duration_hours=float(getattr(r, 'sleep_total_hours', 0) or 0),
-            deep_sleep_hours=float(getattr(r, 'sleep_deep_hours', 0) or 0),
-            rem_sleep_hours=float(getattr(r, 'sleep_rem_hours', 0) or 0),
-            resting_heart_rate=getattr(r, 'resting_heart_rate', None),
-            hrv_weekly_avg=getattr(r, 'hrv_weekly_avg', None),
-            hrv_last_night_avg=getattr(r, 'hrv_last_night_avg', None),
-            hrv_status=getattr(r, 'hrv_status', "balanced") or "balanced",
-            total_steps=int(getattr(r, 'total_steps', 0) or 0),
-            total_distance_meters=float(getattr(r, 'total_distance', 0) or 0),
-            total_calories=int(getattr(r, 'total_calories', 0) or 0),
-            active_calories=int(getattr(r, 'active_calories', 0) or 0),
-        )
+        return None
 
     def fetch_health_range(self, start: date, end: date) -> list[DailyHealth]:
         result = []
