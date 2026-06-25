@@ -13,11 +13,11 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
-# 加载优先级: 系统环境变量 > ~/.rundown/.env > 项目 .env
+# 加载优先级: 系统环境变量 > 项目 .env > ~/.rundown/.env > 默认值
+load_dotenv()  # 1. 项目 .env
 _home_env = Path.home() / ".rundown" / ".env"
 if _home_env.exists():
-    load_dotenv(_home_env)
-load_dotenv()  # 项目 .env（后加载，优先级低于系统环境变量，但覆盖默认值）
+    load_dotenv(_home_env)  # 2. 全局 ~/.rundown/.env（补充未设置的项）
 
 logger = logging.getLogger(__name__)
 
