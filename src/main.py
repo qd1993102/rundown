@@ -43,16 +43,25 @@ console = Console()
 # ═══════════════════════════════════════════════════════════════
 
 def _setup(config=None):
-    """初始化所有模块并返回 (auth, fetcher, storage, memory_store, user_id)。"""
+    """初始化所有模块。
+
+    Returns: (config, provider, storage, memory_store, user_id)
+    - provider: DataProvider 实例（GarminProvider 或 CorosProvider）
+    """
     if config is None:
         config = get_config()
 
-    auth = AuthManager(config)
-    fetcher = Fetcher(auth)
+    from .providers import get_provider
+
+    provider = get_provider(config)
     storage = Storage(config)
+
+    # Memory store（Garmin 需要 api_client_getter 补全距离）
     def _make_api_client():
-        from garmy import APIClient
-        return APIClient(auth_client=auth.client)
+        if config.provider_type == "garmin":
+            from garmy import APIClient
+            return APIClient(auth_client=provider.auth._client)
+        return None
 
     memory_store = MemoryStore(
         config.memory_dir,
@@ -60,10 +69,7 @@ def _setup(config=None):
         api_client_getter=_make_api_client,
     )
 
-    # 获取 user_id（从已认证的 client 中获取，garmy 2.0 需要 int）
-    user_id = _get_user_id(auth)
-
-    return config, auth, fetcher, storage, memory_store, user_id
+    return config, provider, storage, memory_store, provider.user_id
 
 
 def _get_user_id(auth: AuthManager) -> int:
@@ -111,10 +117,10 @@ def _parse_date(date_str: str) -> date:
 
 def cmd_sync(args: argparse.Namespace) -> None:
     """sync 命令：同步数据 + 生成记忆。"""
-    config, auth, fetcher, storage, memory_store, user_id = _setup()
+    config, provider, storage, memory_store, user_id = _setup()
 
     console.print(Panel.fit(
-        "[bold blue]🔄 Rundown Sync[/]\n同步运动数据并生成记忆",
+        f"[bold blue]🔄 Rundown Sync ({config.provider_type})[/]\n同步运动数据并生成记忆",
         border_style="blue",
     ))
 
@@ -123,7 +129,7 @@ def cmd_sync(args: argparse.Namespace) -> None:
         start = _parse_date(args.from_date)
         end = _parse_date(args.to_date)
     elif args.full:
-        start = date.today() - timedelta(days=365 * 3)  # 3 years
+        start = date.today() - timedelta(days=365 * 3)
         end = date.today()
     else:
         days = args.days or config.sync_days
@@ -133,46 +139,135 @@ def cmd_sync(args: argparse.Namespace) -> None:
     console.print(f"📅 同步范围: {start} ~ {end}")
 
     # 执行同步
-    try:
-        result = storage.sync_range(user_id, start, end, args.metrics)
-        console.print(f"[green]✅ 同步完成[/]")
-        if result:
-            for k, v in result.items():
-                console.print(f"  {k}: {v}")
-    except Exception as exc:
-        console.print(f"[red]❌ 同步失败: {exc}[/]")
-        if not args.no_memory:
-            console.print("[yellow]⚠️  跳过记忆生成[/]")
-            return
+    if config.provider_type == "garmin":
+        # Garmin: 使用 garmy SyncManager
+        try:
+            provider.authenticate()
+            result = storage.sync_range(user_id, start, end, args.metrics)
+            console.print(f"[green]✅ 同步完成[/]")
+            if result:
+                for k, v in result.items():
+                    console.print(f"  {k}: {v}")
+        except Exception as exc:
+            console.print(f"[red]❌ 同步失败: {exc}[/]")
+            if not args.no_memory:
+                console.print("[yellow]⚠️  跳过记忆生成[/]")
+                return
+    else:
+        # Coros: 直接从 API 拉取并存入 SQLite
+        try:
+            provider.authenticate()
+            _sync_coros(provider, storage, user_id, start, end)
+        except Exception as exc:
+            console.print(f"[red]❌ 同步失败: {exc}[/]")
+            if not args.no_memory:
+                console.print("[yellow]⚠️  跳过记忆生成[/]")
+                return
 
     # 生成记忆
     if not args.no_memory:
-        console.print("\n[bold]🧠 生成记忆...[/]")
-        try:
-            # 日报
-            daily = memory_store.generate_daily_report(user_id)
-            console.print(f"  📰 日报: {daily.id}")
+        _generate_memories(memory_store, user_id)
 
-            # 周摘要
-            summary = memory_store.generate_weekly_summary(user_id)
-            console.print(f"  📊 周摘要: {summary.id}")
 
-            # 恢复摘要
-            recovery = memory_store.generate_recovery_summary(user_id)
-            console.print(f"  💤 恢复摘要: {recovery.id}")
+def _sync_coros(provider, storage, user_id: int, start: date, end: date) -> None:
+    """Coros 同步：从 API 拉取数据写入 SQLite。"""
+    from sqlalchemy import text
 
-            # 重建索引
-            for cat in ["daily", "summaries", "recovery", "execution"]:
-                memory_store.rebuild_index(f"auto/{cat}")
+    console.print("[dim]📥 拉取活动数据...[/]")
+    activities = provider.activities.fetch_activities(start, end)
+    session = storage.db.get_session()
+    stored_act = 0
+    for a in activities:
+        existing = session.execute(
+            text("SELECT 1 FROM activities WHERE activity_id = :aid"),
+            {"aid": a.activity_id}
+        ).fetchone()
+        if not existing:
+            session.execute(text("""
+                INSERT INTO activities (user_id, activity_id, activity_date,
+                    activity_name, duration_seconds, avg_heart_rate,
+                    training_load, start_time, distance_meters, created_at)
+                VALUES (:uid, :aid, :ad, :an, :dur, :hr, :tl, :st, :dist, datetime('now'))
+            """), {
+                "uid": user_id, "aid": a.activity_id,
+                "ad": str(a.start_time)[:10] if a.start_time else str(start),
+                "an": a.activity_name, "dur": a.duration_seconds,
+                "hr": a.avg_heart_rate, "tl": a.training_load,
+                "st": a.start_time, "dist": a.distance_meters,
+            })
+            stored_act += 1
+    session.commit()
+    session.close()
+    console.print(f"  ✅ 活动: {stored_act} 条新增 (共 {len(activities)} 条)")
 
-            console.print("[green]✅ 记忆生成完成[/]")
-        except Exception as exc:
-            console.print(f"[red]❌ 记忆生成失败: {exc}[/]")
+    console.print("[dim]📥 拉取健康数据...[/]")
+    d = start
+    stored_health = 0
+    while d <= end:
+        health = provider.health.fetch_daily_health(d)
+        if health and (health.sleep_duration_hours > 0 or health.resting_heart_rate):
+            session = storage.db.get_session()
+            existing = session.execute(
+                text("SELECT 1 FROM daily_health_metrics WHERE user_id = :uid AND metric_date = :md"),
+                {"uid": user_id, "md": str(d)}
+            ).fetchone()
+            if not existing:
+                session.execute(text("""
+                    INSERT INTO daily_health_metrics
+                        (user_id, metric_date, sleep_duration_hours,
+                         deep_sleep_hours, rem_sleep_hours, deep_sleep_percentage,
+                         rem_sleep_percentage, resting_heart_rate,
+                         hrv_weekly_avg, hrv_last_night_avg, hrv_status,
+                         avg_stress_level, body_battery_high, body_battery_low,
+                         total_steps, total_distance_meters, total_calories,
+                         active_calories, training_readiness_score,
+                         training_readiness_level, created_at, updated_at)
+                    VALUES (:uid, :md, :sl, :ds, :rs, :dp, :rp, :rhr,
+                            :hw, :hn, :hs, :as, :bh, :bl,
+                            :ts, :td, :tc, :ac, :trs, :trl,
+                            datetime('now'), datetime('now'))
+                """), {
+                    "uid": user_id, "md": str(d),
+                    "sl": health.sleep_duration_hours, "ds": health.deep_sleep_hours,
+                    "rs": health.rem_sleep_hours, "dp": health.deep_sleep_pct,
+                    "rp": health.rem_sleep_pct, "rhr": health.resting_heart_rate,
+                    "hw": health.hrv_weekly_avg, "hn": health.hrv_last_night_avg,
+                    "hs": health.hrv_status, "as": health.avg_stress_level,
+                    "bh": health.body_battery_high, "bl": health.body_battery_low,
+                    "ts": health.total_steps, "td": health.total_distance_meters,
+                    "tc": health.total_calories, "ac": health.active_calories,
+                    "trs": health.training_readiness_score,
+                    "trl": health.training_readiness_level,
+                })
+                stored_health += 1
+            session.commit()
+            session.close()
+        d += timedelta(days=1)
+    console.print(f"  ✅ 健康: {stored_health} 天")
+
+    console.print(f"[green]✅ Coros 同步完成[/]")
+
+
+def _generate_memories(memory_store, user_id: int) -> None:
+    """生成全部记忆。"""
+    console.print("\n[bold]🧠 生成记忆...[/]")
+    try:
+        daily = memory_store.generate_daily_report(user_id)
+        console.print(f"  📰 日报: {daily.id}")
+        summary = memory_store.generate_weekly_summary(user_id)
+        console.print(f"  📊 周摘要: {summary.id}")
+        recovery = memory_store.generate_recovery_summary(user_id)
+        console.print(f"  💤 恢复摘要: {recovery.id}")
+        for cat in ["daily", "summaries", "recovery", "execution"]:
+            memory_store.rebuild_index(f"auto/{cat}")
+        console.print("[green]✅ 记忆生成完成[/]")
+    except Exception as exc:
+        console.print(f"[red]❌ 记忆生成失败: {exc}[/]")
 
 
 def cmd_daily(args: argparse.Namespace) -> None:
     """daily 命令：查看/生成每日综合报告。"""
-    config, auth, fetcher, storage, memory_store, user_id = _setup()
+    config, provider, storage, memory_store, user_id = _setup()
 
     target = _parse_date(args.date) if args.date else date.today()
     need_ai = getattr(args, 'ai', False)
@@ -400,20 +495,35 @@ def cmd_daily(args: argparse.Namespace) -> None:
 
 def cmd_activities(args: argparse.Namespace) -> None:
     """activities 命令：查询活动列表。"""
-    config, auth, fetcher, storage, memory_store, user_id = _setup()
+    config, provider, storage, memory_store, user_id = _setup()
+
+    days = args.recent or 30
+    end = date.today()
+    start = end - timedelta(days=days)
+    raw = provider.activities.fetch_activities(start, end)
 
     if args.type:
-        activities = fetcher.get_activities_by_type(args.type, args.recent or 30)
-    else:
-        activities = fetcher.get_activities_recent(args.recent or 30)
+        raw = [a for a in raw if a.activity_type == args.type]
+
+    activities = [
+        {
+            "start_time_local": a.start_time,
+            "activity_type_name": a.activity_type,
+            "activity_name": a.activity_name,
+            "duration": a.duration_seconds,
+            "distance": a.distance_meters,
+            "average_hr": a.avg_heart_rate,
+            "activity_training_load": a.training_load,
+        }
+        for a in raw
+    ]
 
     if args.export:
         storage.export_csv(activities, args.export)
         console.print(f"[green]✅ 已导出到 {args.export}[/]")
         return
 
-    # Rich 表格展示
-    table = Table(title=f"🏃 最近 {args.recent or 30} 天活动")
+    table = Table(title=f"🏃 最近 {days} 天活动")
     table.add_column("日期", style="dim")
     table.add_column("类型")
     table.add_column("名称")
@@ -441,7 +551,7 @@ def cmd_activities(args: argparse.Namespace) -> None:
 
 def cmd_health(args: argparse.Namespace) -> None:
     """health 命令：查询健康指标。"""
-    config, auth, fetcher, storage, memory_store, user_id = _setup()
+    config, provider, storage, memory_store, user_id = _setup()
 
     if args.metric:
         metrics = [args.metric]
@@ -456,22 +566,22 @@ def cmd_health(args: argparse.Namespace) -> None:
     today = date.today()
     for i in range(args.days or 7):
         target = today - timedelta(days=i)
+        data = storage.get_health_metrics(user_id, target)
         row = [str(target)]
         for m in metrics:
-            data = fetcher.get_health_metric(m, target)
             if data is None:
                 row.append("—")
             elif m == "sleep":
-                dur = (data.get("sleep_duration", 0) or 0) / 3600
+                dur = data.get("sleep_duration_hours", 0) or 0
                 row.append(f"{dur:.1f}h")
             elif m == "hrv":
-                row.append(str(data.get("hrv_avg", "—")))
+                row.append(str(data.get("hrv_last_night_avg", "—")))
             elif m == "heart_rate":
                 row.append(str(data.get("resting_heart_rate", "—")))
             elif m == "stress":
-                row.append(str(data.get("avg_stress", "—")))
+                row.append(str(data.get("avg_stress_level", "—")))
             elif m == "body_battery":
-                row.append(str(data.get("body_battery_highest", "—")))
+                row.append(str(data.get("body_battery_high", "—")))
             else:
                 row.append("✓")
         table.add_row(*row)
@@ -481,7 +591,7 @@ def cmd_health(args: argparse.Namespace) -> None:
 
 def cmd_memory(args: argparse.Namespace) -> None:
     """memory 命令：记忆管理。"""
-    config, auth, fetcher, storage, memory_store, user_id = _setup()
+    config, provider, storage, memory_store, user_id = _setup()
 
     sub = args.memory_subcommand
 
@@ -569,7 +679,7 @@ def cmd_memory(args: argparse.Namespace) -> None:
 
 def cmd_status(args: argparse.Namespace) -> None:
     """status 命令：查看同步状态。"""
-    config, auth, fetcher, storage, memory_store, user_id = _setup()
+    config, provider, storage, memory_store, user_id = _setup()
 
     status_list = storage.get_all_sync_status(user_id)
 
@@ -672,7 +782,7 @@ RUNDOWN_LOG_LEVEL=INFO
 
 def cmd_setup(args: argparse.Namespace) -> None:
     """setup 命令：交互式录入个人资料、最佳成绩和目标。"""
-    config, auth, fetcher, storage, memory_store, user_id = _setup()
+    config, provider, storage, memory_store, user_id = _setup()
 
     from datetime import datetime
     from src.memory import build_memory_file
@@ -851,13 +961,13 @@ def _ask(prompt: str, default: str = "") -> str:
 
 def cmd_mcp(args: argparse.Namespace) -> None:
     """mcp 命令：启动 MCP Server（stdio 模式，供 OpenClaw / Claude Desktop 调用）。"""
-    config, auth, fetcher, storage, memory_store, user_id = _setup()
+    config, provider, storage, memory_store, user_id = _setup()
 
     from .mcp_server import create_server
 
     console.print("[bold blue]🔌 启动 Rundown MCP Server...[/]")
 
-    server = create_server(config, auth, storage, memory_store, user_id)
+    server = create_server(config, provider, storage, memory_store, user_id)
 
     # FastMCP 通过 stdio 与客户端通信，不需要端口
     console.print("[green]✅ MCP Server 已启动 (stdio mode)[/]")

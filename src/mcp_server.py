@@ -14,7 +14,7 @@ from typing import Any
 logger = logging.getLogger(__name__)
 
 
-def create_server(config, auth, storage, memory_store, user_id: int):
+def create_server(config, provider, storage, memory_store, user_id: int):
     """创建并配置 FastMCP 服务器。
 
     暴露 Resources（只读上下文）和 Tools（AI 可调用的查询/分析函数）。

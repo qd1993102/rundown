@@ -13,12 +13,6 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
-# 加载优先级: 系统环境变量 > 项目 .env > ~/.rundown/.env > 默认值
-load_dotenv()  # 1. 项目 .env
-_home_env = Path.home() / ".rundown" / ".env"
-if _home_env.exists():
-    load_dotenv(_home_env)  # 2. 全局 ~/.rundown/.env（补充未设置的项）
-
 logger = logging.getLogger(__name__)
 
 
@@ -111,7 +105,17 @@ class Config:
 
 
 def get_config() -> Config:
-    """创建并校验配置的单次入口。"""
+    """创建并校验配置的单次入口。
+
+    每次调用都重新加载 .env，确保读取当前工作目录的配置。
+    优先级: 系统环境变量 > 项目 .env > ~/.rundown/.env > 默认值
+    """
+    # 每次调用都重新加载当前目录的 .env（override=True 确保覆盖旧值）
+    load_dotenv(override=True)  # 当前目录 .env 优先
+    home_env = Path.home() / ".rundown" / ".env"
+    if home_env.exists():
+        load_dotenv(home_env, override=False)  # 全局配置只补充缺失项
+
     config = Config()
     config.validate()
     # 配置日志
