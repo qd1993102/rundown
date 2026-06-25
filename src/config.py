@@ -13,8 +13,11 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
-# 自动加载 .env 文件（如果存在）
-load_dotenv()
+# 加载优先级: 系统环境变量 > ~/.rundown/.env > 项目 .env
+_home_env = Path.home() / ".rundown" / ".env"
+if _home_env.exists():
+    load_dotenv(_home_env)
+load_dotenv()  # 项目 .env（后加载，优先级低于系统环境变量，但覆盖默认值）
 
 logger = logging.getLogger(__name__)
 
@@ -37,9 +40,11 @@ def _mask_email(email: str) -> str:
 class Config:
     """应用配置，所有值从环境变量读取。"""
 
-    # ── 必填（RUNDOWN_ 为主，GARMIN_ 兼容旧配置） ──
+    # ── 必填（RUNDOWN_ACCOUNT 为主，兼容旧名 RUNDOWN_EMAIL / GARMIN_EMAIL）──
     email: str = field(
-        default_factory=lambda: os.getenv("RUNDOWN_EMAIL") or os.getenv("GARMIN_EMAIL", "")
+        default_factory=lambda: (os.getenv("RUNDOWN_ACCOUNT") or
+                                 os.getenv("RUNDOWN_EMAIL") or
+                                 os.getenv("GARMIN_EMAIL", ""))
     )
     password: str = field(
         default_factory=lambda: os.getenv("RUNDOWN_PASSWORD") or os.getenv("GARMIN_PASSWORD", "")
@@ -64,7 +69,7 @@ class Config:
     db_path: str = field(
         default_factory=lambda: os.getenv(
             "RUNDOWN_DB_PATH") or os.getenv("GARMIN_DB_PATH",
-            "./data/rundown_data.db",
+            str(Path.home() / ".rundown" / "data.db"),
         )
     )
     sync_days: int = field(
@@ -81,7 +86,7 @@ class Config:
         """校验必填配置项，缺失则抛出 ConfigError。"""
         missing: list[str] = []
         if not self.email:
-            missing.append("RUNDOWN_EMAIL")
+            missing.append("RUNDOWN_ACCOUNT")
         if not self.password:
             missing.append("RUNDOWN_PASSWORD")
 
@@ -89,7 +94,7 @@ class Config:
             raise ConfigError(
                 f"缺少必填环境变量: {', '.join(missing)}\n"
                 f"请复制 .env.example 为 .env 并填入真实值\n"
-                f"(也支持旧名 GARMIN_EMAIL / GARMIN_PASSWORD)"
+                f"(也支持旧名 RUNDOWN_EMAIL / GARMIN_EMAIL)"
             )
 
     def log_config(self) -> None:

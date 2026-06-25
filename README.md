@@ -196,7 +196,7 @@ output/
 
 | 变量 | 必填 | 默认值 | 说明 |
 |------|:---:|--------|------|
-| `RUNDOWN_EMAIL` | ✅ | — | 运动平台登录邮箱（兼容旧名 `GARMIN_EMAIL`） |
+| `RUNDOWN_ACCOUNT` | ✅ | — | 运动平台账号（邮箱或手机号，兼容旧名 `RUNDOWN_EMAIL`/`GARMIN_EMAIL`） |
 | `RUNDOWN_PASSWORD` | ✅ | — | 运动平台登录密码（兼容旧名 `GARMIN_PASSWORD`） |
 | `RUNDOWN_PROVIDER` | — | `garmin` | 数据源: garmin / coros |
 | `RUNDOWN_DB_PATH` | — | `./data/rundown_data.db` | SQLite 数据库路径 |

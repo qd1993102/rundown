@@ -39,10 +39,22 @@ class CorosAuth(AuthProvider):
         # Coros uses MD5 for password
         pwd_hash = hashlib.md5(password.encode()).hexdigest()
 
+        # 判断账号类型：纯数字 → 手机号登录，否则邮箱登录
+        is_phone = email.isdigit() and len(email) >= 10
+        payload = {
+            "password": pwd_hash,
+            "accountType": 1 if is_phone else 2,
+        }
+        if is_phone:
+            payload["mobile"] = email
+            logger.info("Coros: 使用手机号登录 (%s)", email[:3] + "****" + email[-3:])
+        else:
+            payload["email"] = email
+
         try:
             r = httpx.post(
                 f"{COROS_BASE}/api/v1/auth/login",
-                json={"email": email, "password": pwd_hash, "accountType": 2},
+                json=payload,
                 timeout=15,
             )
             if r.status_code != 200:
