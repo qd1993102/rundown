@@ -138,9 +138,15 @@ def cmd_sync(args: argparse.Namespace) -> None:
 
     console.print(f"📅 同步范围: {start} ~ {end}")
 
+    # 清理同步记录（--force 时全量重置数据）避免 garmy SyncManager 跳过重试
+    force = getattr(args, 'force', False)
+    if force:
+        console.print("[yellow]⚠️  强制模式：清除区间内全部本地数据后重新拉取[/]")
+    storage.reset_pending_metrics(user_id, start, end, force=force)
+
     # 执行同步
     if config.provider_type == "garmin":
-        # Garmin: 使用 garmy SyncManager
+        # Garmin: 使用 garmy SyncManager（健康数据）+ 直同步活动
         try:
             provider.authenticate()
             result = storage.sync_range(user_id, start, end, args.metrics)
@@ -148,6 +154,9 @@ def cmd_sync(args: argparse.Namespace) -> None:
             if result:
                 for k, v in result.items():
                     console.print(f"  {k}: {v}")
+            # garmy ActivitiesIterator 有状态 bug：按日期升序处理时游标不回退，
+            # 导致后续日期的活动被跳过。这里用我们自己的 fetch 直写 DB 作为补充。
+            _sync_garmin_activities(provider, storage, user_id, start, end)
         except Exception as exc:
             console.print(f"[red]❌ 同步失败: {exc}[/]")
             if not args.no_memory:
@@ -167,6 +176,56 @@ def cmd_sync(args: argparse.Namespace) -> None:
     # 生成记忆
     if not args.no_memory:
         _generate_memories(memory_store, user_id)
+
+
+def _sync_garmin_activities(provider, storage, user_id: int, start: date, end: date) -> None:
+    """Garmin 活动直同步：绕过 garmy ActivitiesIterator 的状态 bug。
+
+    garmy 的 ActivitiesIterator 是单向迭代器（从新到旧），sync_range 按日期升序
+    处理时（23→24→25→26），处理完 23 后游标已跳过 24-26，导致这些日期的活动全部丢失。
+    这里直接从 Garmin API 拉取活动并写入 DB。
+    """
+    from sqlalchemy import text
+
+    console.print("[dim]📥 补全 Garmin 活动数据...[/]")
+    activities = provider.activities.fetch_activities(start, end)
+    session = storage.db.get_session()
+    stored_act = 0
+    updated_act = 0
+    for a in activities:
+        row = session.execute(
+            text("SELECT distance_meters FROM activities WHERE activity_id = :aid"),
+            {"aid": a.activity_id}
+        ).fetchone()
+        adate = a.start_time[:10] if a.start_time and len(str(a.start_time)) >= 10 else str(start)[:10]
+        if not row:
+            # 新活动：INSERT
+            session.execute(text("""
+                INSERT INTO activities (user_id, activity_id, activity_date,
+                    activity_name, duration_seconds, avg_heart_rate,
+                    training_load, start_time, distance_meters, created_at)
+                VALUES (:uid, :aid, :ad, :an, :dur, :hr, :tl, :st, :dist, datetime('now'))
+            """), {
+                "uid": user_id, "aid": a.activity_id,
+                "ad": adate,
+                "an": a.activity_name, "dur": a.duration_seconds,
+                "hr": a.avg_heart_rate, "tl": a.training_load,
+                "st": a.start_time, "dist": a.distance_meters,
+            })
+            stored_act += 1
+        elif not row[0] and a.distance_meters:
+            # 已有记录但距离为空/0：UPDATE 补全距离
+            session.execute(text("""
+                UPDATE activities SET distance_meters = :dist
+                WHERE activity_id = :aid
+            """), {"dist": a.distance_meters, "aid": a.activity_id})
+            updated_act += 1
+    session.commit()
+    session.close()
+    if stored_act > 0 or updated_act > 0:
+        console.print(f"  ✅ Garmin 活动: {stored_act} 条新增, {updated_act} 条距离补全 (共 {len(activities)} 条)")
+    else:
+        console.print(f"  📦 Garmin 活动: 已是最新 (共 {len(activities)} 条)")
 
 
 def _sync_coros(provider, storage, user_id: int, start: date, end: date) -> None:
@@ -192,10 +251,9 @@ def _sync_coros(provider, storage, user_id: int, start: date, end: date) -> None
             {"aid": a.activity_id}
         ).fetchone()
         if not existing:
-            # Convert unix timestamp to date string
+            # Extract date from formatted start_time string (e.g. "2026-06-25 08:30:00")
             try:
-                ts = int(a.start_time) if a.start_time and str(a.start_time).isdigit() else 0
-                activity_date = datetime.fromtimestamp(ts).strftime("%Y-%m-%d") if ts > 100000 else str(start)[:10]
+                activity_date = a.start_time[:10] if a.start_time and len(str(a.start_time)) >= 10 else str(start)[:10]
             except Exception:
                 activity_date = str(start)[:10]
 
@@ -282,113 +340,69 @@ def _generate_memories(memory_store, user_id: int) -> None:
 
 
 def cmd_daily(args: argparse.Namespace) -> None:
-    """daily 命令：查看/生成每日综合报告。"""
+    """daily 命令：同步 → 生成 md → HTML → PNG → AI 洞察。"""
     config, provider, storage, memory_store, user_id = _setup()
 
     target = _parse_date(args.date) if args.date else date.today()
-    need_ai = getattr(args, 'ai', False)
-    want_image = getattr(args, 'image', False) or getattr(args, 'html', False)
+    theme = getattr(args, 'theme', 'sport')
 
-    if args.format == "json":
-        # JSON 输出
-        import json
-        mem = memory_store.get(str(target))
-        if mem is None and target == date.today():
-            mem = memory_store.generate_daily_report(user_id, target)
-        if mem is None:
-            console.print(f"[red]未找到 {target} 的日报[/]")
-            return
-        if need_ai:
-            ai_result = _get_ai_insight(mem.front_matter, target, memory_store=memory_store)
-            if ai_result:
-                mem.front_matter['ai_insight'] = ai_result
-        console.print_json(json.dumps(mem.front_matter, ensure_ascii=False, indent=2, default=str))
-        return
-
-    if args.html:
-        # HTML 输出到统一目录 output/YYYY-MM-DD.html
-        console.print("[yellow]📰 正在生成日报...[/]")
-        mem = memory_store.generate_daily_report(user_id, target)
-        if mem is None:
-            console.print(f"[red]未找到 {target} 的日报，请先运行 rundown sync[/]")
-            return
-        if need_ai:
-            ai_result = _get_ai_insight(mem.front_matter, target, memory_store=memory_store)
-            if ai_result:
-                mem.front_matter['ai_insight'] = ai_result
-                mem.save()
-        # 统一输出目录: output/YYYY-MM-DD.html
-        output_dir = Path("output")
-        output_dir.mkdir(parents=True, exist_ok=True)
-        output_path = str(output_dir / f"{target}.html")
-        render_daily_html(mem, output_path)
-        console.print(f"[green]✅ HTML 日报已生成: {output_path}[/]")
-        console.print(f"[dim]用浏览器打开即可查看[/]")
-        if getattr(args, 'image', False):
-            theme = getattr(args, 'theme', 'sport')
-            out_png = str(output_dir / f"{target}.png")
-            png_path = render_daily_image(mem, output_path=out_png, theme=theme)
-            console.print(f"[green]🖼️  PNG 已生成: {png_path}[/]")
-        return
-
-    # ── 生成图片/HTML 前先补齐数据 ──
-    if want_image:
-        # 补齐 target 前一天到今天的数据（确保活动和健康指标是新的）
+    # ── Step 1: 补充数据（本地优先，缺数据才拉第三方）──
+    if config.provider_type == "garmin" and not storage.has_local_data(user_id, target):
         from_day = target - timedelta(days=2)
-        console.print(f"[dim]🔄 补齐数据: {from_day} ~ {target}[/]")
+        console.print(f"[dim]🔄 本地缺 {target} 数据，从 Garmin 拉取: {from_day} ~ {target}[/]")
         try:
-            # 先清理 pending 状态的记录，强制重新拉取
             storage.reset_pending_metrics(user_id, from_day, target)
             result = storage.sync_range(user_id, from_day, target)
-            new_count = result.get('completed', 0)
+            new_count = result.get('completed', 0) if result else 0
             if new_count > 0:
                 console.print(f"[green]  ✅ 新拉取 {new_count} 条数据[/]")
             else:
                 console.print(f"[dim]  📦 数据已是最新[/]")
+            _sync_garmin_activities(provider, storage, user_id, from_day, target)
         except Exception as exc:
-            console.print(f"[yellow]  ⚠️ 数据补齐部分失败: {exc}[/]")
+            console.print(f"[yellow]  ⚠️ 数据补齐失败: {exc}[/]")
+    else:
+        console.print(f"[dim]📦 本地数据已存在，跳过同步[/]")
 
-    if args.image:
-        # 直接截图模式：重新生成日报（使用最新数据）
-        console.print("[yellow]📰 正在生成日报...[/]")
-        mem = memory_store.generate_daily_report(user_id, target)
-        if mem is None:
-            console.print(f"[red]未找到 {target} 的日报[/]")
-            return
-        if need_ai:
-            ai_result = _get_ai_insight(mem.front_matter, target, memory_store=memory_store)
-            if ai_result:
-                mem.front_matter['ai_insight'] = ai_result
-                mem.save()
-        theme = getattr(args, 'theme', 'sport')
-        output_dir = Path("output")
-        output_dir.mkdir(parents=True, exist_ok=True)
-        out = str(output_dir / f"{target}.png")
-        png_path = render_daily_image(mem, output_path=out, theme=theme)
-        console.print(f"[green]🖼️  PNG 已生成: {png_path}[/]")
+    # ── Step 2: 生成 md 日报（总是覆盖重新生成）──
+    console.print("[yellow]📰 生成日报...[/]")
+    mem = memory_store.generate_daily_report(user_id, target)
+    if mem is None:
+        console.print(f"[red]无法生成 {target} 的日报[/]")
+        return
+    console.print(f"  ✅ md: {mem.path}")
+
+    # ── Step 3: AI 洞察 ──
+    ai_result = _get_ai_insight(mem.front_matter, target, memory_store=memory_store)
+    if ai_result:
+        mem.front_matter['ai_insight'] = ai_result
+        mem.save()
+        console.print(f"  🤖 AI 洞察: {ai_result.get('model', 'deepseek-chat')}")
+    else:
+        console.print(f"  🤖 AI 洞察: 规则引擎 fallback")
+
+    # ── Step 4: JSON-only 模式（跳过 HTML/PNG/终端）──
+    if args.format == "json":
+        import json as _json
+        console.print_json(_json.dumps(mem.front_matter, ensure_ascii=False, indent=2, default=str))
         return
 
-    # 尝试读取已有日报
-    mem = memory_store.get(str(target))
+    # ── Step 5: 渲染 HTML + PNG ──
+    output_dir = Path("output")
+    output_dir.mkdir(parents=True, exist_ok=True)
 
-    # 没有则自动生成（今天或过去日期都支持）
-    if mem is None:
-        console.print(f"[yellow]📰 正在生成 {target} 的日报...[/]")
-        mem = memory_store.generate_daily_report(user_id, target)
+    html_path = str(output_dir / f"{target}.html")
+    render_daily_html(mem, html_path)
+    console.print(f"  🌐 HTML: {html_path}")
 
-    if mem is None:
-        console.print(f"[red]无法生成 {target} 的日报，请先运行 rundown sync[/]")
-        return
+    png_path = str(output_dir / f"{target}.png")
+    try:
+        render_daily_image(mem, output_path=png_path, theme=theme)
+        console.print(f"  🖼️  PNG: {png_path}")
+    except Exception as exc:
+        console.print(f"  [yellow]⚠️  PNG 生成失败: {exc}[/]")
 
-    # --ai 标志：调用 DeepSeek 刷新 AI 洞察（传入 memory_store 收集历史上下文）
-    if need_ai:
-        ai_result = _get_ai_insight(mem.front_matter, target, memory_store=memory_store)
-        if ai_result:
-            mem.front_matter['ai_insight'] = ai_result
-            mem.save()
-            console.print("[green]🤖 DeepSeek AI 洞察已生成（含前7天趋势 + 活跃目标）[/]")
-
-    # Rich 美化输出
+    # ── Step 6: 终端摘要 ──
     fm = mem.front_matter
     ya = fm.get("yesterday_activities", {})
     sleep = fm.get("last_night_sleep", {})
@@ -396,8 +410,6 @@ def cmd_daily(args: argparse.Namespace) -> None:
     load = fm.get("training_load", {})
     recovery = fm.get("recovery", {})
     rec = fm.get("recommendation", {})
-    anomalies = fm.get("anomalies", {})
-    goals = fm.get("goal_progress", {})
 
     weekday_names = ["周一", "周二", "周三", "周四", "周五", "周六", "周日"]
     wd = weekday_names[target.weekday()]
@@ -405,23 +417,17 @@ def cmd_daily(args: argparse.Namespace) -> None:
     console.print()
     console.rule(f"[bold blue]📰 每日训练报告 — {target} {wd}[/]")
 
-    # 昨日训练
+    # 当日训练
     if ya.get("is_rest_day"):
-        steps = ya.get("daily_steps", 0)
-        dist = ya.get("daily_distance_km", 0)
-        active_cal = ya.get("daily_active_cal", 0)
-        level = ya.get("activity_level", "")
-        level_emoji = {"very_active": "🔥", "active": "🟢", "light": "🟡", "sedentary": "⚪"}
-        le = level_emoji.get(level, "")
         console.print(f"\n[bold]🏃 今日训练[/]: [dim]休息日（无正式记录）[/]")
-        console.print(f"   [dim]全天活动: {steps} 步 | {dist} km | 活动消耗 {active_cal} cal {le} {level}[/]")
+        console.print(f"   [dim]全天活动: {ya.get('daily_steps', 0)} 步 | "
+                      f"{ya.get('daily_distance_km', 0)} km | "
+                      f"活动消耗 {ya.get('daily_active_cal', 0)} cal[/]")
     else:
-        total_dist = ya.get('total_distance_km', 0)
         console.print(f"\n[bold]🏃 今日训练[/]: {ya.get('day_type', '?')} | "
                       f"{ya.get('total_duration_min', 0)}min | "
-                      f"{total_dist:.1f}km | "
+                      f"{ya.get('total_distance_km', 0):.1f}km | "
                       f"负荷 {ya.get('total_training_load', 0)}")
-        # 逐条显示
         for s in ya.get('sessions', []):
             d_km = s.get('distance_km') or 0
             console.print(f"   [dim]{s['type']}: {s['name']} | {s['duration_min']}min"
@@ -429,82 +435,35 @@ def cmd_daily(args: argparse.Namespace) -> None:
                           f" | HR {s.get('avg_hr', '?')}"
                           f" | load {s.get('training_load', 0)}[/]")
 
-    # 训练细节分析
-    session_analyses = fm.get("session_analyses", [])
-    if session_analyses:
-        console.print(f"\n[bold]🔬 训练细节分析[/]")
-        for analysis_text in session_analyses:
-            # 提取关键行（非标题和非分隔符的行）
-            for line in analysis_text.split("\n"):
-                stripped = line.strip()
-                if stripped and not stripped.startswith("###") and not stripped.startswith("**分段"):
-                    console.print(f"  [dim]{stripped}[/]")
-
-    # 睡眠
+    # 睡眠 + 状态 + 负荷
     quality_emoji = {"excellent": "🟢", "good": "🟢", "fair": "🟡", "poor": "🔴"}
     qe = quality_emoji.get(sleep.get("quality", ""), "")
-    console.print(f"[bold]😴 睡眠[/]: {sleep.get('total_hours', '?')}h | "
-                  f"评分 {sleep.get('sleep_score', '?')} {qe} {sleep.get('quality', '?')}")
+    sleep_h = sleep.get('total_hours') or 0
+    sleep_str = f"{sleep_h}h" if sleep_h > 0 else "—"
+    console.print(f"[bold]😴 睡眠[/]: {sleep_str} | "
+                  f"评分 {sleep.get('sleep_score', '—')} {qe}")
 
-    # 今晨状态
-    console.print(f"\n[bold]📊 今晨状态[/]")
     status_table = Table(show_header=False, box=None, padding=(0, 2))
-    status_table.add_column(style="dim")
-    status_table.add_column()
-    status_table.add_row("静息心率", f"{morning.get('resting_hr', '?')} bpm")
-    status_table.add_row("HRV", f"{morning.get('hrv_ms', '?')} ms ({morning.get('hrv_status', '?')})")
-    status_table.add_row("身体电量", str(morning.get('body_battery_morning', '?')))
-    status_table.add_row("训练准备", str(morning.get('training_readiness_score', '?')))
+    status_table.add_column(style="dim"); status_table.add_column()
+    status_table.add_row("静息心率", f"{morning.get('resting_hr', '—')} bpm")
+    status_table.add_row("HRV", f"{morning.get('hrv_ms', '—')} ms")
+    bb = morning.get('body_battery_morning')
+    if bb is not None: status_table.add_row("身体电量", str(bb))
+    tr = morning.get('training_readiness_score')
+    if tr is not None: status_table.add_row("训练准备", str(tr))
     console.print(status_table)
 
-    # 训练负荷
-    acwr_emoji = {
-        "optimal": "🟢", "undertraining": "🟡",
-        "overreaching": "🟠", "high_risk": "🔴",
-    }
+    acwr_emoji = {"optimal": "🟢", "overreaching": "🟠", "high_risk": "🔴"}
     ae = acwr_emoji.get(load.get("acwr_status", ""), "")
-    console.print(f"\n[bold]📈 训练负荷[/]: ACWR {load.get('acwr', '?')} "
-                  f"{ae} {load.get('acwr_status', '?')} | "
-                  f"恢复评分 {recovery.get('overall_score', '?')}/100 "
-                  f"({recovery.get('level', '?')})")
+    console.print(f"[bold]📈 负荷[/]: ACWR {load.get('acwr', '—')} {ae} | "
+                  f"恢复 {recovery.get('overall_score', '—')}/100 ({recovery.get('level', '—')})")
 
-    # 今日建议
-    ready_emoji = "✅" if rec.get("ready_to_train") else "❌"
-    console.print(f"\n[bold]🎯 今日训练[/] {ready_emoji} {rec.get('training_advice', '?')} "
-                  f"(强度: {rec.get('intensity', '?')})")
-    for c in rec.get("caution", []):
-        console.print(f"  ⚠️  {c}")
-
-    # 异常提醒
-    if anomalies.get("items"):
-        console.print(f"\n[bold red]⚠️ 异常提醒[/] ({anomalies.get('level', '?')})")
-        for item in anomalies["items"]:
-            console.print(f"  • [{item['severity']}] {item['message']}")
-
-    # AI 教练洞察
+    # 建议 + AI 洞察
     ai = fm.get("ai_insight", {})
     if ai:
-        console.print(f"\n[bold green]🤖 AI 教练洞察[/]")
-        console.print(f"  [bold white]{ai.get('conclusion', '')}[/]")
-        if ai.get("observations"):
-            for obs in ai["observations"]:
-                console.print(f"  [dim]• {obs}[/]")
-        if ai.get("warnings"):
-            for w in ai["warnings"]:
-                console.print(f"  [yellow]⚠ {w}[/]")
-        if ai.get("recommendations"):
-            for r in ai["recommendations"]:
-                console.print(f"  [green]→ {r}[/]")
-
-    # 目标进度
-    active_goals = goals.get("active_goals", [])
-    if active_goals:
-        console.print(f"\n[bold]🏁 目标进度[/]")
-        for g in active_goals:
-            on_track = "🟢" if g.get("on_track") else "🟡"
-            console.print(f"  {on_track} {g.get('name', '?')}: "
-                          f"{g.get('current_best', '?')} → {g.get('target', '?')} "
-                          f"({g.get('weeks_remaining', '?')} 周)")
+        console.print(f"\n[bold green]🤖 AI 洞察[/] [bold white]{ai.get('conclusion', '')}[/]")
+        for obs in ai.get("observations", [])[:3]:
+            console.print(f"  [dim]• {obs}[/]")
 
     console.rule()
 
@@ -1017,19 +976,16 @@ def build_parser() -> argparse.ArgumentParser:
     p_sync.add_argument("--to", dest="to_date", help="结束日期 YYYY-MM-DD")
     p_sync.add_argument("--metrics", nargs="*", help="指定指标（逗号分隔）")
     p_sync.add_argument("--full", action="store_true", help="全量同步")
+    p_sync.add_argument("--force", action="store_true", help="强制覆盖：清除已有数据后重新全量拉取")
     p_sync.add_argument("--no-memory", action="store_true", help="仅同步数据，不生成记忆")
 
     # ── daily ─────────────────────────────────
-    p_daily = sub.add_parser("daily", help="查看/生成每日综合报告")
+    p_daily = sub.add_parser("daily", help="同步数据并生成日报（md + HTML + PNG + AI 洞察）")
     p_daily.add_argument("--date", help="报告日期 YYYY-MM-DD (默认今天)")
-    p_daily.add_argument("--format", choices=["md", "json", "html"], default="md",
-                         help="输出格式: md(终端) | json | html(静态网页)")
-    p_daily.add_argument("--html", action="store_true",
-                         help="输出为静态 HTML 文件 (output/YYYY-MM-DD.html)")
-    p_daily.add_argument("--ai", action="store_true", help="调用 DeepSeek API 生成 AI 教练洞察")
-    p_daily.add_argument("--image", action="store_true", help="导出为 PNG 图片（Playwright）")
-    p_daily.add_argument("--theme", choices=["fresh", "sport", "dark"], default="sport", help="图片/HTML 主题 (默认 sport)")
-    p_daily.add_argument("--no-ai", action="store_true", help="不使用任何 AI 洞察")
+    p_daily.add_argument("--format", choices=["md", "json"], default="md",
+                         help="md(终端+文件) | json(仅 JSON 输出)")
+    p_daily.add_argument("--theme", choices=["fresh", "sport", "dark"], default="sport",
+                         help="HTML/PNG 主题 (默认 sport)")
 
     # ── activities ────────────────────────────
     p_act = sub.add_parser("activities", help="查询活动列表")

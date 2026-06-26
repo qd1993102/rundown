@@ -88,23 +88,26 @@ class GarminActivity(ActivityProvider):
         if aa is None:
             return []
         days = (end - start).days + 1
-        raw = aa.get_recent(days=min(days, 90), limit=200)
+        # Use raw API response to get distance/calories (ActivitySummary doesn't include them)
+        raw_list = aa.raw(limit=200)
         result = []
-        for a in (raw or []):
-            d = a.to_dict() if hasattr(a, "to_dict") else {}
-            st = d.get("start_time_local", "") or ""
-            adate = st[:10]
+        for a in (raw_list or []):
+            st = a.get("startTimeLocal", "") or ""
+            adate = st[:10] if st else ""
             if str(start) <= adate <= str(end):
+                atype = a.get("activityType", {}) or {}
                 result.append(ActivityData(
-                    activity_id=str(d.get("activity_id", "")),
-                    activity_name=d.get("activity_name", ""),
-                    activity_type=d.get("activity_type", {}).get("type_key", "unknown") if isinstance(d.get("activity_type"), dict) else "unknown",
+                    activity_id=str(a.get("activityId", "")),
+                    activity_name=a.get("activityName", "") or "",
+                    activity_type=atype.get("typeKey", "unknown") if isinstance(atype, dict) else "unknown",
                     start_time=st,
-                    duration_seconds=int(d.get("duration", 0) or 0),
-                    distance_meters=float(d.get("distance", 0) or 0),
-                    avg_heart_rate=d.get("average_hr"),
-                    training_load=float(d.get("activity_training_load", 0) or 0),
-                    calories=int(d.get("calories", 0) or 0),
+                    duration_seconds=int(a.get("duration", 0) or 0),
+                    distance_meters=float(a.get("distance", 0) or 0),
+                    avg_heart_rate=a.get("averageHR"),
+                    max_heart_rate=a.get("maxHR"),
+                    training_load=float(a.get("activityTrainingLoad", 0) or 0),
+                    calories=int(a.get("calories", 0) or 0),
+                    elevation_gain=float(a.get("elevationGain", 0) or 0),
                 ))
         return result
 

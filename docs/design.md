@@ -1690,6 +1690,66 @@ rundown mcp
 
 ---
 
+### 4.7 AI 教练模块 (`coach.py`)
+
+为 `rundown daily --ai` 提供 DeepSeek API 驱动的智能训练洞察。
+
+#### 上下文收集策略
+
+AI 教练从多个 memory 来源收集上下文，构建丰富的 prompt：
+
+| 数据来源 | 收集函数 | 内容 |
+|----------|----------|------|
+| 竞技档案 | `_collect_profile()` | `profile/fitness-assessment.md` — 身高体重、各距离 PB、VO2max |
+| 训练偏好 | `_collect_preferences()` | `coaching/preferences.md` — 主项、训练哲学、伤病史 |
+| 活跃目标 | `_collect_goals()` | `goals/active/*.md` — 目标成绩、截止日期、配速对照表（含 body 正文） |
+| 历史趋势 | `_collect_history()` | 前 7 天日报 Front Matter 数字摘要 + 近 3 天训练细节（配速、步频、功率） |
+| 当日数据 | `_build_coach_prompt()` | 当日日报 FM（活动详情、睡眠、晨起指标、负荷、恢复评分） |
+
+#### Prompt 结构
+
+```
+[运动员档案]           ← profile + preferences + goals（新增）
+[今日数据]             ← 当日 FM + session_analyses
+[前 7 天趋势表格]      ← 7 天数字摘要
+[近期训练细节]         ← 近 3 天配速/步频/功率（新增）
+[任务指令]             ← 要求 AI 结合运动员竞技水平给出针对性建议
+```
+
+关键改进：AI 现在知道运动员的全马 PB 2:32:48、sub-2:30 目标、配速能力，能给出与竞技水平匹配的评估。
+
+#### API 调用
+
+- **模型**: `deepseek-chat`（通过 `DEEPSEEK_API_KEY` 环境变量）
+- **接口**: `https://api.deepseek.com/chat/completions`（OpenAI 兼容）
+- **响应**: JSON (`response_format: json_object`)，返回 `{conclusion, observations, recommendations, warnings}`
+- **Fallback**: API 不可用时，回退到 `memory.py` 的 `_generate_ai_insight()` 规则引擎
+
+```python
+# coach.py 入口
+def get_coach_insight(fm, target_date=None, memory_store=None) -> dict | None:
+    # 收集上下文
+    history_context = _collect_history(memory_store, target_date)
+    athlete_context = (profile + preferences + goals)  # 新增
+    prompt = _build_coach_prompt(fm, target_date, history_context, athlete_context)
+    # 调用 DeepSeek API
+    ...
+```
+
+#### 调用链
+
+```
+rundown daily --ai
+  → _get_ai_insight(fm, target_date, memory_store)
+    → coach.get_coach_insight(fm, target_date, memory_store)
+      → _collect_profile / _collect_preferences / _collect_goals / _collect_history
+      → _build_coach_prompt
+      → DeepSeek API
+    → 结果写入 fm['ai_insight'] → mem.save()
+```
+
+---
+
 ## 5. 数据流
 
 ### 5.1 整体数据流
@@ -1982,7 +2042,8 @@ graph TB
 
 **第二优先级（根据对话长度选择性注入）**：
 - 近 7 天趋势数据（从日报的 trends_7d 提取）
-- 活跃目标摘要（仅 YAML Front Matter）
+- 活跃目标详情（含 body 正文中的配速表、关键节点）⭐
+- 运动员档案（个人最佳、身体数据）⭐
 - 教练偏好摘要
 
 **第三优先级（AI 按需通过 Tools 获取）**：
@@ -1990,6 +2051,10 @@ graph TB
 - 具体日期的健康指标（`query_health_metrics`）
 - 历史对比（`compare_periods`）
 - 过往案例（`search_memories --type case_study`）
+
+> ⭐ 标注为 v2 增强：`coach.py` 新增 `_collect_profile()`、`_collect_preferences()`、`_collect_goals()` 三个收集器，
+> 从 `profile/`、`coaching/`、`goals/` 目录读取完整 body 文本，使 AI 能基于运动员真实竞技水平
+> （如全马 PB 2:32:48）和目标（sub-2:30）给出针对性的建议。
 
 #### 8.4.4 AI 对话的典型场景
 

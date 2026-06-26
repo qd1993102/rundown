@@ -372,7 +372,7 @@ class MemoryWriter:
             "date": str(target_date),
             "generated": datetime.now().isoformat(timespec="seconds"),
             "version": 1,
-            # 昨日活动
+            # 当日活动
             "yesterday_activities": activity_summary,
             # 昨夜睡眠
             "last_night_sleep": sleep_summary,
@@ -706,7 +706,7 @@ class MemoryWriter:
             return activities
 
         for a in activities:
-            if a.get("distance_meters") is not None:
+            if a.get("distance_meters"):
                 continue
             aid = a.get("activity_id", "")
             if not aid:
@@ -763,7 +763,7 @@ class MemoryWriter:
         activities: list[dict[str, Any]],
         health_data: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
-        """汇总昨日活动数据。
+        """汇总当日活动数据。
 
         garmy 2.0 存储格式: duration_seconds, avg_heart_rate, training_load, 等扁平字段。
         同时从 health_data 提取全天活动量（步数、距离、卡路里），
@@ -1011,8 +1011,10 @@ class MemoryWriter:
         )
         sleep_score_val = sleep.get("sleep_score")
         if sleep_score_val is None:
-            # 估算: 8h=90, 7h=75, 6h=60
-            sleep_score_val = min(sleep_hours / 9 * 100, 95) if sleep_hours > 0 else 60
+            if sleep_hours > 0:
+                sleep_score_val = min(sleep_hours / 9 * 100, 95)
+            else:
+                sleep_score_val = 70  # 数据缺失时假设正常，不惩罚
         if sleep_score_val > 100:
             sleep_score_val = sleep_score_val / 10
         score += sleep_score_val * weights["sleep"] / 100
@@ -1314,16 +1316,18 @@ class MemoryWriter:
         bb = morning.get("body_battery_morning", 0) or 0
         readiness = morning.get("training_readiness_score", 0) or 0
 
-        # 睡眠评估
+        # 睡眠评估（0 可能表示数据缺失，不一定是真没睡）
         if sleep_hours >= 8 and sleep_quality in ("excellent", "good"):
             observations.append(f"昨夜睡眠 {sleep_hours}h，质量{sleep_quality}，恢复充分")
         elif sleep_hours >= 7:
             observations.append(f"昨夜睡眠 {sleep_hours}h，基本够用但还有优化空间")
-        elif sleep_hours > 0:
+        elif sleep_hours >= 3:
             observations.append(f"昨夜仅睡 {sleep_hours}h，睡眠不足是今天最大的限制因素")
             warnings.append(f"睡眠不足会直接影响训练效果和恢复速度，今晚务必早睡")
+        elif sleep_hours > 0:
+            observations.append(f"昨夜睡眠 {sleep_hours}h（数据可能不完整）")
         else:
-            observations.append("昨夜睡眠数据缺失，无法评估恢复质量")
+            observations.append("睡眠数据未同步（不代表没睡）")
 
         # HRV + RHR 联合分析
         if hrv_status in ("BALANCED", "balanced") and rhr <= 45:
@@ -1354,7 +1358,7 @@ class MemoryWriter:
             observations.append(f"ACWR {acwr} 偏高，接近过度训练边界")
             warnings.append("短期负荷上升较快，建议本周安排 1-2 天轻松训练或主动恢复")
 
-        # ── 昨日训练分析 ──
+        # ── 当日训练分析 ──
         is_rest = activity.get("is_rest_day", False)
         sessions = activity.get("sessions", [])
         total_dur = activity.get("total_duration_min", 0)

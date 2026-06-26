@@ -123,26 +123,62 @@ class Storage:
         except Exception:
             return []
 
-    def reset_pending_metrics(self, user_id: int, start: date, end: date) -> int:
-        """清理区间内 pending/failed 的同步记录，强制下次 sync 重新拉取。
+    def reset_pending_metrics(self, user_id: int, start: date, end: date,
+    force: bool = False) -> int:
+        """清理区间内同步记录，强制下次 sync 重新拉取。
 
         解决 garmy SyncManager 在记录已存在时跳过（即使上次失败）的问题。
+        force=True 时清除所有记录（包括 completed），强制全量重拉。
         """
         import sqlite3
         try:
             db = sqlite3.connect(str(self._db_path))
-            cur = db.execute(
-                "DELETE FROM sync_status WHERE user_id = ? AND sync_date >= ? AND sync_date <= ? AND status IN ('pending', 'failed')",
-                (user_id, str(start), str(end)),
-            )
+            if force:
+                cur = db.execute(
+                    "DELETE FROM sync_status WHERE user_id = ? AND sync_date >= ? AND sync_date <= ?",
+                    (user_id, str(start), str(end)),
+                )
+                db.execute(
+                    "DELETE FROM daily_health_metrics WHERE user_id = ? AND metric_date >= ? AND metric_date <= ?",
+                    (user_id, str(start), str(end)),
+                )
+                db.execute(
+                    "DELETE FROM activities WHERE user_id = ? AND activity_date >= ? AND activity_date <= ?",
+                    (user_id, str(start), str(end)),
+                )
+            else:
+                cur = db.execute(
+                    "DELETE FROM sync_status WHERE user_id = ? AND sync_date >= ? AND sync_date <= ? AND status IN ('pending', 'failed')",
+                    (user_id, str(start), str(end)),
+                )
             deleted = cur.rowcount
             db.commit()
             db.close()
+            action = "强制重置" if force else "重置 pending/failed"
             if deleted:
-                logger.info("重置 %d 条 pending/failed 同步记录 (%s ~ %s)", deleted, start, end)
+                logger.info("%s %d 条同步记录 (%s ~ %s)", action, deleted, start, end)
             return deleted
         except Exception as exc:
-            logger.warning("重置 pending 记录失败: %s", exc)
+            logger.warning("重置同步记录失败: %s", exc)
+            return 0
+
+    def has_local_data(self, user_id: int, target_date: date) -> bool:
+        """检查本地是否已有指定日期的数据（活动 + 健康）。"""
+        import sqlite3
+        try:
+            db = sqlite3.connect(str(self._db_path))
+            has_health = db.execute(
+                "SELECT 1 FROM daily_health_metrics WHERE user_id = ? AND metric_date = ?",
+                (user_id, str(target_date)),
+            ).fetchone()
+            has_activity = db.execute(
+                "SELECT 1 FROM activities WHERE user_id = ? AND activity_date = ?",
+                (user_id, str(target_date)),
+            ).fetchone()
+            db.close()
+            return bool(has_health or has_activity)
+        except Exception:
+            return False
             return 0
 
     # ── 活动查询 ──────────────────────────────

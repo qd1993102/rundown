@@ -173,6 +173,7 @@ class CorosHealth(HealthProvider):
         distance = 0.0
         duration = 0.0
         training_load = 0.0
+        stress_level = None  # Coros: tiredRate
 
         ts_compact = target_date.strftime("%Y%m%d")
         for item in day_list:
@@ -181,6 +182,7 @@ class CorosHealth(HealthProvider):
                 distance = float(item.get("distance", 0) or 0)
                 duration = float(item.get("duration", 0) or 0)
                 training_load = float(item.get("trainingLoad", 0) or 0)
+                stress_level = item.get("tiredRate")  # 0-100 fatigue index
                 break
 
         # Check t7dayList for RHR if not found
@@ -208,6 +210,7 @@ class CorosHealth(HealthProvider):
                 hrv_status=hrv_status,
                 total_distance_meters=distance,
                 total_steps=0,
+                avg_stress_level=stress_level,
             )
 
         return None

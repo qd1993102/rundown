@@ -60,6 +60,34 @@ Built on the `garmy` library. See [README.md](README.md) and [docs/design.md](do
 
 每次发布或重要变更时，在 CHANGELOG 中追加条目，按日期倒序。
 
+## AI System Compatibility Rule (MANDATORY)
+
+**所有 CLI 命令 / 参数调整必须考虑 AI 系统（OpenClaw 等）的调用便利性，同步更新 MCP 能力：**
+
+### 原则
+
+- **CLI 接口设计优先考虑可脚本化**：每个命令都应能被 AI agent 通过 shell 直接调用，避免交互式 prompt（如 `input()`、`confirm()`）阻塞 AI 调用链路
+- **参数命名清晰、一致**：使用 `--kebab-case` 长选项，提供 `-s` 短选项，参数含义自解释，减少 AI 猜测成本
+- **输出格式机器可读**：关键输出使用结构化格式（JSON、CSV、固定列宽表格）；人类可读的 rich 美化输出通过 `--output json` 切换
+- **错误信息包含可操作提示**：exit code 非零时 stderr 输出应包含明确的错误原因和建议操作，方便 AI 自动重试或修复
+
+### MCP 同步
+
+**每次 CLI 命令变更（新增、修改、删除子命令或参数）时，必须同步更新项目 MCP server 的工具定义：**
+
+- 新增命令 → 对应新增 MCP tool
+- 修改参数 → 同步更新 tool 的 inputSchema
+- 删除命令 → 移除对应 tool
+- 确认所有 tool description 准确描述用途和参数，AI 模型依赖这些描述来做 tool selection
+
+### 检查清单
+
+命令调整后确认：
+- [ ] 命令可通过一行 shell 调用完成（无交互步骤）
+- [ ] 有 `--output json` 或等效的机器可读输出选项
+- [ ] 错误信息 self-contained，无需人工解读
+- [ ] MCP tool 定义已同步更新
+
 ## Code Conventions
 
 - Python 3.12+，类型标注
@@ -77,4 +105,5 @@ Built on the `garmy` library. See [README.md](README.md) and [docs/design.md](do
 - [ ] bug fix 已记录到 `docs/bugfixes/`
 - [ ] `docs/CHANGELOG.md` 已追加条目
 - [ ] 代码通过 `pytest`（如有测试）
+- [ ] MCP tool 定义已同步更新（如有 CLI 变更）
 - [ ] 无遗留的 debug print / console.log
