@@ -4,6 +4,21 @@ Rundown 项目变更日志，按日期倒序。
 
 ---
 
+## 2026-06-28
+
+### Changed
+- **多目录数据隔离**: 新增 `RUNDOWN_MEMORY_DIR` 和 `RUNDOWN_HOME` 环境变量支持
+  - `RUNDOWN_MEMORY_DIR` — 覆盖记忆存储目录（目标、档案、日报等），支持多数据目录共享同一份记忆，或各自独立记忆
+  - `RUNDOWN_HOME` — 设后所有相对路径（db_path、memory_dir）及 .env 加载均基于此目录解析，实现一键切换数据工作目录
+  - `get_config()` 增强：若设 `RUNDOWN_HOME`，.env 从该目录加载，相对路径自动解析为绝对路径
+  - `fastmcp.json` 新增 `RUNDOWN_MEMORY_DIR` 环境变量注入，确保 MCP Server 使用正确的记忆目录
+
+### Fixed
+- **多目录下 AI 分析目标/档案缺失**: 从非项目根目录执行命令时，`memory_dir` 依赖 cwd，导致找不到目标、偏好等 AI 上下文文件。现已支持独立配置记忆路径。
+- **CorosHealth 重复方法**: 移除重复的 `__init__` 和 `fetch_health_range` 方法定义（Python 仅最后一个生效，前一个为死代码）
+
+---
+
 ## 2026-06-26
 
 ### Fixed
