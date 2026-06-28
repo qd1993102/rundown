@@ -92,11 +92,13 @@ class CorosActivity(ActivityProvider):
         result = []
         for a in (raw or []):
             # coros-mcp ActivitySummary has: activity_id, name, sport_type,
-            # start_time (unix ts), duration_seconds, distance_meters, avg_hr, etc.
+            # start_time (unix ts, may be int or str), duration_seconds, etc.
             ts = getattr(a, 'start_time', 0) or 0
             try:
                 from datetime import datetime
-                start_str = datetime.fromtimestamp(ts).strftime("%Y-%m-%d %H:%M:%S") if ts > 100000 else str(ts)
+                # coros-mcp may return start_time as int or str — coerce to int
+                ts_int = int(ts) if isinstance(ts, str) else ts
+                start_str = datetime.fromtimestamp(ts_int).strftime("%Y-%m-%d %H:%M:%S") if ts_int > 100000 else str(ts_int)
             except Exception:
                 start_str = str(ts)
             sport_map = {"100": "running", "101": "running_indoor", "200": "cycling",
@@ -129,11 +131,10 @@ class CorosActivity(ActivityProvider):
 class CorosHealth(HealthProvider):
     def __init__(self, auth: CorosAuth):
         self._auth = auth
-
-    def __init__(self, auth: CorosAuth):
-        self._auth = auth
         self._analyse_cache: dict | None = None
         self._hrv_cache: list | None = None
+        # Note: cache persists for process lifetime — fine for CLI (short-lived),
+        # but MCP server may need restart to pick up new Coros data.
 
     def _get_analyse_data(self) -> dict:
         """获取 analyse/query 数据（缓存）。"""
@@ -214,16 +215,6 @@ class CorosHealth(HealthProvider):
             )
 
         return None
-
-    def fetch_health_range(self, start: date, end: date) -> list[DailyHealth]:
-        result = []
-        d = start
-        while d <= end:
-            h = self.fetch_daily_health(d)
-            if h:
-                result.append(h)
-            d += timedelta(days=1)
-        return result
 
     def fetch_health_range(self, start: date, end: date) -> list[DailyHealth]:
         result = []

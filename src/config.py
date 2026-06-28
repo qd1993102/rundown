@@ -74,7 +74,14 @@ class Config:
     )
 
     # ── 内部路径 ──────────────────────────────
-    memory_dir: str = "./memory"
+    memory_dir: str = field(
+        default_factory=lambda: os.getenv("RUNDOWN_MEMORY_DIR", "./memory")
+    )
+
+    # ── 工作目录（可选，设后所有相对路径基于此解析）──
+    rundown_home: str = field(
+        default_factory=lambda: os.getenv("RUNDOWN_HOME", "")
+    )
 
     def validate(self) -> None:
         """校验必填配置项，缺失则抛出 ConfigError。"""
@@ -109,9 +116,19 @@ def get_config() -> Config:
 
     每次调用都重新加载 .env，确保读取当前工作目录的配置。
     优先级: 系统环境变量 > 项目 .env > ~/.rundown/.env > 默认值
+
+    若设置 RUNDOWN_HOME 环境变量（须为实际环境变量，不可写在 .env 中）：
+    - 从 RUNDOWN_HOME/.env 加载项目配置
+    - 所有相对路径（db_path、memory_dir）基于 RUNDOWN_HOME 解析
     """
-    # 每次调用都重新加载当前目录的 .env（override=True 确保覆盖旧值）
-    cwd_env = Path.cwd() / ".env"
+    # RUNDOWN_HOME 必须从实际环境变量读取（非 .env），避免鸡生蛋问题
+    rundown_home = os.getenv("RUNDOWN_HOME", "")
+    if rundown_home:
+        os.environ["RUNDOWN_HOME"] = rundown_home  # 确保后续 Config() 也能读到
+
+    # 1. 加载 .env：优先当前目录（或 RUNDOWN_HOME），再加载全局
+    base_dir = Path(rundown_home) if rundown_home else Path.cwd()
+    cwd_env = base_dir / ".env"
     if cwd_env.exists():
         load_dotenv(cwd_env, override=True)  # 当前目录 .env 优先
     home_env = Path.home() / ".rundown" / ".env"
@@ -119,6 +136,15 @@ def get_config() -> Config:
         load_dotenv(home_env, override=False)  # 全局配置只补充缺失项
 
     config = Config()
+
+    # 2. 若设置了 RUNDOWN_HOME，将相对路径解析为基于 RUNDOWN_HOME 的绝对路径
+    if rundown_home:
+        home = Path(rundown_home)
+        if not Path(config.db_path).is_absolute():
+            config.db_path = str(home / config.db_path)
+        if not Path(config.memory_dir).is_absolute():
+            config.memory_dir = str(home / config.memory_dir)
+
     config.validate()
     # 配置日志
     logging.basicConfig(

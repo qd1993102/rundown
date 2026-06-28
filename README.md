@@ -206,6 +206,8 @@ output/
 | `RUNDOWN_PASSWORD` | ✅ | — | 运动平台登录密码（兼容旧名 `GARMIN_PASSWORD`） |
 | `RUNDOWN_PROVIDER` | — | `garmin` | 数据源: garmin / coros |
 | `RUNDOWN_DB_PATH` | — | `./data/rundown_data.db` | SQLite 数据库路径 |
+| `RUNDOWN_MEMORY_DIR` | — | `./memory` | 记忆存储目录（目标、档案、日报等） |
+| `RUNDOWN_HOME` | — | (当前目录) | 数据工作目录，设后所有相对路径基于此解析 |
 | `RUNDOWN_SYNC_DAYS` | — | `30` | 默认同步天数 |
 | `RUNDOWN_LOG_LEVEL` | — | `INFO` | 日志级别 |
 | `GARMIN_DOMAIN` | — | `garmin.com` | Garmin 专用：API 域名 |

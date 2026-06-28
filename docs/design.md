@@ -97,10 +97,14 @@ graph TD
 | `GARMIN_DB_PATH` | ❌ | `./data/garmin_data.db` | SQLite 数据库路径 |
 | `GARMIN_SYNC_DAYS` | ❌ | `30` | 默认同步最近 N 天的数据 |
 | `GARMIN_LOG_LEVEL` | ❌ | `INFO` | 日志级别 |
+| `RUNDOWN_MEMORY_DIR` | ❌ | `./memory` | 记忆存储根目录（目标、档案、日报等） |
+| `RUNDOWN_HOME` | ❌ | (当前目录) | 数据工作目录，设后所有相对路径基于此解析 |
 
 **设计要点**:
 - 使用 `python-dotenv` 支持 `.env` 文件（方便本地开发）
-- 环境变量优先级: 系统环境变量 > `.env` 文件 > 默认值
+- 环境变量优先级: 系统环境变量 > 项目 .env > ~/.rundown/.env > 默认值
+- 支持 `RUNDOWN_HOME` 环境变量（须为实际环境变量，不可写在 .env 中），设后 .env 及所有相对路径（db_path、memory_dir）均基于此目录解析
+- 支持 `RUNDOWN_MEMORY_DIR` 覆盖记忆存储目录，支持多目录共享同一份记忆
 - 密码类敏感信息绝不打印到日志
 - 启动时校验必填变量，缺失则明确报错退出
 
