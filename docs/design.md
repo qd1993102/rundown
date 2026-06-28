@@ -1690,6 +1690,66 @@ rundown mcp
 
 ---
 
+### 4.7 AI 教练模块 (`coach.py`)
+
+为 `rundown daily --ai` 提供 DeepSeek API 驱动的智能训练洞察。
+
+#### 上下文收集策略
+
+AI 教练从多个 memory 来源收集上下文，构建丰富的 prompt：
+
+| 数据来源 | 收集函数 | 内容 |
+|----------|----------|------|
+| 竞技档案 | `_collect_profile()` | `profile/fitness-assessment.md` — 身高体重、各距离 PB、VO2max |
+| 训练偏好 | `_collect_preferences()` | `coaching/preferences.md` — 主项、训练哲学、伤病史 |
+| 活跃目标 | `_collect_goals()` | `goals/active/*.md` — 目标成绩、截止日期、配速对照表（含 body 正文） |
+| 历史趋势 | `_collect_history()` | 前 7 天日报 Front Matter 数字摘要 + 近 3 天训练细节（配速、步频、功率） |
+| 当日数据 | `_build_coach_prompt()` | 当日日报 FM（活动详情、睡眠、晨起指标、负荷、恢复评分） |
+
+#### Prompt 结构
+
+```
+[运动员档案]           ← profile + preferences + goals（新增）
+[今日数据]             ← 当日 FM + session_analyses
+[前 7 天趋势表格]      ← 7 天数字摘要
+[近期训练细节]         ← 近 3 天配速/步频/功率（新增）
+[任务指令]             ← 要求 AI 结合运动员竞技水平给出针对性建议
+```
+
+关键改进：AI 现在知道运动员的全马 PB 2:32:48、sub-2:30 目标、配速能力，能给出与竞技水平匹配的评估。
+
+#### API 调用
+
+- **模型**: `deepseek-chat`（通过 `DEEPSEEK_API_KEY` 环境变量）
+- **接口**: `https://api.deepseek.com/chat/completions`（OpenAI 兼容）
+- **响应**: JSON (`response_format: json_object`)，返回 `{conclusion, observations, recommendations, warnings}`
+- **Fallback**: API 不可用时，回退到 `memory.py` 的 `_generate_ai_insight()` 规则引擎
+
+```python
+# coach.py 入口
+def get_coach_insight(fm, target_date=None, memory_store=None) -> dict | None:
+    # 收集上下文
+    history_context = _collect_history(memory_store, target_date)
+    athlete_context = (profile + preferences + goals)  # 新增
+    prompt = _build_coach_prompt(fm, target_date, history_context, athlete_context)
+    # 调用 DeepSeek API
+    ...
+```
+
+#### 调用链
+
+```
+rundown daily --ai
+  → _get_ai_insight(fm, target_date, memory_store)
+    → coach.get_coach_insight(fm, target_date, memory_store)
+      → _collect_profile / _collect_preferences / _collect_goals / _collect_history
+      → _build_coach_prompt
+      → DeepSeek API
+    → 结果写入 fm['ai_insight'] → mem.save()
+```
+
+---
+
 ## 5. 数据流
 
 ### 5.1 整体数据流
@@ -1982,7 +2042,8 @@ graph TB
 
 **第二优先级（根据对话长度选择性注入）**：
 - 近 7 天趋势数据（从日报的 trends_7d 提取）
-- 活跃目标摘要（仅 YAML Front Matter）
+- 活跃目标详情（含 body 正文中的配速表、关键节点）⭐
+- 运动员档案（个人最佳、身体数据）⭐
 - 教练偏好摘要
 
 **第三优先级（AI 按需通过 Tools 获取）**：
@@ -1990,6 +2051,10 @@ graph TB
 - 具体日期的健康指标（`query_health_metrics`）
 - 历史对比（`compare_periods`）
 - 过往案例（`search_memories --type case_study`）
+
+> ⭐ 标注为 v2 增强：`coach.py` 新增 `_collect_profile()`、`_collect_preferences()`、`_collect_goals()` 三个收集器，
+> 从 `profile/`、`coaching/`、`goals/` 目录读取完整 body 文本，使 AI 能基于运动员真实竞技水平
+> （如全马 PB 2:32:48）和目标（sub-2:30）给出针对性的建议。
 
 #### 8.4.4 AI 对话的典型场景
 
@@ -2171,6 +2236,103 @@ rundown mcp --daemon
 | **Phase 13** | 导出功能：exporter.py，CSV / JSON 导出 | P1 |
 | **Phase 14** | 定时任务：cron/launchd 配置模板，每日自动 sync + 生成日报 | P1 |
 | **Phase 15** | 测试与文档：单元测试（聚合算法、schema 校验）、README 完善、memory/README.md 使用指南、OpenClaw 配置文档 | P1 |
+
+---
+
+## 12. 多平台数据源架构 ⭐
+
+### 12.1 设计目标
+
+Rundown 支持 Garmin 和 Coros 两种运动平台，通过统一的 `DataProvider` 接口切换。
+用户只需在 `.env` 中修改一行即可切换数据源：
+
+```bash
+RUNDOWN_PROVIDER=garmin  # 或 coros
+```
+
+### 12.2 架构
+
+```mermaid
+graph TD
+    CLI["CLI / MCP Server"]
+    MEMORY["MemoryStore"]
+    PROVIDER["DataProvider 接口"]
+
+    subgraph Providers
+        GARMIN["GarminProvider<br/>(garmy + garmy 2.0)"]
+        COROS["CorosProvider<br/>(coros-mcp)"]
+    end
+
+    subgraph Auth
+        GA["GarminAuth<br/>OAuth + MFA"]
+        CA["CorosAuth<br/>email/phone + MD5<br/>+ mobile encrypt"]
+    end
+
+    subgraph Data
+        G_ACT["GarminActivity<br/>50+ 字段<br/>GPS + 分段配速"]
+        C_ACT["CorosActivity<br/>activity_id/name/type<br/>duration/distance/hr/load"]
+        G_HEALTH["GarminHealth<br/>睡眠/HRV/RHR<br/>压力/Body Battery<br/>训练准备/步数"]
+        C_HEALTH["CorosHealth<br/>analyse/query → RHR<br/>dashboard/query → HRV"]
+    end
+
+    CLI --> MEMORY
+    MEMORY --> PROVIDER
+    PROVIDER --> GARMIN
+    PROVIDER --> COROS
+    GARMIN --> GA --> G_ACT
+    GARMIN --> GA --> G_HEALTH
+    COROS --> CA --> C_ACT
+    COROS --> CA --> C_HEALTH
+```
+
+### 12.3 数据可用性对比
+
+| 指标 | Garmin | Coros | 说明 |
+|------|:---:|:---:|------|
+| 运动列表 | ✅ 全量 | ✅ | Garmin: 50+ 字段含 GPS/分段/训练效果 |
+| 运动详情 | ✅ 分段配速/步频/功率/GCT | ✅ 基础字段 | Garmin 数据更丰富 |
+| 睡眠时长 | ✅ | ⚠️ 需 mobile token | Coros web API 不提供 |
+| 深睡/REM | ✅ | ⚠️ 需 mobile token | 同上 |
+| 静息心率 | ✅ | ✅ | Coros: analyse/query |
+| HRV | ✅ | ✅ | Coros: dashboard/query |
+| 身体电量 | ✅ | ❌ | Garmin 专有 |
+| 训练准备 | ✅ | ❌ | Garmin 专有 |
+| 压力 | ✅ | ❌ | Garmin 专有 |
+| 步数 | ✅ | ❌ | Coros web API 不提供 |
+| 卡路里 | ✅ | ❌ | 同上 |
+| VO2max | ✅ | ✅ | 来自 analyse 数据 |
+| 训练负荷 | ✅ | ✅ | Coros: analyse/query |
+
+### 12.4 Provider 切换
+
+```bash
+# Garmin (默认)
+RUNDOWN_PROVIDER=garmin
+RUNDOWN_ACCOUNT=user@gmail.com
+RUNDOWN_PASSWORD=xxx
+
+# Coros (中国区手机号)
+RUNDOWN_PROVIDER=coros
+RUNDOWN_ACCOUNT=13812345678
+RUNDOWN_PASSWORD=xxx
+```
+
+每个 Provider 独立管理自己的数据库和 Token。切换到不同目录 + 不同 `.env` 即可隔离数据。
+
+### 12.5 Coros API 接入细节
+
+基于 `coros-mcp` 库（MIT 协议，GitHub: cygnusb/coros-mcp）：
+
+- **认证**：POST `/account/login`，MD5 密码 + mobile encrypt fallback
+- **活动列表**：GET `/activity/query`，日期格式 `YYYYMMDD`（无连字符）
+- **HRV 数据**：GET `/dashboard/query`，返回 7 天 HRV
+- **每日指标**：GET `/analyse/query`，返回 RHR/距离/时长/负荷/VO2max
+- **睡眠**：需要 Mobile API (`apicn.coros.com`)，需额外 mobile token
+
+已知限制：
+- `/activity/query` 日期参数必须 `YYYYMMDD` 格式
+- 睡眠数据需要 mobile token（coros-mcp 支持自动获取）
+- 身体电量/训练准备/压力仅 Garmin 提供
 
 ---
 

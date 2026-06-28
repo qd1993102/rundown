@@ -490,7 +490,7 @@ def render_daily_html(memory: Memory, output_path: str | None = None) -> str:
   {_hero(fm)}
   {_metric_strip(fm)}
 
-  <div class="section-title">🏃 昨日训练</div>
+  <div class="section-title">🏃 今日训练</div>
   {_sessions(fm)}
 
   <div class="section-title">📈 训练负荷</div>
