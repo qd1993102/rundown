@@ -3,8 +3,8 @@
 Rundown — Your daily running rundown.
 
 Commands:
-    rundown sync        同步数据 + 生成日报和记忆摘要
-    rundown daily       查看/生成每日综合报告
+    rundown daily       自动同步数据并生成每日综合报告（HTML + PNG + 终端）
+    rundown sync        纯数据同步（批量拉取，不含报告生成）
     rundown activities  查询活动列表
     rundown health      查询健康指标
     rundown memory      记忆管理（list/show/summarize/goal/plan/...）
@@ -116,11 +116,11 @@ def _parse_date(date_str: str) -> date:
 # ═══════════════════════════════════════════════════════════════
 
 def cmd_sync(args: argparse.Namespace) -> None:
-    """sync 命令：同步数据 + 生成记忆。"""
+    """sync 命令：纯数据同步（不含记忆生成，使用 rundown daily 生成报告）。"""
     config, provider, storage, memory_store, user_id = _setup()
 
     console.print(Panel.fit(
-        f"[bold blue]🔄 Rundown Sync ({config.provider_type})[/]\n同步运动数据并生成记忆",
+        f"[bold blue]🔄 Rundown Sync ({config.provider_type})[/]\n同步运动数据",
         border_style="blue",
     ))
 
@@ -159,9 +159,7 @@ def cmd_sync(args: argparse.Namespace) -> None:
             _sync_garmin_activities(provider, storage, user_id, start, end)
         except Exception as exc:
             console.print(f"[red]❌ 同步失败: {exc}[/]")
-            if not args.no_memory:
-                console.print("[yellow]⚠️  跳过记忆生成[/]")
-                return
+            return
     else:
         # Coros: 直接从 API 拉取并存入 SQLite
         try:
@@ -169,13 +167,9 @@ def cmd_sync(args: argparse.Namespace) -> None:
             _sync_coros(provider, storage, user_id, start, end)
         except Exception as exc:
             console.print(f"[red]❌ 同步失败: {exc}[/]")
-            if not args.no_memory:
-                console.print("[yellow]⚠️  跳过记忆生成[/]")
-                return
+            return
 
-    # 生成记忆
-    if not args.no_memory:
-        _generate_memories(memory_store, user_id)
+    console.print("[dim]💡 运行 [bold]rundown daily[/bold] 生成日报[/]")
 
 
 def _sync_garmin_activities(provider, storage, user_id: int, start: date, end: date) -> None:
@@ -322,47 +316,70 @@ def _sync_coros(provider, storage, user_id: int, start: date, end: date) -> None
     console.print(f"[green]✅ Coros 同步完成[/]")
 
 
-def _generate_memories(memory_store, user_id: int) -> None:
-    """生成全部记忆。"""
-    console.print("\n[bold]🧠 生成记忆...[/]")
-    try:
-        daily = memory_store.generate_daily_report(user_id)
-        console.print(f"  📰 日报: {daily.id}")
-        summary = memory_store.generate_weekly_summary(user_id)
-        console.print(f"  📊 周摘要: {summary.id}")
-        recovery = memory_store.generate_recovery_summary(user_id)
-        console.print(f"  💤 恢复摘要: {recovery.id}")
-        for cat in ["daily", "summaries", "recovery", "execution"]:
-            memory_store.rebuild_index(f"auto/{cat}")
-        console.print("[green]✅ 记忆生成完成[/]")
-    except Exception as exc:
-        console.print(f"[red]❌ 记忆生成失败: {exc}[/]")
-
-
 def cmd_daily(args: argparse.Namespace) -> None:
-    """daily 命令：同步 → 生成 md → HTML → PNG → AI 洞察。"""
+    """daily 命令：自动同步 → 生成 md → HTML → PNG → AI 洞察。"""
     config, provider, storage, memory_store, user_id = _setup()
 
     target = _parse_date(args.date) if args.date else date.today()
     theme = getattr(args, 'theme', 'sport')
+    skip_sync = getattr(args, 'skip_sync', False)
+    full_sync = getattr(args, 'full', False)
+    force_sync = getattr(args, 'force', False)
+    sync_days = getattr(args, 'sync_days', None)
 
-    # ── Step 1: 补充数据（本地优先，缺数据才拉第三方）──
-    if config.provider_type == "garmin" and not storage.has_local_data(user_id, target):
-        from_day = target - timedelta(days=2)
-        console.print(f"[dim]🔄 本地缺 {target} 数据，从 Garmin 拉取: {from_day} ~ {target}[/]")
-        try:
-            storage.reset_pending_metrics(user_id, from_day, target)
-            result = storage.sync_range(user_id, from_day, target)
-            new_count = result.get('completed', 0) if result else 0
-            if new_count > 0:
-                console.print(f"[green]  ✅ 新拉取 {new_count} 条数据[/]")
+    # ── Step 1: 自动同步检查 ──
+    if not skip_sync:
+        # 确定同步日期范围
+        if full_sync:
+            from_day = target - timedelta(days=365 * 3)
+            to_day = target
+        elif sync_days is not None:
+            from_day = target - timedelta(days=sync_days)
+            to_day = target
+        else:
+            # 默认：检查目标日期及前 2 天是否有本地数据
+            missing_dates = []
+            for i in range(3):
+                d = target - timedelta(days=i)
+                if not storage.has_local_data(user_id, d):
+                    missing_dates.append(d)
+            if missing_dates:
+                from_day = missing_dates[-1]  # 最早缺失日期
+                to_day = target
             else:
-                console.print(f"[dim]  📦 数据已是最新[/]")
-            _sync_garmin_activities(provider, storage, user_id, from_day, target)
-        except Exception as exc:
-            console.print(f"[yellow]  ⚠️ 数据补齐失败: {exc}[/]")
-    else:
-        console.print(f"[dim]📦 本地数据已存在，跳过同步[/]")
+                from_day = None
+                to_day = None
+
+        if from_day and to_day:
+            console.print(f"[dim]🔄 数据同步: {from_day} ~ {to_day}[/]")
+            if force_sync:
+                console.print("[yellow]⚠️  强制模式：清除已有数据后重新拉取[/]")
+                storage.reset_pending_metrics(user_id, from_day, to_day, force=True)
+
+            try:
+                if config.provider_type == "garmin":
+                    provider.authenticate()
+                    # 仅在非 force 时 reset pending（force 已在上方处理）
+                    if not force_sync:
+                        storage.reset_pending_metrics(user_id, from_day, to_day)
+                    result = storage.sync_range(user_id, from_day, to_day)
+                    new_count = result.get('completed', 0) if result else 0
+                    if new_count > 0:
+                        console.print(f"[green]  ✅ 健康数据: {new_count} 条[/]")
+                    else:
+                        console.print(f"[dim]  📦 健康数据已是最新[/]")
+                    _sync_garmin_activities(provider, storage, user_id, from_day, to_day)
+                else:
+                    # Coros
+                    provider.authenticate()
+                    if force_sync:
+                        # Coros 强制模式：清除已有数据
+                        storage.reset_pending_metrics(user_id, from_day, to_day, force=True)
+                    _sync_coros(provider, storage, user_id, from_day, to_day)
+            except Exception as exc:
+                console.print(f"[yellow]  ⚠️ 数据同步失败: {exc}，使用已有本地数据继续...[/]")
+        else:
+            console.print(f"[dim]📦 本地数据完整，跳过同步[/]")
 
     # ── Step 2: 生成 md 日报（总是覆盖重新生成）──
     console.print("[yellow]📰 生成日报...[/]")
@@ -751,7 +768,6 @@ RUNDOWN_LOG_LEVEL=INFO
             full = False
             days = int(sync_days) if sync_days.isdigit() else 30
             metrics = None
-            no_memory = False
         cmd_sync(SyncArgs())
 
 
@@ -922,7 +938,7 @@ def cmd_setup(args: argparse.Namespace) -> None:
     pref_path.write_text(build_memory_file(pref_fm, pref_body), encoding="utf-8")
     console.print(f"  ✅ 训练偏好: {pref_path}")
 
-    console.print("\n[green]✅ Setup 完成！运行 rundown sync 同步数据，rundown daily 查看日报。[/]")
+    console.print("\n[green]✅ Setup 完成！运行 rundown daily 即可自动同步数据并查看日报。[/]")
 
 
 def _ask(prompt: str, default: str = "") -> str:
@@ -970,22 +986,29 @@ def build_parser() -> argparse.ArgumentParser:
     sub.add_parser("init", help="引导式创建配置文件 (.env)")
 
     # ── sync ──────────────────────────────────
-    p_sync = sub.add_parser("sync", help="同步数据 + 生成记忆")
+    p_sync = sub.add_parser("sync", help="纯数据同步（不含记忆生成）")
     p_sync.add_argument("--days", type=int, help="同步最近 N 天")
     p_sync.add_argument("--from", dest="from_date", help="起始日期 YYYY-MM-DD")
     p_sync.add_argument("--to", dest="to_date", help="结束日期 YYYY-MM-DD")
     p_sync.add_argument("--metrics", nargs="*", help="指定指标（逗号分隔）")
     p_sync.add_argument("--full", action="store_true", help="全量同步")
     p_sync.add_argument("--force", action="store_true", help="强制覆盖：清除已有数据后重新全量拉取")
-    p_sync.add_argument("--no-memory", action="store_true", help="仅同步数据，不生成记忆")
 
     # ── daily ─────────────────────────────────
-    p_daily = sub.add_parser("daily", help="同步数据并生成日报（md + HTML + PNG + AI 洞察）")
+    p_daily = sub.add_parser("daily", help="自动同步数据并生成日报（md + HTML + PNG + AI 洞察）")
     p_daily.add_argument("--date", help="报告日期 YYYY-MM-DD (默认今天)")
     p_daily.add_argument("--format", choices=["md", "json"], default="md",
                          help="md(终端+文件) | json(仅 JSON 输出)")
     p_daily.add_argument("--theme", choices=["fresh", "sport", "dark"], default="sport",
                          help="HTML/PNG 主题 (默认 sport)")
+    p_daily.add_argument("--sync-days", type=int, default=None,
+                         help="同步最近 N 天数据后生成报告 (默认自动检测)")
+    p_daily.add_argument("--skip-sync", action="store_true",
+                         help="跳过自动同步，仅基于本地已有数据生成报告")
+    p_daily.add_argument("--full", action="store_true",
+                         help="全量同步（3年）后生成报告")
+    p_daily.add_argument("--force", action="store_true",
+                         help="强制覆盖已有数据后重新同步")
 
     # ── activities ────────────────────────────
     p_act = sub.add_parser("activities", help="查询活动列表")

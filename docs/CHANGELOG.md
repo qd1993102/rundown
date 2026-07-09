@@ -4,6 +4,20 @@ Rundown 项目变更日志，按日期倒序。
 
 ---
 
+## 2026-07-09
+
+### Changed
+- **`daily` 与 `sync` 命令合并重构**: `daily` 成为一站式命令，自动检查并同步数据后生成报告，无需先跑 `sync` 再跑 `daily`
+  - `cmd_daily` 增强：自动检查本地数据完整性（支持 Garmin + Coros），缺失时自动拉取
+  - `cmd_daily` 新增 `--sync-days`、`--skip-sync`、`--full`、`--force` 参数，灵活控制同步行为
+  - `cmd_sync` 简化为纯数据同步工具，移除记忆生成功能和 `--no-memory` 参数
+  - `cmd_sync` 完成后提示用户运行 `rundown daily` 生成报告
+  - 移除 `_generate_memories()` 函数（功能已整合到 `daily`）
+- **影响范围**: main.py, mcp_server.py, README.md
+- **关联文档**: [docs/design/04-modules.md](docs/design/04-modules.md)
+
+---
+
 ## 2026-06-28
 
 ### Changed

@@ -13,7 +13,7 @@ cp .env.example .env
 pip install -e .
 
 # 3. 首次同步
-rundown sync
+rundown sync --full
 
 # 4. 查看今日日报（自动同步 + md + HTML + PNG + AI）
 rundown daily
@@ -23,15 +23,14 @@ rundown daily
 
 ### `rundown sync`
 
-同步 Garmin 数据并自动生成日报、周摘要、恢复摘要。
+纯数据同步：从运动平台拉取数据到本地，不生成报告（报告生成使用 `rundown daily`）。
 
 ```bash
-rundown sync                        # 默认：拉取最近 30 天 + 生成全部记忆
+rundown sync                        # 默认：拉取最近 30 天
 rundown sync --days 90              # 拉取最近 90 天
 rundown sync --from 2026-01-01 --to 2026-06-24  # 指定日期范围
 rundown sync --full                 # 全量同步（最多回溯 3 年）
 rundown sync --force                # 强制覆盖：清除已有数据后重新拉取
-rundown sync --no-memory            # 仅同步数据，不生成记忆
 rundown sync --metrics sleep hrv    # 仅同步指定指标
 ```
 
@@ -43,25 +42,29 @@ rundown sync --metrics sleep hrv    # 仅同步指定指标
 | `--metrics ...` | list | all | 指定指标（空格分隔） |
 | `--full` | flag | — | 全量同步（最多 3 年） |
 | `--force` | flag | — | 强制覆盖：清除已有数据后重新拉取 |
-| `--no-memory` | flag | — | 仅同步，不生成记忆 |
-| `--no-memory` | flag | — | 仅同步数据，跳过记忆生成 |
+
+> 💡 同步完成后运行 `rundown daily` 生成日报。
 
 ---
 
 ### `rundown daily`
 
-同步数据并生成完整日报 — md 记忆文件 + HTML 静态网页 + PNG 图片 + AI 洞察，一步到位。
+一站式命令：自动检查并同步数据 → 生成完整日报（md + HTML + PNG + AI 洞察）。
 
 ```bash
-rundown daily                       # 今天
+rundown daily                       # 今天（自动检查并补同步缺失数据）
 rundown daily --date 2026-06-25     # 指定日期
 rundown daily --theme dark          # 暗黑主题
 rundown daily --format json         # 仅 JSON 输出
+rundown daily --skip-sync           # 跳过同步，仅基于本地数据生成报告
+rundown daily --sync-days 7         # 同步最近 7 天数据后生成报告
+rundown daily --full                # 全量同步（3年）后生成报告
+rundown daily --force               # 强制覆盖已有数据后重新同步
 ```
 
-每次执行自动：检查本地数据 →（缺失时从 Garmin 拉取）→ 生成 md → HTML → PNG → AI 洞察。
+每次执行自动：检查本地数据完整性 →（缺失时自动拉取）→ 生成 md → AI 洞察 → HTML → PNG → 终端展示。
 
-> 本地优先策略：如果目标日期已有本地数据，跳过网络请求直接生成报告。需要强制刷新时先运行 `rundown sync --force`。
+> 默认智能检测：只同步缺失的日期，已有本地数据则跳过。`--force` 可强制重新拉取。
 
 生成文件：
 - `memory/auto/daily/YYYY-MM-DD.md` — 记忆文件
@@ -73,6 +76,10 @@ rundown daily --format json         # 仅 JSON 输出
 | `--date DATE` | str | 今天 | 报告日期 YYYY-MM-DD |
 | `--format FMT` | md/json | md | md(终端+文件输出) / json |
 | `--theme NAME` | str | sport | HTML/PNG 主题: fresh / sport / dark |
+| `--sync-days N` | int | auto | 同步最近 N 天（默认自动检测缺失） |
+| `--skip-sync` | flag | — | 跳过同步，仅用本地数据 |
+| `--full` | flag | — | 全量同步后生成报告 |
+| `--force` | flag | — | 强制覆盖已有数据后重新同步 |
 
 ---
 
@@ -282,7 +289,7 @@ rundown/
 │       └── execution/   训练执行跟踪
 ├── output/              HTML 日报输出目录
 ├── data/                SQLite 数据库
-├── docs/design.md       技术设计文档 v3.0
+├── docs/design/          技术设计文档 v3.0（模块化拆分）
 └── pyproject.toml
 ```
 
@@ -296,4 +303,4 @@ pip install -e ".[dev]"
 pytest
 ```
 
-> **Documentation Sync Rule**: 每次代码变更后，必须同步更新 `docs/design.md` 和 `README.md`。
+> **Documentation Sync Rule**: 每次代码变更后，必须同步更新 `docs/design/` 下的对应子文档和 `README.md`。

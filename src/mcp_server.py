@@ -47,7 +47,7 @@ def create_server(config, provider, storage, memory_store, user_id: int):
 - 用户："生成今天的HTML日报" → 你调用 generate_html_report
 
 ## 数据时效
-- 健康数据每日更新（需先运行 `rundown sync`）
+- 健康数据每日更新（需先运行 `rundown daily` 或 `rundown sync`）
 - 日报每天早上自动生成
 - 活动详情随时可查""",
     )
