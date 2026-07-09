@@ -1,0 +1,118 @@
+# 设计方案 — 5. 数据流
+
+> 属于 [设计方案索引](../design.md) · 版本 v3.0 · 2026-06-24
+
+---
+
+## 5. 数据流
+
+### 5.1 整体数据流
+
+```mermaid
+graph LR
+    A["📋 读取<br/>环境变量"] --> B["🔐 创建<br/>AuthClient"]
+    B --> C["✅ 检查<br/>Token 有效性"]
+    C --> D["📡 创建<br/>APIClient"]
+    D --> E["📥 按日期<br/>/类型拉取"]
+    E --> F["🔄 SyncManager<br/>调度 + 去重"]
+    F --> G[("💾 SQLite<br/>garmin_data.db")]
+
+    G --> H["🖥️ CLI 查询<br/>终端展示"]
+    G --> I["📄 CSV 导出<br/>文件输出"]
+    G --> J["🧠 MemoryStore<br/>聚合生成"]
+    J --> K["📝 memory/<br/>Markdown<br/>+ YAML FM"]
+
+    K --> L["🖥️ CLI 查询<br/>memory 子命令"]
+    K --> M["📖 直接阅读<br/>编辑器编辑<br/>Git diff"]
+    K --> N["🤖 MCP Server"]
+    N --> O["💬 OpenClaw<br/>AI 教练对话<br/>晨间简报 / 训练规划<br/>状态查询 / 赛后分析"]
+    O -.->|"AI 洞察写入"| K
+
+    A -.->|".env 文件<br/>或系统环境"| A
+    C -.->|"~/.garmy/<br/>Token 文件"| C
+```
+
+### 5.2 sync 命令执行流程
+
+```mermaid
+graph TD
+    SYNC["sync 命令"]
+    S1["1. config.py<br/>加载并校验环境变量"]
+    S2["2. auth.py<br/>创建 AuthClient，检查/执行登录"]
+    S3["3. fetcher.py<br/>创建 APIClient，初始化 SyncManager"]
+    S4["4. storage.py<br/>SyncManager.sync_range()"]
+    S4A["按日期遍历"]
+    S4B["检查 sync_status 去重"]
+    S4C["拉取指标 → 写入 SQLite"]
+    S4D["更新 sync_status"]
+    S5["5. memory.py<br/>[若未指定 --no-memory]"]
+    S5_DAILY["⭐ generate_daily()<br/>查询昨日活动 + 昨夜睡眠<br/>+ 今晨状态 + 7日趋势<br/>异常检测 + 训练建议<br/>写入 auto/daily/YYYY-MM-DD.md"]
+    S5A["generate_summaries()<br/>查询 SQLite → 聚合统计<br/>检测 PR / 趋势对比<br/>写入 auto/summaries/"]
+    S5B["generate_recovery()<br/>查询健康指标 → 计算恢复评分<br/>写入 auto/recovery/"]
+    S5C["update_execution()<br/>检查活跃训练计划<br/>对比计划 vs 实际<br/>更新 auto/execution/"]
+    S5D["rebuild_index()<br/>重建各子目录 index.md"]
+
+    SYNC --> S1 --> S2 --> S3 --> S4
+    S4 --> S4A --> S4B --> S4C --> S4D
+    S4 --> S5
+    S5 --> S5_DAILY
+    S5 --> S5A
+    S5 --> S5B
+    S5 --> S5C
+    S5 --> S5D
+```
+
+### 5.3 daily 命令执行流程 ⭐
+
+```mermaid
+graph TD
+    D1["rundown daily"]
+    D2["1. 确定 target_date<br/>(默认今天, --date 可指定)"]
+    D3["2. 连接 SQLite (只读)"]
+    D4["3. 查询昨日活动<br/>db.get_activities(yesterday)"]
+    D5["4. 查询昨夜睡眠<br/>db.get_health_metrics(today) → sleep"]
+    D6["5. 查询今晨指标<br/>resting_hr, hrv, body_battery, readiness"]
+    D7["6. 计算训练负荷<br/>acute/chronic load, ACWR"]
+    D8["7. 7日趋势分析<br/>各指标 slopes + direction"]
+    D9["8. 异常检测<br/>规则引擎扫描"]
+    D10["9. 生成训练建议<br/>结合偏好 + 目标 + 状态"]
+    D11["10. 渲染 + 写入<br/>auto/daily/YYYY-MM-DD.md"]
+    D12["11. 终端 rich 输出<br/>日报摘要面板"]
+
+    D1 --> D2 --> D3 --> D4 --> D5 --> D6 --> D7 --> D8 --> D9 --> D10 --> D11 --> D12
+```
+
+### 5.4 memory 子命令执行流程
+
+```mermaid
+graph TD
+    subgraph SUMMARIZE["memory summarize"]
+        MS1["1. 确定 period 和 target_date"]
+        MS2["2. 连接 SQLite (只读)"]
+        MS3["3. 查询 activities + health_metrics"]
+        MS4["4. 执行聚合算法"]
+        MS5["5. 渲染 Markdown + YAML Front Matter"]
+        MS6["6. 写入 auto/summaries/ + auto/recovery/"]
+        MS7["7. 更新 index.md"]
+        MS1 --> MS2 --> MS3 --> MS4 --> MS5 --> MS6 --> MS7
+    end
+
+    subgraph GOAL_CREATE["memory goal create"]
+        GC1["1. 交互式问答"]
+        GC2["2. 构建 Front Matter + Markdown 正文"]
+        GC3["3. Schema 校验 (Level 1)"]
+        GC4["4. 写入 goals/active/{slug}.md"]
+        GC5["5. 更新 index.md"]
+        GC1 --> GC2 --> GC3 --> GC4 --> GC5
+    end
+
+    subgraph CHECK["memory check"]
+        CK1["Level 1: Schema 校验"]
+        CK2["Level 2: 交叉校验"]
+        CK3["Level 3: 完整性检查"]
+        CK4["输出检查报告"]
+        CK1 --> CK2 --> CK3 --> CK4
+    end
+```
+
+---

@@ -39,7 +39,8 @@ garmy SyncManager 的 `ActivitiesIterator` 是单向游标（从新到旧消费�
 
 - [src/providers/garmin.py](src/providers/garmin.py) — `fetch_activities()` 改用 raw API 响应
 - [src/main.py](src/main.py) — 新增 `_sync_garmin_activities()`、`reset_pending_metrics()`、`cmd_daily` 自动同步
-- [docs/design.md](docs/design.md) — 新增 Section 4.7 AI 教练模块，更新 8.4.3 上下文注入策略
+- [docs/design/04-modules.md](../design/04-modules.md) — 新增 AI 教练模块
+- [docs/design/ai-coaching.md](../design/ai-coaching.md) — 更新上下文注入策略
 - [docs/CHANGELOG.md](docs/CHANGELOG.md) — 记录所有修复
 
 ## 验证
