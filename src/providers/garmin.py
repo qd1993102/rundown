@@ -17,11 +17,20 @@ logger = logging.getLogger(__name__)
 class GarminAuth(AuthProvider):
     """Garmin 认证（封装 garmy AuthClient）。"""
 
-    def __init__(self, domain: str = "garmin.com", token_dir: str = "~/.garmy"):
+    def __init__(self, domain: str = "garmin.com", token_dir: str = "~/.garmy",
+                 non_interactive: bool = False):
         self._domain = domain
         self._token_dir = token_dir
+        self._non_interactive = non_interactive
         self._client = None
         self._user_id: int | None = None
+
+    def _mfa_handler(self):
+        """根据运行模式返回合适的 MFA 处理器。"""
+        if self._non_interactive:
+            from ..auth import _mfa_not_available
+            return _mfa_not_available
+        return lambda: input("MFA 验证码: ").strip()
 
     def login(self, email: str, password: str) -> bool:
         from garmy import AuthClient
@@ -36,10 +45,10 @@ class GarminAuth(AuthProvider):
         logger.info("Garmin: 执行登录...")
         try:
             result = self._client.login(email=email, password=password,
-                                        prompt_mfa=lambda: input("MFA: ").strip(),
+                                        prompt_mfa=self._mfa_handler(),
                                         return_on_mfa=True)
             if isinstance(result, tuple) and result[0] == "needs_mfa":
-                code = input("MFA 验证码: ").strip()
+                code = self._mfa_handler()()
                 self._client.resume_login(code, result[1])
             logger.info("Garmin: 登录成功")
             return True
@@ -168,7 +177,9 @@ class GarminProvider(DataProvider):
 
     def __init__(self, config):
         self._config = config
-        self.auth = GarminAuth(domain=config.domain, token_dir=config.token_dir)
+        non_interactive = getattr(config, "non_interactive", False)
+        self.auth = GarminAuth(domain=config.domain, token_dir=config.token_dir,
+                               non_interactive=non_interactive)
         self._activity_provider = GarminActivity(self.auth)
         self._health_provider: GarminHealth | None = None
 

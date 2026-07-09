@@ -23,6 +23,7 @@
 |------|------|
 | [memory-system.md](memory-system.md) | 记忆系统设计 — 分类体系、模板规范、自动生成器、日报格式 |
 | [ai-coaching.md](ai-coaching.md) | AI 教练对话设计 — System Prompt、对话原则、OpenClaw 配置、典型场景 |
+| [13-sae-deployment.md](13-sae-deployment.md) | §13 SAE 部署方案 — 小程序 + 多用户 + OSS，架构、数据隔离、API 设计 |
 
 ## 规划与备忘
 

@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+from collections.abc import AsyncIterator
 from datetime import date, timedelta
 from typing import Any
 
@@ -551,3 +552,88 @@ def get_coach_insight(
     except Exception as exc:
         logger.error("AI 教练调用失败: %s", exc)
         return None
+
+
+# ── Web Chat 流式对话 ──────────────────────────
+
+
+async def chat_stream(
+    messages: list[dict[str, str]],
+    context: str = "",
+    api_key: str | None = None,
+    model: str | None = None,
+) -> "AsyncIterator[str]":
+    """流式 AI 对话 — 用于 Web Chat 页面 SSE 推送。
+
+    Args:
+        messages: 对话历史 [{"role": "user"|"assistant", "content": "..."}]
+        context: 用户上下文（日报、画像、目标等）
+        api_key: DeepSeek API Key，默认从环境变量读取
+        model: 模型名，默认 deepseek-chat
+
+    Yields:
+        每次 yield 一个 token 字符串。
+    """
+    import httpx
+
+    key = api_key or os.getenv("DEEPSEEK_API_KEY", "")
+    if not key:
+        yield "错误：未配置 DEEPSEEK_API_KEY，无法使用 AI 教练。"
+        return
+
+    model_name = model or DEEPSEEK_MODEL
+
+    system_prompt = (
+        "你是专业的跑步教练 AI，名叫 Rundown Coach。"
+        "你会参考运动员的竞技档案（PB）、训练目标和近期训练数据，"
+        "给出个性化、有深度的中文建议。"
+        "回答简洁有力，用具体数据说话，不泛泛而谈。"
+        "如果用户提到伤病或不适，优先建议安全恢复而非训练。"
+    )
+
+    if context:
+        system_prompt += f"\n\n## 用户数据与上下文\n{context}"
+
+    api_messages = [{"role": "system", "content": system_prompt}]
+    # 保留最近 20 条消息（避免上下文过长）
+    api_messages.extend(messages[-20:])
+
+    try:
+        async with httpx.AsyncClient(timeout=60.0) as client:
+            async with client.stream(
+                "POST",
+                DEEPSEEK_BASE_URL,
+                headers={
+                    "Authorization": f"Bearer {key}",
+                    "Content-Type": "application/json",
+                },
+                json={
+                    "model": model_name,
+                    "messages": api_messages,
+                    "stream": True,
+                    "temperature": 0.7,
+                    "max_tokens": 2000,
+                },
+            ) as response:
+                if response.status_code != 200:
+                    yield f"错误：AI 服务返回 {response.status_code}"
+                    return
+
+                async for line in response.aiter_lines():
+                    if line.startswith("data: "):
+                        data_str = line[6:]
+                        if data_str == "[DONE]":
+                            return
+                        try:
+                            import json as _json
+                            chunk = _json.loads(data_str)
+                            delta = chunk.get("choices", [{}])[0].get("delta", {})
+                            content = delta.get("content", "")
+                            if content:
+                                yield content
+                        except Exception:
+                            continue
+
+    except Exception as exc:
+        logger.error("流式对话失败: %s", exc)
+        yield f"错误：{exc}"

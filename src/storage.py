@@ -68,6 +68,46 @@ class Storage:
             self._initialized = True
             logger.info("SyncManager 初始化完成")
 
+    # ── 备份 / 恢复 ────────────────────────────
+
+    def backup_to(self, backup_path: str | Path) -> None:
+        """使用 sqlite3 在线备份 API 将数据库备份到指定路径。
+
+        确保备份目标目录存在。备份过程中其他读操作不受影响。
+        """
+        import sqlite3
+
+        bp = Path(backup_path)
+        bp.parent.mkdir(parents=True, exist_ok=True)
+
+        # 确保数据库已创建
+        _ = self.db
+
+        src = sqlite3.connect(str(self._db_path))
+        dst = sqlite3.connect(str(bp))
+        try:
+            src.backup(dst)
+            logger.info("数据库已备份到: %s", bp)
+        finally:
+            src.close()
+            dst.close()
+
+    def restore_from(self, backup_path: str | Path) -> bool:
+        """从备份路径恢复数据库。备份不存在时返回 False。"""
+        import shutil
+
+        bp = Path(backup_path)
+        if not bp.exists():
+            logger.info("备份不存在，跳过恢复: %s", bp)
+            return False
+
+        self._db_path.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(str(bp), str(self._db_path))
+        # 重置懒加载的实例
+        self._db = None
+        logger.info("数据库已从备份恢复: %s -> %s", bp, self._db_path)
+        return True
+
     # ── 同步 ──────────────────────────────────
 
     def sync_range(

@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import argparse
 import logging
+import os
 import sys
 from datetime import date, datetime, timedelta
 from pathlib import Path
@@ -951,20 +952,92 @@ def _ask(prompt: str, default: str = "") -> str:
 
 
 def cmd_mcp(args: argparse.Namespace) -> None:
-    """mcp 命令：启动 MCP Server（stdio 模式，供 OpenClaw / Claude Desktop 调用）。"""
+    """mcp 命令：启动 MCP Server（默认 stdio，支持 SSE/HTTP 传输）。"""
     config, provider, storage, memory_store, user_id = _setup()
 
     from .mcp_server import create_server
 
-    console.print("[bold blue]🔌 启动 Rundown MCP Server...[/]")
+    transport = os.getenv("MCP_TRANSPORT", getattr(args, 'transport', None) or "stdio")
+    host = os.getenv("MCP_HOST", getattr(args, 'host', None) or "127.0.0.1")
+    port = int(os.getenv("MCP_PORT", str(getattr(args, 'port', None) or 8000)))
 
     server = create_server(config, provider, storage, memory_store, user_id)
 
-    # FastMCP 通过 stdio 与客户端通信，不需要端口
-    console.print("[green]✅ MCP Server 已启动 (stdio mode)[/]")
-    console.print("[dim]等待 OpenClaw / Claude Desktop 连接...[/]")
+    if transport == "stdio":
+        console.print("[bold blue]🔌 启动 Rundown MCP Server...[/]")
+        console.print("[green]✅ MCP Server 已启动 (stdio mode)[/]")
+        console.print("[dim]等待 OpenClaw / Claude Desktop 连接...[/]")
+        server.run(transport="stdio")
+    else:
+        console.print(f"[bold blue]🔌 启动 Rundown MCP Server ({transport} mode)...[/]")
+        console.print(f"[green]✅ 监听 http://{host}:{port}[/]")
+        server.run(transport=transport, host=host, port=port)
 
-    server.run(transport="stdio")
+
+def cmd_serve() -> None:
+    """SAE / VPS 入口：启动 Web Chat 服务（含 MCP Server SSE）。
+
+    环境变量驱动：
+    - RUNDOWN_DATA_DIR: 数据根目录 (默认 ./data)
+    - RUNDOWN_SERVE_MODE=true: 跳过 Garmin 凭证校验
+    - MCP_HOST / MCP_PORT: 监听地址
+    """
+    import logging as std_logging
+
+    std_logging.basicConfig(
+        level=std_logging.INFO,
+        format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+        datefmt="%H:%M:%S",
+    )
+
+    # 标记 Web 服务模式（跳过全局 Garmin 凭证校验）
+    os.environ["RUNDOWN_SERVE_MODE"] = "true"
+
+    config = get_config()
+
+    # 初始化用户管理器
+    from .users import UserManager
+    user_manager = UserManager(config.data_dir)
+
+    # 容器启动时恢复所有用户的 SQLite 备份
+    _restore_all_users(user_manager)
+
+    # 创建带 Web 路由的 MCP Server
+    from .web import create_web_server
+    server = create_web_server(config, user_manager)
+
+    transport = os.getenv("MCP_TRANSPORT", "sse")
+    host = os.getenv("MCP_HOST", "0.0.0.0")
+    port = int(os.getenv("MCP_PORT", "8080"))
+
+    logger.info("🚀 Rundown Web Chat 启动中... transport=%s host=%s port=%s", transport, host, port)
+    logger.info("📂 数据目录: %s", config.data_dir)
+
+    server.run(transport=transport, host=host, port=port)
+
+
+def _restore_all_users(user_manager) -> None:
+    """容器启动时从备份恢复所有用户的 SQLite。"""
+    from .storage import Storage
+    from .config import Config
+
+    users = user_manager.list_all()
+    logger.info("扫描到 %d 个已注册用户", len(users))
+
+    dummy_config = Config()
+    for user in users:
+        try:
+            backup_path = user_manager.get_backup_path(user.api_key)
+            user_db_path = user_manager.get_db_path(user.api_key)
+
+            # 临时 Storage 实例用于恢复
+            class _TempCfg:
+                db_path = user_db_path
+            storage = Storage(_TempCfg())  # type: ignore[arg-type]
+            if storage.restore_from(backup_path):
+                logger.info("用户 %s: 已从备份恢复数据库", user.api_key)
+        except Exception as exc:
+            logger.warning("用户 %s: 恢复失败 (%s)", user.api_key, exc)
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -1049,8 +1122,11 @@ def build_parser() -> argparse.ArgumentParser:
     sub.add_parser("setup", help="交互式录入个人资料和目标")
 
     # ── mcp ───────────────────────────────────
-    p_mcp = sub.add_parser("mcp", help="启动 MCP Server (stdio，供 OpenClaw 连接)")
-    p_mcp.add_argument("--port", type=int, help="SSE 模式端口（默认 stdio）")
+    p_mcp = sub.add_parser("mcp", help="启动 MCP Server（默认 stdio，支持 SSE/HTTP）")
+    p_mcp.add_argument("--transport", choices=["stdio", "sse", "http", "streamable-http"],
+                       help="传输模式 (环境变量: MCP_TRANSPORT)")
+    p_mcp.add_argument("--host", help="监听地址 (环境变量: MCP_HOST)")
+    p_mcp.add_argument("--port", type=int, help="监听端口 (环境变量: MCP_PORT)")
 
     return parser
 

@@ -6,6 +6,28 @@ Rundown 项目变更日志，按日期倒序。
 
 ## 2026-07-09
 
+### Added
+- **Web Chat 多用户部署**: 新增 Web Chat 模式，用户打开浏览器即可绑定 Garmin 并与 AI 教练对话
+  - `src/users.py` — 用户管理器（API Key 生成、注册表 CRUD、多用户路径隔离）
+  - `src/web.py` — Web 路由层（/api/setup /api/mfa /api/chat/stream /api/sync），通过 FastMCP custom_route 注册，不引入额外 Web 框架
+  - `src/coach.py` — 新增 `chat_stream()` 流式 AI 对话（SSE 逐块推送）
+  - `src/main.py` — 新增 `cmd_serve` Web 服务入口，`cmd_mcp` 支持 SSE/HTTP 传输
+  - `Dockerfile` + `docker-compose.yml` — 一键容器化部署
+- **多用户数据隔离**: 按 API Key 隔离 Token、记忆文件、SQLite 数据库，互不干扰
+- **非交互式 MFA 支持**: `AuthManager` 新增 `start_login()` / `complete_mfa()` 两步拆分，Web 模式通过页面输入 MFA 验证码
+- **SQLite 备份/恢复**: `Storage` 新增 `backup_to()` / `restore_from()` 方法，容器重启时自动恢复数据
+- **影响范围**: config.py, auth.py, storage.py, providers/garmin.py, coach.py, main.py, pyproject.toml
+- **关联文档**: [docs/design/13-sae-deployment.md](docs/design/13-sae-deployment.md)
+
+### Changed
+- **`rundown mcp` 支持多传输模式**: 新增 `--transport` / `--host` / `--port` 参数，支持 sse/http/streamable-http
+- **`Config` 增强**: 新增 `non_interactive`、`data_dir` 字段；`token_dir` 纳入 `RUNDOWN_HOME` 解析；Web 服务模式跳过全局 Garmin 凭证校验；新增 `UserConfig` 和 `for_user()` 工厂方法
+- **`GarminAuth` 增强**: 支持 `non_interactive` 参数，SAE/Web 环境下不阻塞等待 stdin 输入
+
+---
+
+## 2026-07-09 (early)
+
 ### Changed
 - **`daily` 与 `sync` 命令合并重构**: `daily` 成为一站式命令，自动检查并同步数据后生成报告，无需先跑 `sync` 再跑 `daily`
   - `cmd_daily` 增强：自动检查本地数据完整性（支持 Garmin + Coros），缺失时自动拉取

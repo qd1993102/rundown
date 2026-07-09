@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Rundown — 绑定 Garmin</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:-apple-system,BlinkMacSystemFont,sans-serif;background:#0f0f0f;color:#e0e0e0;
+  display:flex;justify-content:center;align-items:center;min-height:100vh;padding:20px}
+.card{background:#1a1a1a;border-radius:16px;padding:32px 24px;max-width:400px;width:100%}
+h1{font-size:20px;margin-bottom:8px;color:#fff}
+p.sub{font-size:14px;color:#888;margin-bottom:24px}
+label{display:block;font-size:13px;color:#aaa;margin-bottom:4px;margin-top:16px}
+input{width:100%;padding:12px;border-radius:10px;border:1px solid #333;background:#0f0f0f;
+  color:#fff;font-size:16px;outline:none}
+input:focus{border-color:#4caf50}
+button{width:100%;padding:14px;border-radius:10px;border:none;background:#4caf50;color:#fff;
+  font-size:16px;font-weight:600;margin-top:24px;cursor:pointer}
+button:disabled{opacity:.5}
+#mfa-section{display:none}
+#error{color:#f44336;font-size:14px;margin-top:12px;display:none}
+#success{color:#4caf50;font-size:14px;margin-top:12px;display:none}
+</style>
+</head>
+<body>
+<div class="card">
+<h1>🔗 绑定 Garmin</h1>
+<p class="sub">连接你的 Garmin 账号，AI 教练需要你的运动数据</p>
+<div id="setup-section">
+  <label>Garmin 邮箱</label>
+  <input id="email" type="email" placeholder="your@email.com" autocomplete="email">
+  <label>Garmin 密码</label>
+  <input id="password" type="password" placeholder="Garmin 密码" autocomplete="current-password">
+  <button id="setup-btn" onclick="startSetup()">开始绑定</button>
+</div>
+<div id="mfa-section">
+  <p>请输入 Garmin 发送的二次验证码</p>
+  <label>MFA 验证码</label>
+  <input id="mfa-code" type="text" placeholder="6 位数字" inputmode="numeric">
+  <button id="mfa-btn" onclick="submitMfa()">验证</button>
+</div>
+<div id="error"></div>
+<div id="success"></div>
+</div>
+<script>
+let mfaSession = '';
+function showError(msg){const e=document.getElementById('error');e.textContent=msg;e.style.display='block'}
+function hideError(){document.getElementById('error').style.display='none'}
+async function startSetup(){
+  hideError();
+  const email=document.getElementById('email').value.trim();
+  const password=document.getElementById('password').value.trim();
+  if(!email||!password){showError('请输入邮箱和密码');return}
+  const btn=document.getElementById('setup-btn');btn.disabled=true;btn.textContent='登录中...';
+  try{
+    const r=await fetch('/api/setup',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({email,password})});
+    const d=await r.json();
+    if(d.status==='needs_mfa'){
+      mfaSession=d.session;
+      document.getElementById('setup-section').style.display='none';
+      document.getElementById('mfa-section').style.display='block';
+    }else if(d.status==='ok'){
+      document.getElementById('success').textContent='绑定成功！即将跳转...';
+      document.getElementById('success').style.display='block';
+      setTimeout(()=>location.href='/',1500);
+    }else{
+      showError(d.message||'绑定失败');
+    }
+  }catch(e){showError('网络错误: '+e.message)}
+  btn.disabled=false;btn.textContent='开始绑定';
+}
+async function submitMfa(){
+  hideError();
+  const code=document.getElementById('mfa-code').value.trim();
+  if(!code){showError('请输入验证码');return}
+  const btn=document.getElementById('mfa-btn');btn.disabled=true;btn.textContent='验证中...';
+  try{
+    const r=await fetch('/api/mfa',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({code,session:mfaSession})});
+    const d=await r.json();
+    if(d.status==='ok'){
+      document.getElementById('success').textContent='绑定成功！即将跳转...';
+      document.getElementById('success').style.display='block';
+      setTimeout(()=>location.href='/',1500);
+    }else{
+      showError(d.message||'MFA 验证失败');
+    }
+  }catch(e){showError('网络错误: '+e.message)}
+  btn.disabled=false;btn.textContent='验证';
+}
+</script>
+</body>
+</html>

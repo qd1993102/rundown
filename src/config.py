@@ -83,6 +83,16 @@ class Config:
         default_factory=lambda: os.getenv("RUNDOWN_HOME", "")
     )
 
+    # ── Web 服务 ────────────────────────────────
+    data_dir: str = field(
+        default_factory=lambda: os.getenv("RUNDOWN_DATA_DIR", "./data")
+    )
+    non_interactive: bool = field(
+        default_factory=lambda: os.getenv(
+            "RUNDOWN_NON_INTERACTIVE", ""
+        ).lower() in ("1", "true", "yes")
+    )
+
     def validate(self) -> None:
         """校验必填配置项，缺失则抛出 ConfigError。"""
         missing: list[str] = []
@@ -109,6 +119,43 @@ class Config:
         if self.provider_type == "garmin":
             logger.info("  Domain:          %s", self.domain)
             logger.info("  Token dir:       %s", self.token_dir)
+
+
+    def for_user(self, api_key: str) -> "UserConfig":
+        """为该用户生成专属配置（路径按 api_key 隔离）。"""
+        return UserConfig(api_key=api_key, parent=self)
+
+
+@dataclass
+class UserConfig:
+    """用户专属配置 — 所有路径按 api_key 隔离，不存密码。"""
+
+    api_key: str
+    parent: Config
+
+    @property
+    def token_dir(self) -> str:
+        return str(Path(self.parent.data_dir) / self.api_key / "tokens")
+
+    @property
+    def memory_dir(self) -> str:
+        return str(Path(self.parent.data_dir) / self.api_key / "memory")
+
+    @property
+    def db_path(self) -> str:
+        return str(Path(self.parent.data_dir) / self.api_key / "data.db")
+
+    @property
+    def domain(self) -> str:
+        return self.parent.domain
+
+    @property
+    def provider_type(self) -> str:
+        return self.parent.provider_type
+
+    @property
+    def non_interactive(self) -> bool:
+        return True  # Web 用户始终非交互
 
 
 def get_config() -> Config:
@@ -144,8 +191,12 @@ def get_config() -> Config:
             config.db_path = str(home / config.db_path)
         if not Path(config.memory_dir).is_absolute():
             config.memory_dir = str(home / config.memory_dir)
+        if not Path(config.token_dir).is_absolute():
+            config.token_dir = str(home / config.token_dir)
 
-    config.validate()
+    # Web 服务模式下不校验 Garmin 凭证（用户各自绑定）
+    if not os.getenv("RUNDOWN_SERVE_MODE", "").lower() in ("1", "true", "yes"):
+        config.validate()
     # 配置日志
     logging.basicConfig(
         level=getattr(logging, config.log_level.upper(), logging.INFO),
