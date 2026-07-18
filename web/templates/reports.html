@@ -1,0 +1,162 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Rundown — 日报列表</title>
+<style>
+/* ═══════════════════════════════════════════
+   Rundown Reports List — 沿用 render.py dark 主题
+   ═══════════════════════════════════════════ */
+:root {
+  --bg:#0b1120; --bg-card:#1a2333; --text:#e2e8f0; --text-secondary:#94a3b8; --text-muted:#64748b;
+  --accent:#34d399; --accent-glow:rgba(52,211,153,.12); --recovery:#60a5fa; --recovery-glow:rgba(96,165,250,.1);
+  --performance:#4ade80; --performance-glow:rgba(74,222,128,.1); --sleep:#a78bfa; --sleep-glow:rgba(167,139,250,.1);
+  --warning:#fbbf24; --danger:#f87171; --hrv:#22d3ee;
+  --card-shadow:0 2px 10px rgba(0,0,0,.35); --card-shadow-hover:0 10px 30px rgba(0,0,0,.5);
+  --border-subtle:#243044; --bg-subtle:#151e2c;
+}
+
+*{margin:0;padding:0;box-sizing:border-box}
+body{background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSystemFont,'SF Pro Display','Segoe UI',Roboto,sans-serif;line-height:1.6;-webkit-font-smoothing:antialiased}
+.container{max-width:720px;margin:0 auto;padding:24px 20px 80px}
+
+/* Header */
+.header{display:flex;justify-content:space-between;align-items:center;padding:0 0 28px}
+.header-left{display:flex;align-items:center;gap:20px}
+.header-brand{font-size:13px;font-weight:800;letter-spacing:1.5px;background:linear-gradient(135deg,var(--accent),#ef4444);-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text;text-transform:uppercase}
+.header-nav{display:flex;gap:4px}
+.nav-link{padding:6px 14px;border-radius:20px;font-size:12px;font-weight:600;color:var(--text-muted);text-decoration:none;transition:all .2s;letter-spacing:.5px}
+.nav-link:hover{color:var(--text-secondary);background:var(--bg-card)}
+.nav-link.active{background:var(--accent);color:#0b1120}
+
+.btn{padding:7px 16px;border-radius:20px;border:1px solid var(--border-subtle);background:transparent;color:var(--text-secondary);font-size:12px;font-weight:600;cursor:pointer;transition:all .2s;letter-spacing:.5px}
+.btn:hover{border-color:var(--accent);color:var(--accent)}
+
+/* Loading */
+.loading{text-align:center;padding:60px 20px;color:var(--text-muted);font-size:14px}
+.spinner{display:inline-block;width:20px;height:20px;border:2px solid rgba(255,255,255,.3);border-top-color:#fff;border-radius:50%;animation:spin .6s linear infinite;margin-bottom:12px}
+@keyframes spin{to{transform:rotate(360deg)}}
+
+/* Report cards */
+.report-list{display:flex;flex-direction:column;gap:10px}
+.report-card{background:var(--bg-card);border-radius:16px;padding:20px 24px;box-shadow:var(--card-shadow);cursor:pointer;transition:transform .15s,box-shadow .15s;text-decoration:none;display:block;color:inherit}
+.report-card:hover{transform:translateY(-2px);box-shadow:var(--card-shadow-hover)}
+.report-row{display:flex;align-items:center;gap:16px}
+.report-date{flex-shrink:0;text-align:center;min-width:56px}
+.report-date .d{font-family:-apple-system,'SF Pro Display','Helvetica Neue',sans-serif;font-size:22px;font-weight:700;color:var(--text);line-height:1}
+.report-date .w{font-size:10px;color:var(--text-muted);margin-top:2px;text-transform:uppercase;letter-spacing:.5px}
+.report-body{flex:1;min-width:0}
+.report-training{font-size:14px;font-weight:600;color:var(--text)}
+.report-insight{font-size:12px;color:var(--text-secondary);margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.report-scores{display:flex;gap:16px;flex-shrink:0}
+.report-score{text-align:center;min-width:44px}
+.report-score .sv{font-family:-apple-system,'SF Pro Display','Helvetica Neue',sans-serif;font-size:18px;font-weight:700}
+.report-score .sv.sleep-c{color:var(--sleep)}.report-score .sv.recovery-c{color:var(--recovery)}
+.report-score .sl{font-size:9px;color:var(--text-muted);text-transform:uppercase;letter-spacing:.5px;margin-top:1px}
+
+/* Empty */
+.empty-state{text-align:center;padding:60px 20px}
+.empty-state .icon{font-size:48px;margin-bottom:16px}
+.empty-state h2{font-size:18px;color:var(--text);margin-bottom:8px}
+.empty-state p{font-size:13px;color:var(--text-muted);line-height:1.6}
+
+/* Footer */
+.footer{text-align:center;padding:40px 0 20px;font-size:11px;color:var(--text-muted);letter-spacing:1px;font-weight:500}
+.footer span{background:linear-gradient(135deg,var(--accent),#ef4444);-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text;font-weight:700}
+
+@media(max-width:640px){
+  .container{padding:16px 14px 60px}
+  .report-card{padding:16px 18px}
+  .report-scores{gap:10px}
+  .report-score .sv{font-size:16px}
+}
+</style>
+</head>
+<body>
+
+<div class="container">
+
+<div class="header">
+  <div class="header-left">
+    <div class="header-brand">Rundown</div>
+    <div class="header-nav">
+      <a href="/" class="nav-link">仪表盘</a>
+      <a href="/reports" class="nav-link active">日报列表</a>
+    </div>
+  </div>
+  <button class="btn" onclick="doLogout()">退出</button>
+</div>
+
+<div class="loading" id="loading"><span class="spinner"></span>加载中...</div>
+
+<div class="report-list" id="reportList"></div>
+
+<div class="empty-state" id="emptyState" style="display:none">
+  <div class="icon">📭</div>
+  <h2>暂无日报</h2>
+  <p>点击<a href="/" style="color:var(--accent)">仪表盘</a>同步数据，生成第一篇日报。</p>
+</div>
+
+<div class="footer">Built with <span>Rundown</span></div>
+
+</div>
+
+<script>
+var weekdays = ['周日','周一','周二','周三','周四','周五','周六'];
+
+async function load(){
+  try{
+    var r = await fetch('/api/reports');
+    if(r.status===401){location.href='/setup';return}
+    var reports = await r.json();
+    render(reports);
+  }catch(e){
+    document.getElementById('loading').innerHTML='<p style="color:var(--danger)">加载失败: '+e.message+'</p>';
+  }
+}
+
+function render(reports){
+  document.getElementById('loading').style.display='none';
+
+  if(!reports.length){
+    document.getElementById('emptyState').style.display='block';
+    return;
+  }
+
+  var html = '';
+  reports.forEach(function(r){
+    var parts = r.date.split('-');
+    var day = parts.length===3 ? parseInt(parts[2]) : '?';
+    var wd = '';
+    try {
+      var d = new Date(r.date+'T00:00:00');
+      if(!isNaN(d.getTime())) wd = weekdays[d.getDay()];
+    }catch(e){}
+
+    html += '<a class="report-card" href="/?date='+r.date+'">';
+    html += '<div class="report-row">';
+    html += '<div class="report-date"><div class="d">'+day+'</div><div class="w">'+wd+'</div></div>';
+    html += '<div class="report-body">';
+    html += '<div class="report-training">'+r.training+'</div>';
+    if(r.ai_conclusion) html += '<div class="report-insight">💡 '+r.ai_conclusion+'</div>';
+    html += '</div>';
+    html += '<div class="report-scores">';
+    if(r.sleep_score) html += '<div class="report-score"><div class="sv sleep-c">'+r.sleep_score+'</div><div class="sl">睡眠</div></div>';
+    if(r.recovery_score) html += '<div class="report-score"><div class="sv recovery-c">'+r.recovery_score+'</div><div class="sl">恢复</div></div>';
+    html += '</div>';
+    html += '</div></a>';
+  });
+
+  document.getElementById('reportList').innerHTML = html;
+}
+
+async function doLogout(){
+  await fetch('/api/logout',{method:'POST'});
+  location.href='/setup';
+}
+
+load();
+</script>
+</body>
+</html>

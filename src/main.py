@@ -161,16 +161,30 @@ def cmd_sync(args: argparse.Namespace) -> None:
         except Exception as exc:
             console.print(f"[red]❌ 同步失败: {exc}[/]")
             return
-    else:
-        # Coros: 直接从 API 拉取并存入 SQLite
+    elif config.provider_type in ("coros", "huawei"):
+        # Coros/Huawei: Provider 标准化后直接写入 SQLite
         try:
             provider.authenticate()
-            _sync_coros(provider, storage, user_id, start, end)
+            _sync_provider(provider, storage, user_id, start, end, config.provider_type)
         except Exception as exc:
             console.print(f"[red]❌ 同步失败: {exc}[/]")
             return
 
     console.print("[dim]💡 运行 [bold]rundown daily[/bold] 生成日报[/]")
+
+
+def cmd_auth(args: argparse.Namespace) -> None:
+    """完成当前 Provider 的本地认证。"""
+    config = get_config()
+    from .providers import get_provider
+    provider = get_provider(config)
+    try:
+        if provider.authenticate():
+            console.print(f"[green]✅ {config.provider_type} 本地认证成功，令牌已安全保存[/]")
+        else:
+            console.print(f"[red]❌ {config.provider_type} 认证失败[/]")
+    except Exception as exc:
+        console.print(f"[red]❌ 认证失败: {exc}[/]")
 
 
 def _sync_garmin_activities(provider, storage, user_id: int, start: date, end: date) -> None:
@@ -181,6 +195,15 @@ def _sync_garmin_activities(provider, storage, user_id: int, start: date, end: d
     这里直接从 Garmin API 拉取活动并写入 DB。
     """
     from sqlalchemy import text
+
+    # 确保 distance_meters 列存在（garmy 默认 schema 无此列）
+    session = storage.db.get_session()
+    try:
+        session.execute(text("ALTER TABLE activities ADD COLUMN distance_meters FLOAT"))
+        session.commit()
+    except Exception:
+        pass
+    session.close()
 
     console.print("[dim]📥 补全 Garmin 活动数据...[/]")
     activities = provider.activities.fetch_activities(start, end)
@@ -223,8 +246,9 @@ def _sync_garmin_activities(provider, storage, user_id: int, start: date, end: d
         console.print(f"  📦 Garmin 活动: 已是最新 (共 {len(activities)} 条)")
 
 
-def _sync_coros(provider, storage, user_id: int, start: date, end: date) -> None:
-    """Coros 同步：从 API 拉取数据写入 SQLite。"""
+def _sync_provider(provider, storage, user_id: int, start: date, end: date,
+                   provider_name: str) -> None:
+    """将非 Garmin Provider 的标准化数据写入 SQLite。"""
     from sqlalchemy import text
 
     # Ensure distance_meters column exists
@@ -274,7 +298,15 @@ def _sync_coros(provider, storage, user_id: int, start: date, end: date) -> None
     stored_health = 0
     while d <= end:
         health = provider.health.fetch_daily_health(d)
-        if health and (health.sleep_duration_hours > 0 or health.resting_heart_rate or health.hrv_last_night_avg):
+        if health and any((
+            health.sleep_duration_hours > 0,
+            health.resting_heart_rate is not None,
+            health.hrv_last_night_avg is not None,
+            health.total_steps > 0,
+            health.total_distance_meters > 0,
+            health.total_calories > 0,
+            health.active_calories > 0,
+        )):
             session = storage.db.get_session()
             existing = session.execute(
                 text("SELECT 1 FROM daily_health_metrics WHERE user_id = :uid AND metric_date = :md"),
@@ -314,7 +346,85 @@ def _sync_coros(provider, storage, user_id: int, start: date, end: date) -> None
         d += timedelta(days=1)
     console.print(f"  ✅ 健康: {stored_health} 天")
 
-    console.print(f"[green]✅ Coros 同步完成[/]")
+    console.print(f"[green]✅ {provider_name} 同步完成[/]")
+
+
+def _do_daily_sync(config, target: date | None = None,
+                   skip_sync: bool = False, full_sync: bool = False,
+                   force_sync: bool = False, sync_days: int | None = None,
+                   quiet: bool = False):
+    """核心同步 + 日报生成逻辑，CLI 与 Web 共用。
+
+    Returns:
+        (memory, provider, storage, user_id) — 供调用方自行渲染/输出。
+        失败时抛出异常。
+    """
+    _, provider, storage, memory_store, user_id = _setup(config=config)
+
+    target = target or date.today()
+
+    def _log(msg: str) -> None:
+        if not quiet:
+            console.print(msg)
+
+    # ── Step 1: 同步 ──
+    if not skip_sync:
+        if full_sync:
+            from_day = target - timedelta(days=365 * 3)
+            to_day = target
+        elif sync_days is not None:
+            from_day = target - timedelta(days=sync_days)
+            to_day = target
+        else:
+            missing_dates = []
+            for i in range(3):
+                d = target - timedelta(days=i)
+                if not storage.has_local_data(user_id, d):
+                    missing_dates.append(d)
+            if missing_dates:
+                from_day = missing_dates[-1]
+                to_day = target
+            else:
+                from_day = None
+                to_day = None
+
+        if from_day and to_day:
+            _log(f"[dim]🔄 数据同步: {from_day} ~ {to_day}[/]")
+            if force_sync:
+                storage.reset_pending_metrics(user_id, from_day, to_day, force=True)
+
+            if config.provider_type == "garmin":
+                provider.authenticate()
+                # Web 多用户模式：每用户隔离 token_dir，需注入已认证 APIClient
+                if hasattr(provider, 'auth') and hasattr(provider.auth, '_client'):
+                    from garmy import APIClient
+                    storage.set_api_client(APIClient(auth_client=provider.auth._client))
+                if not force_sync:
+                    storage.reset_pending_metrics(user_id, from_day, to_day)
+                storage.sync_range(user_id, from_day, to_day)
+                _sync_garmin_activities(provider, storage, user_id, from_day, to_day)
+            elif config.provider_type in ("coros", "huawei"):
+                provider.authenticate()
+                if force_sync:
+                    storage.reset_pending_metrics(user_id, from_day, to_day, force=True)
+                _sync_provider(provider, storage, user_id, from_day, to_day,
+                               config.provider_type)
+        else:
+            _log("[dim]📦 本地数据完整，跳过同步[/]")
+
+    # ── Step 2: 生成日报 ──
+    _log("[yellow]📰 生成日报...[/]")
+    mem = memory_store.generate_daily_report(user_id, target)
+    if mem is None:
+        raise RuntimeError(f"无法生成 {target} 的日报")
+
+    # ── Step 3: AI 洞察 ──
+    ai_result = _get_ai_insight(mem.front_matter, target, memory_store=memory_store)
+    if ai_result:
+        mem.front_matter['ai_insight'] = ai_result
+        mem.save()
+
+    return mem, provider, storage, memory_store, user_id
 
 
 def cmd_daily(args: argparse.Namespace) -> None:
@@ -328,84 +438,30 @@ def cmd_daily(args: argparse.Namespace) -> None:
     force_sync = getattr(args, 'force', False)
     sync_days = getattr(args, 'sync_days', None)
 
-    # ── Step 1: 自动同步检查 ──
-    if not skip_sync:
-        # 确定同步日期范围
-        if full_sync:
-            from_day = target - timedelta(days=365 * 3)
-            to_day = target
-        elif sync_days is not None:
-            from_day = target - timedelta(days=sync_days)
-            to_day = target
-        else:
-            # 默认：检查目标日期及前 2 天是否有本地数据
-            missing_dates = []
-            for i in range(3):
-                d = target - timedelta(days=i)
-                if not storage.has_local_data(user_id, d):
-                    missing_dates.append(d)
-            if missing_dates:
-                from_day = missing_dates[-1]  # 最早缺失日期
-                to_day = target
-            else:
-                from_day = None
-                to_day = None
-
-        if from_day and to_day:
-            console.print(f"[dim]🔄 数据同步: {from_day} ~ {to_day}[/]")
-            if force_sync:
-                console.print("[yellow]⚠️  强制模式：清除已有数据后重新拉取[/]")
-                storage.reset_pending_metrics(user_id, from_day, to_day, force=True)
-
-            try:
-                if config.provider_type == "garmin":
-                    provider.authenticate()
-                    # 仅在非 force 时 reset pending（force 已在上方处理）
-                    if not force_sync:
-                        storage.reset_pending_metrics(user_id, from_day, to_day)
-                    result = storage.sync_range(user_id, from_day, to_day)
-                    new_count = result.get('completed', 0) if result else 0
-                    if new_count > 0:
-                        console.print(f"[green]  ✅ 健康数据: {new_count} 条[/]")
-                    else:
-                        console.print(f"[dim]  📦 健康数据已是最新[/]")
-                    _sync_garmin_activities(provider, storage, user_id, from_day, to_day)
-                else:
-                    # Coros
-                    provider.authenticate()
-                    if force_sync:
-                        # Coros 强制模式：清除已有数据
-                        storage.reset_pending_metrics(user_id, from_day, to_day, force=True)
-                    _sync_coros(provider, storage, user_id, from_day, to_day)
-            except Exception as exc:
-                console.print(f"[yellow]  ⚠️ 数据同步失败: {exc}，使用已有本地数据继续...[/]")
-        else:
-            console.print(f"[dim]📦 本地数据完整，跳过同步[/]")
-
-    # ── Step 2: 生成 md 日报（总是覆盖重新生成）──
-    console.print("[yellow]📰 生成日报...[/]")
-    mem = memory_store.generate_daily_report(user_id, target)
-    if mem is None:
-        console.print(f"[red]无法生成 {target} 的日报[/]")
+    try:
+        mem, provider, storage, memory_store, user_id = _do_daily_sync(
+            config=config, target=target, skip_sync=skip_sync,
+            full_sync=full_sync, force_sync=force_sync,
+            sync_days=sync_days, quiet=False,
+        )
+    except RuntimeError as exc:
+        console.print(f"[red]{exc}[/]")
         return
-    console.print(f"  ✅ md: {mem.path}")
 
-    # ── Step 3: AI 洞察 ──
-    ai_result = _get_ai_insight(mem.front_matter, target, memory_store=memory_store)
+    ai_result = mem.front_matter.get('ai_insight', {})
+    console.print(f"  ✅ md: {mem.path}")
     if ai_result:
-        mem.front_matter['ai_insight'] = ai_result
-        mem.save()
         console.print(f"  🤖 AI 洞察: {ai_result.get('model', 'deepseek-chat')}")
     else:
         console.print(f"  🤖 AI 洞察: 规则引擎 fallback")
 
-    # ── Step 4: JSON-only 模式（跳过 HTML/PNG/终端）──
+    # ── JSON-only 模式（跳过 HTML/PNG/终端）──
     if args.format == "json":
         import json as _json
         console.print_json(_json.dumps(mem.front_matter, ensure_ascii=False, indent=2, default=str))
         return
 
-    # ── Step 5: 渲染 HTML + PNG ──
+    # ── 渲染 HTML + PNG ──
     output_dir = Path("output")
     output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -420,7 +476,7 @@ def cmd_daily(args: argparse.Namespace) -> None:
     except Exception as exc:
         console.print(f"  [yellow]⚠️  PNG 生成失败: {exc}[/]")
 
-    # ── Step 6: 终端摘要 ──
+    # ── 终端摘要 ──
     fm = mem.front_matter
     ya = fm.get("yesterday_activities", {})
     sleep = fm.get("last_night_sleep", {})
@@ -701,43 +757,49 @@ def cmd_init(args: argparse.Namespace) -> None:
     console.print("首次使用？让我帮你创建配置文件。\n")
 
     # 1. 选择 Provider
-    provider = _ask("运动平台 (garmin/coros)", "garmin")
-    if provider not in ("garmin", "coros"):
-        console.print("[red]无效的平台，请输入 garmin 或 coros[/]")
+    provider = _ask("运动平台 (garmin/coros/huawei)", "garmin")
+    if provider not in ("garmin", "coros", "huawei"):
+        console.print("[red]无效的平台，请输入 garmin、coros 或 huawei[/]")
         return
 
     # 2. 账号
-    if provider == "coros":
-        hint = "邮箱或手机号"
-    else:
-        hint = "Garmin Connect 邮箱"
-    account = _ask(f"账号 ({hint})")
-    if not account:
-        console.print("[red]账号不能为空[/]")
-        return
-
-    # 3. 密码
-    password = _ask("密码")
-    if not password:
-        console.print("[red]密码不能为空[/]")
-        return
+    account = password = ""
+    if provider != "huawei":
+        hint = "邮箱或手机号" if provider == "coros" else "Garmin Connect 邮箱"
+        account = _ask(f"账号 ({hint})")
+        if not account:
+            console.print("[red]账号不能为空[/]")
+            return
+        password = _ask("密码")
+        if not password:
+            console.print("[red]密码不能为空[/]")
+            return
 
     # 4. 存储位置
     console.print("\n[dim]数据存储位置（回车使用默认）[/]")
     location = _ask("数据库路径", "./data/rundown_data.db")
     sync_days = _ask("默认同步天数", "30")
 
+    huawei_token_dir = ""
     env_content = f"""# Rundown 配置
 RUNDOWN_PROVIDER={provider}
-RUNDOWN_ACCOUNT={account}
-RUNDOWN_PASSWORD={password}
 RUNDOWN_DB_PATH={location}
 RUNDOWN_SYNC_DAYS={sync_days}
 RUNDOWN_LOG_LEVEL=INFO
 """
+    if provider != "huawei":
+        env_content += f"RUNDOWN_ACCOUNT={account}\nRUNDOWN_PASSWORD={password}\n"
     if provider == "garmin":
         domain = _ask("Garmin 区域 (garmin.com/garmin.cn)", "garmin.com")
         env_content += f"GARMIN_DOMAIN={domain}\n"
+    elif provider == "huawei":
+        group_pals_token = _ask("CrewPals GROUP_PALS_TOKEN")
+        from .config import huawei_user_key
+        default_token_dir = str(Path.home() / ".rundown" / "users" /
+                                huawei_user_key(group_pals_token) / "huawei-tokens")
+        huawei_token_dir = _ask("Huawei Token 目录", default_token_dir)
+        env_content += (f"GROUP_PALS_TOKEN={group_pals_token}\n"
+                        f"HUAWEI_TOKEN_DIR={huawei_token_dir}\n")
 
     # 写入
     env_path = Path(".env")
@@ -749,6 +811,11 @@ RUNDOWN_LOG_LEVEL=INFO
 
     env_path.write_text(env_content)
     console.print(f"\n[green]✅ 配置已写入: {env_path}[/]")
+    if provider == "huawei":
+        token_path = Path(huawei_token_dir).expanduser()
+        token_path.mkdir(mode=0o700, parents=True, exist_ok=True)
+        token_path.chmod(0o700)
+        console.print(f"[green]✅ Huawei Token 目录已准备: {token_path}[/]")
 
     # 询问全局配置
     make_global = _ask("同时写入全局配置 ~/.rundown/.env？(y/n)", "y")
@@ -1058,6 +1125,9 @@ def build_parser() -> argparse.ArgumentParser:
     # ── init ──────────────────────────────────
     sub.add_parser("init", help="引导式创建配置文件 (.env)")
 
+    # ── auth ──────────────────────────────────
+    sub.add_parser("auth", help="在本地浏览器完成数据源认证")
+
     # ── sync ──────────────────────────────────
     p_sync = sub.add_parser("sync", help="纯数据同步（不含记忆生成）")
     p_sync.add_argument("--days", type=int, help="同步最近 N 天")
@@ -1138,6 +1208,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 COMMAND_HANDLERS = {
     "init": cmd_init,
+    "auth": cmd_auth,
     "sync": cmd_sync,
     "daily": cmd_daily,
     "activities": cmd_activities,

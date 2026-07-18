@@ -38,6 +38,7 @@ class Storage:
         self._db: HealthDB | None = None
         self._sync_manager: SyncManager | None = None
         self._initialized = False
+        self._injected_client = None  # Web 模式：外部注入的已认证 APIClient
 
     @property
     def db(self) -> HealthDB:
@@ -58,15 +59,35 @@ class Storage:
         return self._sync_manager
 
     def initialize_sync(self) -> None:
-        """初始化 SyncManager（在首次同步前调用）。"""
-        if not self._initialized:
-            logger.info("初始化 SyncManager...")
+        """初始化 SyncManager。
+
+        CLI 模式：config.email/password 登录（token_dir 默认 ~/.garmy）
+        Web 模式：使用 set_api_client() 预先注入的 APIClient（每用户隔离 token_dir）
+        """
+        if self._initialized:
+            return
+
+        if self._injected_client is not None:
+            logger.info("使用已有 APIClient 初始化 SyncManager（Web 模式）...")
+            from garmy.localdb.sync import ActivitiesIterator
+            sm = self.sync_manager
+            sm.api_client = self._injected_client
+            sm.activities_iterator = ActivitiesIterator(
+                self._injected_client, sm.config.sync, sm.progress)
+            sm.activities_iterator.initialize()
+        else:
+            logger.info("使用凭据初始化 SyncManager（CLI 模式）...")
             self.sync_manager.initialize(
                 email=self._config.email,
                 password=self._config.password,
             )
-            self._initialized = True
-            logger.info("SyncManager 初始化完成")
+
+        self._initialized = True
+        logger.info("SyncManager 初始化完成")
+
+    def set_api_client(self, api_client) -> None:
+        """注入已验证的 APIClient（Web 多用户模式，在 initialize_sync 前调用）。"""
+        self._injected_client = api_client
 
     # ── 备份 / 恢复 ────────────────────────────
 

@@ -87,14 +87,21 @@ sequenceDiagram
     VPS->>VPS: 写入 SQLite + 生成日报
     VPS-->>Web: 同步完成，跳转聊天页
 
-    Note over User,DS: === 日常对话 ===
+    Note over User,DS: === 日常使用 ===
 
-    User->>Web: "今天状态怎么样？"
-    Web->>VPS: POST /api/chat/stream
-    VPS->>VPS: 读取日报 + 画像 + 目标
-    VPS->>DS: 构建 prompt → API 调用
-    DS-->>VPS: 流式回复
-    VPS-->>Web: SSE 逐字展示 AI 回复
+    User->>Web: 打开 rundown.xxx.com
+    Web->>VPS: GET / → GET /api/dashboard
+    VPS->>VPS: 读取最新日报 + 画像 + 数据
+    VPS-->>Web: 仪表盘 JSON（训练/睡眠/身体/AI 洞察）
+    Web-->>User: 日报仪表盘（数据卡片展示）
+
+    User->>Web: 点击"同步"
+    Web->>VPS: POST /api/sync
+    VPS->>Garmin: 拉取活动 + 健康数据
+    VPS->>VPS: 写入 SQLite + 生成日报
+    VPS-->>Web: 同步完成
+    Web->>VPS: GET /api/dashboard
+    VPS-->>Web: 更新后的仪表盘数据
 ```
 
 ---
@@ -134,8 +141,8 @@ VPS 磁盘是持久化的，容器重启不丢。OSS 仅作为灾备，初期可
 |------|------|
 | `src/users.py` | 用户管理器 |
 | `src/web.py` | Web 页面 + API 路由 |
-| `web/templates/chat.html` | 聊天页面（纯 HTML + CSS + JS） |
-| `web/templates/setup.html` | Garmin 绑定页面 |
+| `web/templates/chat.html` | 日报仪表盘页面（纯 HTML + CSS + JS） |
+| `web/templates/setup.html` | 多步初始化向导（数据源绑定 + 个人资料 + 目标） |
 | `Dockerfile` | 容器镜像 |
 | `docker-compose.yml` | 一键部署 |
 
@@ -185,6 +192,8 @@ class UserManager:
 # 页面路由（服务端渲染 HTML）
 @server.custom_route("/", methods=["GET"])
 async def index(request): ...
+    # 已绑定用户 → 日报仪表盘（chat.html）
+    # 未绑定用户 → 跳转 /setup
 
 @server.custom_route("/setup", methods=["GET"])
 async def setup_page(request): ...
@@ -192,20 +201,39 @@ async def setup_page(request): ...
 # API 路由（JSON）
 @server.custom_route("/api/setup", methods=["POST"])
 async def api_setup(request): ...
+    # 支持 Garmin / Coros / Huawei 三种数据源绑定
 
 @server.custom_route("/api/mfa", methods=["POST"])
 async def api_mfa(request): ...
 
+@server.custom_route("/api/dashboard", methods=["GET"])
+async def api_dashboard(request): ...
+    # 返回日报仪表盘 JSON（训练/睡眠/身体状态/AI 洞察）
+
+@server.custom_route("/api/profile", methods=["POST"])
+async def api_profile(request): ...
+    # 保存个人资料 + 最佳成绩
+
+@server.custom_route("/api/goals", methods=["POST"])
+async def api_goals(request): ...
+    # 保存训练目标
+
+@server.custom_route("/api/preferences", methods=["POST"])
+async def api_preferences(request): ...
+    # 保存训练偏好
+
 @server.custom_route("/api/sync", methods=["POST"])
 async def api_sync(request): ...
 
-@server.custom_route("/api/chat/stream", methods=["POST"])
-async def api_chat_stream(request): ...
-    # SSE 流式输出 AI 回复，逐字展示
+@server.custom_route("/api/status", methods=["GET"])
+async def api_status(request): ...
+
+@server.custom_route("/api/logout", methods=["POST"])
+async def api_logout(request): ...
 ```
 
 **为什么不用 Flask/FastAPI？** FastMCP 内置的 uvicorn + Starlette 完全够用，
-`custom_route` 注册路由，`StreamingResponse` 做 SSE。零额外依赖。
+`custom_route` 注册路由。零额外依赖。
 
 ### 6.3 `src/auth.py` — MFA 两步
 
@@ -233,16 +261,21 @@ async def chat_stream(messages: list[dict], context: str) -> AsyncIterator[str]:
 
 ---
 
-## 7. 聊天页面
+## 7. 日报仪表盘页面
 
 一个自包含的 HTML 文件，全部内嵌——零构建、零依赖、零 CDN：
 
 ```
 web/templates/chat.html    (~300行)
 ├── CSS: 移动端优先，暗色主题（跑步场景护眼）
-├── HTML: 消息列表 + 输入框 + 同步状态栏
-└── JS:  SSE 接收流式回复 + 渲染 Markdown
+├── HTML: 训练概览卡片 + 身体指标 + 睡眠 + AI 洞察
+├── JS:  GET /api/dashboard 加载数据 → 渲染卡片
+└── 交互: 同步按钮 → POST /api/sync
 ```
+
+首页不再是聊天界面，而是**日报仪表盘**——展示昨日训练、睡眠评分、
+身体状态（RHR/HRV/电量/训练准备）、训练负荷与恢复、AI 教练洞察。
+用户看到的是结构化的数据卡片，而非对话消息列表。
 
 风格参考你现有的 `render.py` 设计品味——简洁、大气、运动感。
 

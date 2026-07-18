@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import logging
 import os
 from dataclasses import dataclass, field
@@ -14,6 +15,18 @@ from pathlib import Path
 from dotenv import load_dotenv
 
 logger = logging.getLogger(__name__)
+
+
+def huawei_user_key(group_pals_token: str) -> str:
+    """从敏感 token 派生不可逆的稳定本地目录键。"""
+    if not group_pals_token:
+        return "unconfigured"
+    return hashlib.sha256(group_pals_token.encode()).hexdigest()[:16]
+
+
+def _default_huawei_token_dir() -> str:
+    key = huawei_user_key(os.getenv("GROUP_PALS_TOKEN", ""))
+    return str(Path.home() / ".rundown" / "users" / key / "huawei-tokens")
 
 
 class ConfigError(Exception):
@@ -58,6 +71,10 @@ class Config:
             os.path.expanduser("~/.garmy"),
         )
     )
+    # Huawei 凭证代理（每个用户独立的 CrewPals token）
+    group_pals_token: str = field(default_factory=lambda: os.getenv("GROUP_PALS_TOKEN", ""))
+    huawei_token_dir: str = field(default_factory=lambda: os.getenv(
+        "HUAWEI_TOKEN_DIR", _default_huawei_token_dir()))
 
     # ── 存储 ──────────────────────────────────
     db_path: str = field(
@@ -96,10 +113,14 @@ class Config:
     def validate(self) -> None:
         """校验必填配置项，缺失则抛出 ConfigError。"""
         missing: list[str] = []
-        if not self.email:
-            missing.append("RUNDOWN_ACCOUNT")
-        if not self.password:
-            missing.append("RUNDOWN_PASSWORD")
+        if self.provider_type == "huawei":
+            if not self.group_pals_token:
+                missing.append("GROUP_PALS_TOKEN")
+        else:
+            if not self.email:
+                missing.append("RUNDOWN_ACCOUNT")
+            if not self.password:
+                missing.append("RUNDOWN_PASSWORD")
 
         if missing:
             raise ConfigError(
@@ -112,7 +133,8 @@ class Config:
         """打印配置信息（敏感信息脱敏）。"""
         logger.info("配置加载完成:")
         logger.info("  Provider:        %s", self.provider_type)
-        logger.info("  Email:           %s", _mask_email(self.email))
+        if self.provider_type != "huawei":
+            logger.info("  Email:           %s", _mask_email(self.email))
         logger.info("  DB:              %s", self.db_path)
         logger.info("  Sync days:       %s", self.sync_days)
         logger.info("  Log level:       %s", self.log_level)
@@ -128,10 +150,19 @@ class Config:
 
 @dataclass
 class UserConfig:
-    """用户专属配置 — 所有路径按 api_key 隔离，不存密码。"""
+    """用户专属配置 — 所有路径按 api_key 隔离。
+
+    email / password / _domain 由 web 层从用户注册表中注入，
+    供 AuthManager 在 Token 过期时重新登录使用。
+    """
 
     api_key: str
     parent: Config
+
+    # ── 由 Web 层注入的运行时字段 ──
+    email: str = ""
+    password: str = ""
+    _domain: str = ""  # 用户选择的 Garmin 区域，覆盖 parent.domain
 
     @property
     def token_dir(self) -> str:
@@ -147,7 +178,7 @@ class UserConfig:
 
     @property
     def domain(self) -> str:
-        return self.parent.domain
+        return self._domain or self.parent.domain
 
     @property
     def provider_type(self) -> str:
@@ -156,6 +187,14 @@ class UserConfig:
     @property
     def non_interactive(self) -> bool:
         return True  # Web 用户始终非交互
+
+    @property
+    def group_pals_token(self) -> str:
+        return self.parent.group_pals_token
+
+    @property
+    def huawei_token_dir(self) -> str:
+        return str(Path(self.parent.data_dir) / self.api_key / "huawei-tokens")
 
 
 def get_config() -> Config:
@@ -179,7 +218,7 @@ def get_config() -> Config:
     if cwd_env.exists():
         load_dotenv(cwd_env, override=True)  # 当前目录 .env 优先
     home_env = Path.home() / ".rundown" / ".env"
-    if home_env.exists():
+    if not rundown_home and home_env.exists():
         load_dotenv(home_env, override=False)  # 全局配置只补充缺失项
 
     config = Config()
@@ -193,6 +232,8 @@ def get_config() -> Config:
             config.memory_dir = str(home / config.memory_dir)
         if not Path(config.token_dir).is_absolute():
             config.token_dir = str(home / config.token_dir)
+        if not Path(config.huawei_token_dir).is_absolute():
+            config.huawei_token_dir = str(home / config.huawei_token_dir)
 
     # Web 服务模式下不校验 Garmin 凭证（用户各自绑定）
     if not os.getenv("RUNDOWN_SERVE_MODE", "").lower() in ("1", "true", "yes"):

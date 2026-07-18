@@ -1,94 +1,426 @@
 <!DOCTYPE html>
 <html lang="zh">
 <head>
-<meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Rundown — 绑定 Garmin</title>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Rundown — 初始化设置</title>
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
-body{font-family:-apple-system,BlinkMacSystemFont,sans-serif;background:#0f0f0f;color:#e0e0e0;
+body{font-family:-apple-system,BlinkMacSystemFont,sans-serif;background:#0a0a0a;color:#e0e0e0;
   display:flex;justify-content:center;align-items:center;min-height:100vh;padding:20px}
-.card{background:#1a1a1a;border-radius:16px;padding:32px 24px;max-width:400px;width:100%}
-h1{font-size:20px;margin-bottom:8px;color:#fff}
-p.sub{font-size:14px;color:#888;margin-bottom:24px}
-label{display:block;font-size:13px;color:#aaa;margin-bottom:4px;margin-top:16px}
-input{width:100%;padding:12px;border-radius:10px;border:1px solid #333;background:#0f0f0f;
-  color:#fff;font-size:16px;outline:none}
-input:focus{border-color:#4caf50}
-button{width:100%;padding:14px;border-radius:10px;border:none;background:#4caf50;color:#fff;
-  font-size:16px;font-weight:600;margin-top:24px;cursor:pointer}
-button:disabled{opacity:.5}
+
+/* ── Card ── */
+.card{background:#141414;border:1px solid #222;border-radius:20px;padding:40px 32px;
+  max-width:460px;width:100%;min-height:520px;display:flex;flex-direction:column}
+
+/* ── Progress ── */
+.progress{display:flex;gap:8px;margin-bottom:32px}
+.progress .dot{flex:1;height:4px;border-radius:2px;background:#222;transition:background .3s}
+.progress .dot.active{background:#4caf50}
+.progress .dot.done{background:#4caf50;opacity:.6}
+.step-label{font-size:12px;color:#666;margin-bottom:4px}
+h1{font-size:22px;color:#fff;margin-bottom:6px}
+p.desc{font-size:14px;color:#777;margin-bottom:28px;line-height:1.5}
+
+/* ── Provider Selector ── */
+.provider-list{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-bottom:24px}
+.provider-opt{background:#1a1a1a;border:2px solid #222;border-radius:14px;padding:16px 8px;
+  text-align:center;cursor:pointer;transition:all .2s;color:#aaa;font-size:14px}
+.provider-opt:hover{border-color:#444;color:#fff}
+.provider-opt.selected{border-color:#4caf50;background:#0a1a0a;color:#4caf50}
+.provider-opt .icon{font-size:28px;display:block;margin-bottom:6px}
+
+/* ── Form ── */
+.form-group{margin-bottom:18px}
+.form-group label{display:block;font-size:13px;color:#999;margin-bottom:6px}
+.form-group input,.form-group select{width:100%;padding:12px 14px;border-radius:10px;
+  border:1px solid #222;background:#1a1a1a;color:#fff;font-size:15px;outline:none;
+  transition:border-color .2s}
+.form-group input:focus,.form-group select:focus{border-color:#4caf50}
+.form-row{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.form-hint{font-size:11px;color:#555;margin-top:4px}
+.form-group select{appearance:none;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='%23888' d='M6 8L1 3h10z'/%3E%3C/svg%3E");
+  background-repeat:no-repeat;background-position:right 14px center;padding-right:36px}
+
+/* ── Buttons ── */
+.btn-row{display:flex;gap:10px;margin-top:auto;padding-top:24px}
+.btn{flex:1;padding:14px;border-radius:12px;border:none;font-size:15px;font-weight:600;
+  cursor:pointer;transition:all .2s}
+.btn:disabled{opacity:.4;cursor:not-allowed}
+.btn-primary{background:#4caf50;color:#fff}
+.btn-primary:hover:not(:disabled){background:#43a047}
+.btn-secondary{background:transparent;color:#888;border:1px solid #333}
+.btn-secondary:hover:not(:disabled){color:#fff;border-color:#555}
+
+/* ── Messages ── */
+#error{color:#f44336;font-size:13px;margin-top:12px;display:none}
+#success{color:#4caf50;font-size:13px;margin-top:12px;display:none}
+
+/* ── Steps ── */
+.step{display:none;flex:1;flex-direction:column}
+.step.active{display:flex}
+
+/* ── MFA ── */
 #mfa-section{display:none}
-#error{color:#f44336;font-size:14px;margin-top:12px;display:none}
-#success{color:#4caf50;font-size:14px;margin-top:12px;display:none}
+
+/* ── Spinner ── */
+.spinner{display:inline-block;width:14px;height:14px;border:2px solid rgba(255,255,255,.3);
+  border-top-color:#fff;border-radius:50%;animation:spin .6s linear infinite;vertical-align:middle;margin-right:6px}
+@keyframes spin{to{transform:rotate(360deg)}}
+
+/* ── Checkbox ── */
+.check-row{display:flex;align-items:center;gap:10px;margin-bottom:18px}
+.check-row input[type=checkbox]{width:18px;height:18px;accent-color:#4caf50}
+.check-row label{font-size:14px;color:#ccc;margin:0}
+
+/* ── Responsive ── */
+@media(max-width:480px){
+  .card{padding:28px 18px}
+  .provider-list{grid-template-columns:repeat(3,1fr);gap:6px}
+  .provider-opt{padding:12px 4px;font-size:13px}
+  .form-row{grid-template-columns:1fr}
+}
 </style>
 </head>
 <body>
 <div class="card">
-<h1>🔗 绑定 Garmin</h1>
-<p class="sub">连接你的 Garmin 账号，AI 教练需要你的运动数据</p>
-<div id="setup-section">
-  <label>Garmin 邮箱</label>
-  <input id="email" type="email" placeholder="your@email.com" autocomplete="email">
-  <label>Garmin 密码</label>
-  <input id="password" type="password" placeholder="Garmin 密码" autocomplete="current-password">
-  <button id="setup-btn" onclick="startSetup()">开始绑定</button>
+
+<!-- Progress -->
+<div class="progress">
+  <div class="dot active" id="dot1"></div>
+  <div class="dot" id="dot2"></div>
+  <div class="dot" id="dot3"></div>
 </div>
-<div id="mfa-section">
-  <p>请输入 Garmin 发送的二次验证码</p>
-  <label>MFA 验证码</label>
-  <input id="mfa-code" type="text" placeholder="6 位数字" inputmode="numeric">
-  <button id="mfa-btn" onclick="submitMfa()">验证</button>
+
+<!-- ═══ Step 1: 连接数据源 ═══ -->
+<div class="step active" id="step1">
+  <div class="step-label">步骤 1/3</div>
+  <h1>📡 连接数据源</h1>
+  <p class="desc">选择你的运动平台并登录，Rundown 将自动同步你的训练与健康数据。</p>
+
+  <div class="provider-list">
+    <div class="provider-opt selected" data-provider="garmin" onclick="selectProvider('garmin')">
+      <span class="icon">⌚</span>Garmin
+    </div>
+    <div class="provider-opt" data-provider="coros" onclick="selectProvider('coros')">
+      <span class="icon">⌚</span>Coros
+    </div>
+    <div class="provider-opt" data-provider="huawei" onclick="selectProvider('huawei')">
+      <span class="icon">⌚</span>Huawei
+    </div>
+  </div>
+
+  <!-- Garmin / Coros fields -->
+  <div id="cred-fields">
+    <div id="domain-group" class="form-group">
+      <label>Garmin 区域</label>
+      <select id="domain">
+        <option value="garmin.com">garmin.com (国际)</option>
+        <option value="garmin.cn">garmin.cn (中国)</option>
+      </select>
+    </div>
+    <div class="form-group">
+      <label id="account-label">账号（邮箱）</label>
+      <input id="email" type="text" placeholder="your@email.com" autocomplete="email">
+    </div>
+    <div class="form-group">
+      <label>密码</label>
+      <input id="password" type="password" placeholder="密码" autocomplete="current-password">
+    </div>
+  </div>
+
+  <!-- Huawei fields -->
+  <div id="huawei-fields" style="display:none">
+    <div class="form-group">
+      <label>CrewPals GROUP_PALS_TOKEN</label>
+      <input id="group-token" type="password" placeholder="输入你的 GROUP_PALS_TOKEN">
+      <div class="form-hint">从 Huawei Health 数据代理获取的访问令牌</div>
+    </div>
+  </div>
+
+  <!-- MFA -->
+  <div id="mfa-section">
+    <div class="form-group">
+      <label>MFA 验证码</label>
+      <input id="mfa-code" type="text" placeholder="6 位数字" inputmode="numeric" autocomplete="one-time-code">
+      <div class="form-hint">请输入 Garmin 发送的二次验证码</div>
+    </div>
+    <button class="btn btn-primary" id="mfa-btn" onclick="submitMfa()">验证</button>
+  </div>
+
+  <div id="error"></div>
+  <div id="success"></div>
+
+  <div class="btn-row">
+    <button class="btn btn-primary" id="step1-btn" onclick="doBind()">绑定并继续</button>
+  </div>
 </div>
-<div id="error"></div>
-<div id="success"></div>
+
+<!-- ═══ Step 2: 个人资料 ═══ -->
+<div class="step" id="step2">
+  <div class="step-label">步骤 2/3</div>
+  <h1>🏃 个人资料</h1>
+  <p class="desc">完善身体数据与个人最佳成绩，AI 教练会据此制定个性计划。</p>
+
+  <div class="form-row">
+    <div class="form-group"><label>身高 (cm)</label><input id="height" type="number" placeholder="175" min="100" max="250"></div>
+    <div class="form-group"><label>体重 (kg)</label><input id="weight" type="number" placeholder="70" min="30" max="200"></div>
+  </div>
+  <div class="form-row">
+    <div class="form-group"><label>年龄</label><input id="age" type="number" placeholder="30" min="10" max="100"></div>
+    <div class="form-group">
+      <label>性别</label>
+      <select id="gender"><option value="male">男</option><option value="female">女</option></select>
+    </div>
+  </div>
+  <div class="form-group"><label>训练地点</label><input id="location" placeholder="例如：北京"></div>
+
+  <p style="color:#999;font-size:13px;margin:20px 0 8px;font-weight:600">🏆 个人最佳成绩（选填）</p>
+  <div class="form-row">
+    <div class="form-group"><label>5K</label><input id="pb5k" placeholder="MM:SS 或 分钟"></div>
+    <div class="form-group"><label>10K</label><input id="pb10k" placeholder="MM:SS 或 分钟"></div>
+  </div>
+  <div class="form-row">
+    <div class="form-group"><label>半马</label><input id="pbHm" placeholder="H:MM:SS"></div>
+    <div class="form-group"><label>全马</label><input id="pbM" placeholder="H:MM:SS"></div>
+  </div>
+  <div class="form-group"><label>VO2max 估算</label><input id="vo2max" type="number" placeholder="45" min="20" max="90"></div>
+
+  <div class="btn-row">
+    <button class="btn btn-secondary" onclick="goStep(1)">← 上一步</button>
+    <button class="btn btn-primary" id="step2-btn" onclick="doProfile()">保存并继续</button>
+  </div>
 </div>
+
+<!-- ═══ Step 3: 训练目标 ═══ -->
+<div class="step" id="step3">
+  <div class="step-label">步骤 3/3</div>
+  <h1>🎯 训练目标</h1>
+  <p class="desc">设定你的目标与偏好，AI 教练将为你制定针对性训练建议。</p>
+
+  <div class="form-group"><label>目标名称</label><input id="goalName" placeholder="例如：全马破4"></div>
+  <div class="form-row">
+    <div class="form-group">
+      <label>目标距离</label>
+      <select id="goalDist"><option value="5k">5K</option><option value="10k">10K</option><option value="hm">半马</option><option value="marathon" selected>全马</option></select>
+    </div>
+    <div class="form-group"><label>目标成绩</label><input id="goalTime" placeholder="H:MM:SS"></div>
+  </div>
+  <div class="form-row">
+    <div class="form-group"><label>目标日期</label><input id="goalDate" type="date"></div>
+    <div class="form-group"><label>周跑量目标 (km)</label><input id="goalKm" type="number" placeholder="50" min="10" max="200"></div>
+  </div>
+
+  <p style="color:#999;font-size:13px;margin:20px 0 8px;font-weight:600">⚙️ 训练偏好</p>
+  <div class="form-row">
+    <div class="form-group">
+      <label>偏好时间</label>
+      <select id="prefTime"><option value="morning">早晨</option><option value="afternoon">下午</option><option value="evening" selected>傍晚</option></select>
+    </div>
+    <div class="form-group">
+      <label>偏好地形</label>
+      <select id="prefTerrain"><option value="田径场">田径场</option><option value="公路" selected>公路</option><option value="混合">混合</option></select>
+    </div>
+  </div>
+  <div class="form-group"><label>偏好训练类型（逗号分隔）</label><input id="prefWorkouts" placeholder="间歇,节奏,长距离,轻松跑"></div>
+  <div class="form-group"><label>伤病史</label><input id="injury" placeholder="无则留空"></div>
+  <div class="form-group"><label>训练理念</label><input id="philosophy" placeholder="数据驱动，极化训练，重视恢复"></div>
+
+  <div class="btn-row">
+    <button class="btn btn-secondary" onclick="goStep(2)">← 上一步</button>
+    <button class="btn btn-primary" id="step3-btn" onclick="doFinish()">完成设置</button>
+  </div>
+</div>
+
+</div><!-- /.card -->
+
 <script>
+// ── State ──
+let provider = 'garmin';
 let mfaSession = '';
-function showError(msg){const e=document.getElementById('error');e.textContent=msg;e.style.display='block'}
-function hideError(){document.getElementById('error').style.display='none'}
-async function startSetup(){
+let step = 1;
+
+// ── Helpers ──
+function $(id){return document.getElementById(id)}
+function showError(msg){const e=$('error');e.textContent=msg;e.style.display='block';$('success').style.display='none'}
+function hideError(){$('error').style.display='none'}
+function showSuccess(msg){const e=$('success');e.textContent=msg;e.style.display='block';$('error').style.display='none'}
+
+// ── Provider ──
+function selectProvider(p){
+  provider = p;
+  document.querySelectorAll('.provider-opt').forEach(el=>el.classList.remove('selected'));
+  document.querySelector(`[data-provider="${p}"]`).classList.add('selected');
+
+  if(p==='huawei'){
+    $('cred-fields').style.display='none';
+    $('huawei-fields').style.display='block';
+    $('mfa-section').style.display='none';
+  }else{
+    $('cred-fields').style.display='block';
+    $('huawei-fields').style.display='none';
+    $('mfa-section').style.display='none';
+    if(p==='coros'){
+      $('domain-group').style.display='none';
+      $('account-label').textContent='账号（邮箱或手机号）';
+    }else{
+      $('domain-group').style.display='block';
+      $('account-label').textContent='账号（邮箱）';
+    }
+  }
+}
+
+// ── Steps ──
+function goStep(n){
+  $(`step${step}`).classList.remove('active');
+  step = n;
+  $(`step${step}`).classList.add('active');
+  updateDots();
   hideError();
-  const email=document.getElementById('email').value.trim();
-  const password=document.getElementById('password').value.trim();
-  if(!email||!password){showError('请输入邮箱和密码');return}
-  const btn=document.getElementById('setup-btn');btn.disabled=true;btn.textContent='登录中...';
+}
+
+function updateDots(){
+  for(let i=1;i<=3;i++){
+    const d = $('dot'+i);
+    d.classList.remove('active','done');
+    if(i<step) d.classList.add('done');
+    if(i===step) d.classList.add('active');
+  }
+}
+
+// ── Step 1: Bind ──
+async function doBind(){
+  hideError();
+  const btn = $('step1-btn');
+  btn.disabled = true;
+
+  if(provider==='huawei'){
+    const token = $('group-token').value.trim();
+    if(!token){showError('请输入 GROUP_PALS_TOKEN');btn.disabled=false;return}
+    btn.innerHTML='<span class="spinner"></span>绑定中...';
+    try{
+      const r = await fetch('/api/setup',{method:'POST',headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({provider:'huawei',group_pals_token:token})});
+      const d = await r.json();
+      if(d.status==='ok'){
+        showSuccess('Huawei 绑定成功！');
+        setTimeout(()=>goStep(2),800);
+      }else{showError(d.message||'绑定失败')}
+    }catch(e){showError('网络错误: '+e.message)}
+    btn.disabled=false;btn.textContent='绑定并继续';
+    return;
+  }
+
+  // Garmin / Coros
+  const email = $('email').value.trim();
+  const password = $('password').value.trim();
+  if(!email||!password){showError('请输入账号和密码');btn.disabled=false;return}
+
+  const body = {provider,email,password};
+  if(provider==='garmin') body.domain = $('domain').value;
+
+  btn.innerHTML='<span class="spinner"></span>登录中...';
   try{
-    const r=await fetch('/api/setup',{method:'POST',headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({email,password})});
-    const d=await r.json();
+    const r = await fetch('/api/setup',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify(body)});
+    const d = await r.json();
     if(d.status==='needs_mfa'){
-      mfaSession=d.session;
-      document.getElementById('setup-section').style.display='none';
-      document.getElementById('mfa-section').style.display='block';
+      mfaSession = d.session;
+      $('cred-fields').style.display='none';
+      $('mfa-section').style.display='block';
+      $('step1-btn').style.display='none';
     }else if(d.status==='ok'){
-      document.getElementById('success').textContent='绑定成功！即将跳转...';
-      document.getElementById('success').style.display='block';
-      setTimeout(()=>location.href='/',1500);
+      showSuccess('绑定成功！');
+      setTimeout(()=>goStep(2),800);
     }else{
       showError(d.message||'绑定失败');
     }
   }catch(e){showError('网络错误: '+e.message)}
-  btn.disabled=false;btn.textContent='开始绑定';
+  btn.disabled=false;btn.textContent='绑定并继续';
 }
+
 async function submitMfa(){
   hideError();
-  const code=document.getElementById('mfa-code').value.trim();
+  const code = $('mfa-code').value.trim();
   if(!code){showError('请输入验证码');return}
-  const btn=document.getElementById('mfa-btn');btn.disabled=true;btn.textContent='验证中...';
+  const btn = $('mfa-btn');btn.disabled=true;btn.innerHTML='<span class="spinner"></span>验证中...';
   try{
-    const r=await fetch('/api/mfa',{method:'POST',headers:{'Content-Type':'application/json'},
+    const r = await fetch('/api/mfa',{method:'POST',headers:{'Content-Type':'application/json'},
       body:JSON.stringify({code,session:mfaSession})});
-    const d=await r.json();
+    const d = await r.json();
     if(d.status==='ok'){
-      document.getElementById('success').textContent='绑定成功！即将跳转...';
-      document.getElementById('success').style.display='block';
-      setTimeout(()=>location.href='/',1500);
-    }else{
-      showError(d.message||'MFA 验证失败');
-    }
+      showSuccess('验证成功！');
+      setTimeout(()=>goStep(2),800);
+    }else{showError(d.message||'MFA 验证失败')}
   }catch(e){showError('网络错误: '+e.message)}
   btn.disabled=false;btn.textContent='验证';
 }
+
+// ── Step 2: Profile ──
+async function doProfile(){
+  hideError();
+  const btn = $('step2-btn');btn.disabled=true;btn.innerHTML='<span class="spinner"></span>保存中...';
+  try{
+    const r = await fetch('/api/profile',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({
+        height_cm: $('height').value||null,
+        weight_kg: $('weight').value||null,
+        age: $('age').value||null,
+        gender: $('gender').value,
+        location: $('location').value,
+        pbs:{
+          '5k':$('pb5k').value||null,
+          '10k':$('pb10k').value||null,
+          half_marathon:$('pbHm').value||null,
+          marathon:$('pbM').value||null,
+          vo2max:$('vo2max').value||null
+        }
+      })});
+    const d = await r.json();
+    if(d.status==='ok'){goStep(3)}
+    else{showError(d.message||'保存失败')}
+  }catch(e){showError('网络错误: '+e.message)}
+  btn.disabled=false;btn.textContent='保存并继续';
+}
+
+// ── Step 3: Finish ──
+async function doFinish(){
+  hideError();
+  const btn = $('step3-btn');btn.disabled=true;btn.innerHTML='<span class="spinner"></span>保存中...';
+  try{
+    // Save goals
+    const goalName = $('goalName').value.trim();
+    if(goalName){
+      await fetch('/api/goals',{method:'POST',headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({
+          name:goalName,
+          distance:$('goalDist').value,
+          target_time:$('goalTime').value||null,
+          target_date:$('goalDate').value||null,
+          weekly_km:$('goalKm').value||null
+        })});
+    }
+    // Save preferences
+    await fetch('/api/preferences',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({
+        preferred_time:$('prefTime').value,
+        preferred_workouts:$('prefWorkouts').value||'间歇,节奏,长距离',
+        preferred_terrain:$('prefTerrain').value,
+        injury_history:$('injury').value||'',
+        training_philosophy:$('philosophy').value||'数据驱动，极化训练，重视恢复'
+      })});
+
+    showSuccess('设置完成！即将跳转...');
+    setTimeout(()=>location.href='/',1200);
+  }catch(e){showError('网络错误: '+e.message)}
+  btn.disabled=false;btn.textContent='完成设置';
+}
+
+// ── Init ──
+selectProvider('garmin');
+// Set default goal date to next year
+const nextYear = new Date();nextYear.setFullYear(nextYear.getFullYear()+1);
+$('goalDate').value = nextYear.toISOString().slice(0,10);
 </script>
 </body>
 </html>

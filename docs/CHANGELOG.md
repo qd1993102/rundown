@@ -4,6 +4,43 @@ Rundown 项目变更日志，按日期倒序。
 
 ---
 
+## 2026-07-18
+
+### Changed
+- **Web 首页改为日报仪表盘**: `chat.html` 从聊天对话界面改为日报仪表盘，展示训练概览、睡眠评分、身体状态（RHR/HRV/电量/训练准备）、训练负荷/恢复和 AI 教练洞察卡片，不再有消息输入框
+- **Web 初始化改为多步向导**: `setup.html` 从单一 Garmin 绑定页改为 3 步向导（数据源选择与绑定 → 个人资料与最佳成绩 → 训练目标与偏好），匹配 CLI `init` + `setup` 流程
+- **Web API 扩展**: 新增 `GET /api/dashboard`（仪表盘 JSON）、`POST /api/profile`（个人资料）、`POST /api/goals`（训练目标）、`POST /api/preferences`（训练偏好）；`POST /api/setup` 扩展支持 Coros 和 Huawei 数据源绑定
+- **影响范围**: web/templates/chat.html, web/templates/setup.html, src/web.py
+- **关联文档**: [docs/design/13-sae-deployment.md](design/13-sae-deployment.md)
+
+## 2026-07-15
+
+### Added
+- **Huawei CrewPals 认证**: 新增 Huawei Provider，通过每用户 `GROUP_PALS_TOKEN` 从 CrewPals 预发布 HTTPS 接口获取并缓存 Huawei AT；Authorization 使用原始 JWT，不添加 Bearer 前缀；新增 `rundown auth` 与 MCP 认证入口。
+- **Huawei 配置**: 新增 `GROUP_PALS_TOKEN` 和 `HUAWEI_TOKEN_DIR`，Huawei 模式不要求账号密码或开发者 OAuth 凭证；默认以 token 摘要派生隔离目录。
+- **CrewPals 响应兼容**: 支持预发布接口的 `data` wrapper 与 `accessToken/refreshToken/expiredAt/openId` camelCase 字段，并统一转换为本地 snake_case token。
+- **影响范围**: config.py, main.py, mcp_server.py, providers/huawei.py, providers/__init__.py
+- **关联文档**: [docs/design/12-multi-platform.md](design/12-multi-platform.md), [实现过程](process/2026-07-15-huawei-crewpals-auth.md)
+
+### Changed
+- **三平台数据标准对齐**: 按 `ActivityData` / `DailyHealth` 逐字段列出 Garmin、Coros、Huawei 的实际接入差异，并明确单位、缺失值、近似语义、平台分数和时区处理规范。
+- **影响范围**: docs/design/12-multi-platform.md
+- **关联文档**: [docs/design/12-multi-platform.md](design/12-multi-platform.md)
+- **Huawei Token store 初始化**: `rundown init` 为当前配置选择并创建 `0700` token 目录；`rundown auth` 自动检测目录和 token JSON、校验 `access_token` 并收紧文件权限为 `0600`，不创建无效空文件。
+- **影响范围**: main.py, providers/huawei.py, tests/test_providers.py
+- **关联文档**: [docs/design/12-multi-platform.md](design/12-multi-platform.md), [实现过程](process/2026-07-15-huawei-crewpals-auth.md)
+
+### Fixed
+- **外部 Huawei Token 结构不兼容**: 兼容 `expired_at`、`open_id` 和 `user_id` 字段，保留已有绝对过期时间，避免有效 AT 被误判过期并错误进入刷新/授权流程。
+- **影响范围**: providers/huawei.py, tests/test_providers.py
+- **关联文档**: [Bug 记录](bugfixes/2026-07-15-huawei-external-token-fields.md), [docs/design/12-multi-platform.md](design/12-multi-platform.md)
+- **Huawei `rundown sync` 提前退出**: 移除 Huawei 同步硬编码返回，接入 `/activityRecords` 运动列表和 `activityRecordId` 详情查询，并通过统一 Provider 入库路径写入用户 SQLite。
+- **影响范围**: main.py, providers/huawei.py, tests/test_providers.py
+- **关联文档**: [Bug 记录](bugfixes/2026-07-15-huawei-sync-disabled.md), [docs/design/12-multi-platform.md](design/12-multi-platform.md)
+- **`RUNDOWN_HOME` 继承全局用户凭证**: 显式用户目录不再加载 `~/.rundown/.env`，避免 Huawei 用户配置被另一个全局 Garmin 账号污染。
+- **影响范围**: config.py, tests/test_config.py
+- **关联文档**: [Bug 记录](bugfixes/2026-07-15-rundown-home-global-credentials.md), [docs/design/12-multi-platform.md](design/12-multi-platform.md)
+
 ## 2026-07-09
 
 ### Added

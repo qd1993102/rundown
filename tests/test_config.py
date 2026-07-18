@@ -3,7 +3,7 @@
 import os
 from unittest import mock
 
-from src.config import Config, ConfigError, _mask_email
+from src.config import Config, ConfigError, _mask_email, get_config
 
 
 class TestMaskEmail:
@@ -78,3 +78,39 @@ class TestProviderConfig:
         with mock.patch.dict(os.environ, {"RUNDOWN_PROVIDER": "coros"}, clear=True):
             c = Config()
             assert c.provider_type == "coros"
+
+    def test_huawei_uses_group_pals_token_not_password(self):
+        with mock.patch.dict(os.environ, {
+            "RUNDOWN_PROVIDER": "huawei",
+            "GROUP_PALS_TOKEN": "group-token",
+        }, clear=True):
+            c = Config()
+            c.validate()
+            assert c.email == ""
+            assert c.password == ""
+            assert "group-token" not in c.huawei_token_dir
+            assert c.huawei_token_dir.endswith("/huawei-tokens")
+
+
+def test_rundown_home_does_not_inherit_global_user_credentials(tmp_path):
+    user_home = tmp_path / "user-a"
+    user_home.mkdir()
+    (user_home / ".env").write_text(
+        "RUNDOWN_PROVIDER=huawei\nGROUP_PALS_TOKEN=user-token\n",
+        encoding="utf-8",
+    )
+    fake_home = tmp_path / "system-home"
+    global_dir = fake_home / ".rundown"
+    global_dir.mkdir(parents=True)
+    (global_dir / ".env").write_text(
+        "RUNDOWN_ACCOUNT=other-user@example.com\nRUNDOWN_PASSWORD=other-password\n",
+        encoding="utf-8",
+    )
+
+    with mock.patch.dict(os.environ, {"RUNDOWN_HOME": str(user_home)}, clear=True), \
+            mock.patch("src.config.Path.home", return_value=fake_home):
+        config = get_config()
+
+    assert config.provider_type == "huawei"
+    assert config.email == ""
+    assert config.password == ""

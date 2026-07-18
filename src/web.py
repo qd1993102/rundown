@@ -10,7 +10,7 @@ import json
 import logging
 import os
 import secrets
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -20,7 +20,8 @@ from starlette.responses import HTMLResponse, JSONResponse, Response, StreamingR
 from .auth import AuthManager, cleanup_expired_mfa_states, get_mfa_state
 from .coach import chat_stream
 from .config import Config, UserConfig
-from .memory import MemoryStore
+from .main import _do_daily_sync
+from .memory import MemoryStore, build_memory_file
 from .storage import Storage
 from .users import UserManager
 
@@ -113,6 +114,36 @@ def _user_context(memory_store: MemoryStore, storage: Storage) -> str:
     return "\n\n".join(parts) if parts else "暂无数据，请先同步。"
 
 
+def _dashboard_data(memory_store: MemoryStore, target_date: date | None = None) -> dict[str, Any]:
+    """构建 Dashboard JSON 数据，供前端渲染日报卡片。
+
+    Args:
+        memory_store: 记忆存储实例。
+        target_date: 指定日期，None 则返回最新日报。
+    """
+    try:
+        if target_date:
+            report = memory_store.get(str(target_date))
+        else:
+            report = memory_store.get_latest("daily_report")
+
+        if report and report.front_matter:
+            fm = report.front_matter
+            return {
+                "has_data": True,
+                "report_date": str(fm.get("report_date", "")),
+                "yesterday_activities": fm.get("yesterday_activities", {}),
+                "last_night_sleep": fm.get("last_night_sleep", {}),
+                "this_morning": fm.get("this_morning", {}),
+                "training_load": fm.get("training_load", {}),
+                "recovery": fm.get("recovery", {}),
+                "ai_insight": fm.get("ai_insight", {}),
+            }
+    except Exception:
+        pass
+    return {"has_data": False}
+
+
 # ── 路由注册入口 ────────────────────────────────
 
 
@@ -145,33 +176,114 @@ def register_web_routes(server, user_manager: UserManager, config: Config):
         html = _read_template("setup.html")
         return HTMLResponse(html or _setup_fallback())
 
+    @server.custom_route("/reports", methods=["GET"])
+    async def reports_page(request: Request) -> Response:
+        """日报列表页面。"""
+        api_key = _get_api_key(request)
+        user = user_manager.get(api_key) if api_key else None
+        if not user or user.token_status != "active":
+            return _redirect("/setup")
+
+        html = _read_template("reports.html")
+        return HTMLResponse(html or _reports_fallback())
+
     # ═══ API 路由 ═══
 
     @server.custom_route("/api/setup", methods=["POST"])
     async def api_setup(request: Request) -> Response:
-        """启动 Garmin 绑定流程。"""
+        """启动数据源绑定流程（Garmin / Coros / Huawei）。"""
         try:
             body = await request.json()
         except Exception:
             return JSONResponse({"status": "error", "message": "无效请求"}, status_code=400)
 
+        provider = body.get("provider", "garmin").strip()
         email = body.get("email", "").strip()
         password = body.get("password", "").strip()
         domain = body.get("domain", "garmin.com").strip()
 
+        # ── Huawei: GROUP_PALS_TOKEN 认证 ──
+        if provider == "huawei":
+            group_token = body.get("group_pals_token", "").strip()
+            if not group_token:
+                return JSONResponse({"status": "error", "message": "请输入 GROUP_PALS_TOKEN"}, status_code=400)
+
+            api_key = _get_api_key(request)
+            user = user_manager.get(api_key) if api_key else None
+            if user is None:
+                user = user_manager.register(provider="huawei")
+                api_key = user.api_key
+
+            user_cfg = config.for_user(api_key)
+            user_manager.ensure_dirs(api_key)
+
+            # 设置 Huawei 专属配置
+            user_cfg.group_pals_token = group_token  # type: ignore[attr-defined]
+            # 确保 token 目录存在
+            token_dir = Path(user_cfg.huawei_token_dir)
+            token_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
+
+            try:
+                from .providers.huawei import HuaweiProvider
+                hw = HuaweiProvider(user_cfg)
+                hw.authenticate()
+                user_manager.update(api_key, provider="huawei", token_status="active")
+                resp = JSONResponse({"status": "ok"})
+                resp.set_cookie(_COOKIE_NAME, api_key, max_age=_COOKIE_MAX_AGE,
+                               httponly=True, samesite="lax")
+                return resp
+            except Exception as exc:
+                logger.error("Huawei 认证失败: %s", exc)
+                return JSONResponse({"status": "error", "message": f"Huawei 认证失败: {exc}"}, status_code=400)
+
+        # ── Coros: 邮箱/手机号 + 密码 ──
+        if provider == "coros":
+            if not email or not password:
+                return JSONResponse({"status": "error", "message": "请输入账号和密码"}, status_code=400)
+
+            api_key = _get_api_key(request)
+            user = user_manager.get(api_key) if api_key else None
+            if user is None:
+                user = user_manager.register(garmin_email=email, provider="coros")
+                api_key = user.api_key
+
+            user_cfg = config.for_user(api_key)
+            user_manager.ensure_dirs(api_key)
+
+            try:
+                from .providers.coros import CorosProvider
+                # 临时设置 email/password 到 user_cfg
+                user_cfg.email = email  # type: ignore[attr-defined]
+                user_cfg.password = password  # type: ignore[attr-defined]
+                cp = CorosProvider(user_cfg)
+                if cp.authenticate():
+                    user_manager.update(api_key, garmin_email=email,
+                                       provider="coros", token_status="active")
+                    resp = JSONResponse({"status": "ok"})
+                    resp.set_cookie(_COOKIE_NAME, api_key, max_age=_COOKIE_MAX_AGE,
+                                   httponly=True, samesite="lax")
+                    return resp
+                else:
+                    return JSONResponse({"status": "error", "message": "Coros 登录失败，请检查账号密码"}, status_code=400)
+            except Exception as exc:
+                logger.error("Coros 登录失败: %s", exc)
+                return JSONResponse({"status": "error", "message": f"登录失败: {exc}"}, status_code=400)
+
+        # ── Garmin: 邮箱 + 密码 + 可选 MFA ──
         if not email or not password:
             return JSONResponse({"status": "error", "message": "请输入邮箱和密码"}, status_code=400)
 
-        # 获取或创建用户
         api_key = _get_api_key(request)
         user = user_manager.get(api_key) if api_key else None
         if user is None:
-            user = user_manager.register(garmin_email=email, garmin_domain=domain)
+            user = user_manager.register(garmin_email=email, garmin_domain=domain, provider="garmin")
             api_key = user.api_key
 
-        # 创建用户专属配置和 AuthManager
         user_cfg = config.for_user(api_key)
         user_manager.ensure_dirs(api_key)
+
+        user_cfg.email = email
+        user_cfg._domain = domain
 
         auth = AuthManager(user_cfg)
 
@@ -182,7 +294,6 @@ def register_web_routes(server, user_manager: UserManager, config: Config):
             if result == "needs_mfa":
                 resp = JSONResponse({"status": "needs_mfa", "session": session_key})
             else:
-                # 登录成功（无需 MFA）
                 user_manager.update(api_key, garmin_email=email,
                                     garmin_domain=domain, token_status="active")
                 resp = JSONResponse({"status": "ok"})
@@ -258,45 +369,47 @@ def register_web_routes(server, user_manager: UserManager, config: Config):
 
     @server.custom_route("/api/sync", methods=["POST"])
     async def api_sync(request: Request) -> Response:
-        """触发数据同步 + 生成日报。"""
+        """触发数据同步 + 生成日报（直接复用 CLI 的 _do_daily_sync）。
+
+        Request body (JSON):
+            date: 可选，YYYY-MM-DD，不传则默认今天。
+        """
         api_key = _get_api_key(request)
         user = user_manager.get(api_key) if api_key else None
         if not user or user.token_status != "active":
-            return JSONResponse({"status": "error", "message": "请先绑定 Garmin"}, status_code=401)
+            return JSONResponse({"status": "error", "message": "请先绑定数据源"}, status_code=401)
 
         user_cfg = config.for_user(api_key)
         user_manager.ensure_dirs(api_key)
 
+        # 注入用户凭证供 _do_daily_sync 使用
+        user_cfg.email = user.garmin_email
+        user_cfg._domain = user.garmin_domain
+
+        # 解析目标日期
+        target = date.today()
         try:
-            # 认证
-            auth = AuthManager(user_cfg)
-            _ = auth.client  # 触发登录/Token 检查
+            body = await request.json()
+            date_str = body.get("date", "").strip() if body else ""
+            if date_str:
+                target = date.fromisoformat(date_str)
+        except Exception:
+            pass  # GET 请求或无 body 则默认今天
 
-            # 同步
-            storage = Storage(user_cfg)
-            user_id = auth.client.user_id if hasattr(auth.client, 'user_id') else 0
-            today = date.today()
-            start = today - timedelta(days=config.sync_days)
+        try:
+            mem, _provider, storage, _ms, _uid = _do_daily_sync(
+                config=user_cfg, target=target,
+                sync_days=config.sync_days, quiet=True,
+            )
 
-            # 初始化并同步
-            storage.sync_manager.initialize(email=user.garmin_email, password="")
-            storage.reset_pending_metrics(user_id, start, today)
-            storage.sync_range(user_id, start, today)
-
-            # 生成日报
-            memory_store = MemoryStore(user_cfg.memory_dir,
-                                       db_getter=lambda: storage.db)
-            mem = memory_store.generate_daily_report(str(user_id), today)
-
-            # 备份
+            # 备份数据库
             storage.backup_to(user_manager.get_backup_path(api_key))
-
-            # 更新最后同步时间
-            user_manager.update(api_key, last_sync=str(today))
+            user_manager.update(api_key, last_sync=str(date.today()))
 
             return JSONResponse({
                 "status": "ok",
-                "message": f"同步完成，已生成 {today} 日报",
+                "message": f"同步完成，已生成 {target} 日报",
+                "date": str(target),
             })
 
         except Exception as exc:
@@ -326,12 +439,296 @@ def register_web_routes(server, user_manager: UserManager, config: Config):
         resp.delete_cookie(_COOKIE_NAME)
         return resp
 
+    @server.custom_route("/api/dashboard", methods=["GET"])
+    async def api_dashboard(request: Request) -> Response:
+        """获取 Dashboard 数据（日报摘要 JSON）。
+
+        Query params:
+            date: 可选，YYYY-MM-DD 格式，不传则返回最新日报。
+        """
+        api_key = _get_api_key(request)
+        user = user_manager.get(api_key) if api_key else None
+        if not user or user.token_status != "active":
+            return JSONResponse({"status": "error", "message": "请先绑定数据源"}, status_code=401)
+
+        user_cfg = config.for_user(api_key)
+        user_manager.ensure_dirs(api_key)
+        storage = Storage(user_cfg)
+        memory_store = MemoryStore(user_cfg.memory_dir,
+                                   db_getter=lambda: storage.db)
+
+        # 支持 ?date=YYYY-MM-DD 查看历史日报
+        target_date = None
+        date_param = request.query_params.get("date", "").strip()
+        if date_param:
+            try:
+                target_date = date.fromisoformat(date_param)
+            except ValueError:
+                pass
+
+        data = _dashboard_data(memory_store, target_date)
+        return JSONResponse(data)
+
+    @server.custom_route("/api/reports", methods=["GET"])
+    async def api_reports(request: Request) -> Response:
+        """获取所有日报摘要列表（按日期倒序）。"""
+        api_key = _get_api_key(request)
+        user = user_manager.get(api_key) if api_key else None
+        if not user or user.token_status != "active":
+            return JSONResponse({"status": "error", "message": "请先绑定数据源"}, status_code=401)
+
+        user_cfg = config.for_user(api_key)
+        user_manager.ensure_dirs(api_key)
+        storage = Storage(user_cfg)
+        memory_store = MemoryStore(user_cfg.memory_dir,
+                                   db_getter=lambda: storage.db)
+
+        reports = memory_store.list_by_type("daily_report")
+        summaries = []
+        for mem in reports:
+            fm = mem.front_matter
+            ya = fm.get("yesterday_activities", {})
+            sl = fm.get("last_night_sleep", {})
+            rc = fm.get("recovery", {})
+            ai = fm.get("ai_insight", {})
+
+            # 训练摘要
+            train_parts = []
+            if ya.get("is_rest_day"):
+                train_parts.append("🧘 休息日")
+            else:
+                sessions = ya.get("sessions", [])
+                if sessions:
+                    types = list(dict.fromkeys(s.get("type", "") for s in sessions if s.get("type")))
+                    train_parts.append(", ".join(types))
+                dur = ya.get("total_duration_min", 0)
+                dist = ya.get("total_distance_km", 0)
+                if dur:
+                    train_parts.append(f"{dur}min")
+                if dist:
+                    train_parts.append(f"{dist:.1f}km")
+
+            report_date = str(fm.get("report_date") or mem.id)
+            summaries.append({
+                "id": mem.id,
+                "date": report_date,
+                "training": " · ".join(train_parts) or "—",
+                "sleep_score": sl.get("sleep_score"),
+                "recovery_score": rc.get("overall_score"),
+                "ai_conclusion": ai.get("conclusion", "")[:80] if ai.get("conclusion") else "",
+            })
+
+        summaries.sort(key=lambda x: x["date"], reverse=True)
+        return JSONResponse(summaries)
+
+    @server.custom_route("/api/profile", methods=["POST"])
+    async def api_profile(request: Request) -> Response:
+        """保存个人资料与最佳成绩。"""
+        api_key = _get_api_key(request)
+        user = user_manager.get(api_key) if api_key else None
+        if not user:
+            return JSONResponse({"status": "error", "message": "请先绑定数据源"}, status_code=401)
+
+        try:
+            body = await request.json()
+        except Exception:
+            return JSONResponse({"status": "error", "message": "无效请求"}, status_code=400)
+
+        user_cfg = config.for_user(api_key)
+        user_manager.ensure_dirs(api_key)
+        storage = Storage(user_cfg)
+        memory_store = MemoryStore(user_cfg.memory_dir,
+                                   db_getter=lambda: storage.db)
+
+        now = datetime.now().isoformat(timespec="seconds")
+        today = str(date.today())
+
+        # Build profile front matter
+        fm: dict[str, Any] = {
+            "type": "fitness_profile",
+            "profile_type": "assessment",
+            "updated": now,
+            "personal_info": {
+                "height_cm": _int_or_none(body.get("height_cm")),
+                "weight_kg": _int_or_none(body.get("weight_kg")),
+                "age": _int_or_none(body.get("age")),
+                "gender": body.get("gender", "male"),
+                "location": body.get("location", ""),
+            },
+            "personal_bests": {},
+            "tags": ["fitness-profile", today.split("-")[0]],
+        }
+
+        pbs = body.get("pbs", {})
+        for dist_key, dist_label in [("5k", "5k"), ("10k", "10k"),
+                                       ("half_marathon", "half_marathon"),
+                                       ("marathon", "marathon")]:
+            if pbs.get(dist_key):
+                fm["personal_bests"][dist_label] = {"time": pbs[dist_key]}
+        if pbs.get("vo2max"):
+            try:
+                fm["personal_bests"]["vo2max_estimate"] = float(pbs["vo2max"])
+            except (TypeError, ValueError):
+                pass
+
+        # Build markdown body
+        pi = fm["personal_info"]
+        body_lines = [
+            "# 竞技档案",
+            "",
+            "## 基本信息",
+            f"- 身高: {pi['height_cm'] or '—'} cm",
+            f"- 体重: {pi['weight_kg'] or '—'} kg",
+            f"- 年龄: {pi['age'] or '—'}",
+            f"- 性别: {pi['gender']}",
+            f"- 地点: {pi['location'] or '未设置'}",
+            "",
+            "## 个人最佳",
+        ]
+        for dist, data in fm["personal_bests"].items():
+            if isinstance(data, dict) and "time" in data:
+                body_lines.append(f"- **{dist}**: {data['time']}")
+
+        profile_path = Path(user_cfg.memory_dir) / "profile" / "fitness-assessment.md"
+        profile_path.parent.mkdir(parents=True, exist_ok=True)
+        profile_path.write_text(build_memory_file(fm, "\n".join(body_lines)), encoding="utf-8")
+
+        return JSONResponse({"status": "ok"})
+
+    @server.custom_route("/api/goals", methods=["POST"])
+    async def api_goals(request: Request) -> Response:
+        """保存训练目标。"""
+        api_key = _get_api_key(request)
+        user = user_manager.get(api_key) if api_key else None
+        if not user:
+            return JSONResponse({"status": "error", "message": "请先绑定数据源"}, status_code=401)
+
+        try:
+            body = await request.json()
+        except Exception:
+            return JSONResponse({"status": "error", "message": "无效请求"}, status_code=400)
+
+        user_cfg = config.for_user(api_key)
+        user_manager.ensure_dirs(api_key)
+
+        goal_name = body.get("name", "").strip()
+        if not goal_name:
+            return JSONResponse({"status": "error", "message": "目标名称不能为空"}, status_code=400)
+
+        goal_dist = body.get("distance", "marathon")
+        goal_id = f"goal-{date.today().year}-{goal_dist}"
+
+        fm: dict[str, Any] = {
+            "type": "goal",
+            "id": goal_id,
+            "goal_type": "time_based",
+            "category": "running",
+            "status": "active",
+            "priority": "high",
+            "created": str(date.today()),
+            "target_date": body.get("target_date") or str(date.today().replace(year=date.today().year + 1)),
+            "review_cycle": "weekly",
+            "metrics": {
+                f"target_{goal_dist}": body.get("target_time") or "",
+                "weekly_mileage_km": _int_or_none(body.get("weekly_km")) or 50,
+            },
+            "tags": [goal_dist, str(date.today().year), "active"],
+        }
+
+        goal_body = f"""# {goal_name}
+
+## 目标
+- 距离: {goal_dist}
+- 目标成绩: {body.get('target_time') or '—'}
+- 截止日期: {fm['target_date']}
+- 周跑量目标: {fm['metrics']['weekly_mileage_km']} km
+
+## 进度
+创建于 {date.today()}，定期更新。
+"""
+        goal_path = Path(user_cfg.memory_dir) / "goals" / "active" / f"{goal_id}.md"
+        goal_path.parent.mkdir(parents=True, exist_ok=True)
+        goal_path.write_text(build_memory_file(fm, goal_body), encoding="utf-8")
+
+        return JSONResponse({"status": "ok"})
+
+    @server.custom_route("/api/preferences", methods=["POST"])
+    async def api_preferences(request: Request) -> Response:
+        """保存训练偏好。"""
+        api_key = _get_api_key(request)
+        user = user_manager.get(api_key) if api_key else None
+        if not user:
+            return JSONResponse({"status": "error", "message": "请先绑定数据源"}, status_code=401)
+
+        try:
+            body = await request.json()
+        except Exception:
+            return JSONResponse({"status": "error", "message": "无效请求"}, status_code=400)
+
+        user_cfg = config.for_user(api_key)
+        user_manager.ensure_dirs(api_key)
+
+        workouts_raw = body.get("preferred_workouts", "间歇,节奏,长距离")
+        preferred_workouts = ([w.strip() for w in workouts_raw.split(",")]
+                              if isinstance(workouts_raw, str) else workouts_raw)
+        terrain_raw = body.get("preferred_terrain", "公路")
+        preferred_terrain = [terrain_raw] if isinstance(terrain_raw, str) else terrain_raw
+
+        fm: dict[str, Any] = {
+            "type": "coaching_preference",
+            "updated": datetime.now().isoformat(timespec="seconds"),
+            "training_preferences": {
+                "preferred_workouts": preferred_workouts,
+                "preferred_time": body.get("preferred_time", "evening"),
+                "preferred_terrain": preferred_terrain,
+            },
+            "injury_history": [],
+            "training_philosophy": body.get("training_philosophy", "数据驱动，极化训练，重视恢复"),
+            "tags": ["preferences", "coaching-style"],
+        }
+
+        injury = body.get("injury_history", "").strip()
+        if injury:
+            fm["injury_history"].append({
+                "description": injury,
+                "date": str(date.today()),
+            })
+
+        pref_body = f"""# 训练偏好
+
+## 训练习惯
+- 偏好时间: {fm['training_preferences']['preferred_time']}
+- 偏好类型: {', '.join(fm['training_preferences']['preferred_workouts'])}
+- 偏好地形: {', '.join(fm['training_preferences']['preferred_terrain'])}
+
+## 训练哲学
+{fm['training_philosophy']}
+
+## 伤病史
+{injury or '无'}
+"""
+        pref_path = Path(user_cfg.memory_dir) / "coaching" / "preferences.md"
+        pref_path.parent.mkdir(parents=True, exist_ok=True)
+        pref_path.write_text(build_memory_file(fm, pref_body), encoding="utf-8")
+
+        return JSONResponse({"status": "ok"})
+
 
 # ── 辅助 ────────────────────────────────────────
 
 
 def _redirect(url: str) -> Response:
     return Response(status_code=302, headers={"Location": url})
+
+
+def _int_or_none(value: Any) -> int | None:
+    """安全转整数，失败返回 None。"""
+    if value is None:
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
 
 
 # ── 内联 HTML 兜底（模板文件不存在时使用）─────────

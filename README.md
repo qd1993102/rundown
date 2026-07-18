@@ -209,9 +209,11 @@ output/
 
 | 变量 | 必填 | 默认值 | 说明 |
 |------|:---:|--------|------|
-| `RUNDOWN_ACCOUNT` | ✅ | — | 运动平台账号（邮箱或手机号，兼容旧名 `RUNDOWN_EMAIL`/`GARMIN_EMAIL`） |
-| `RUNDOWN_PASSWORD` | ✅ | — | 运动平台登录密码（兼容旧名 `GARMIN_PASSWORD`） |
-| `RUNDOWN_PROVIDER` | — | `garmin` | 数据源: garmin / coros |
+| `RUNDOWN_ACCOUNT` | Garmin/Coros | — | 运动平台账号（邮箱或手机号，兼容旧名 `RUNDOWN_EMAIL`/`GARMIN_EMAIL`） |
+| `RUNDOWN_PASSWORD` | Garmin/Coros | — | 运动平台登录密码（兼容旧名 `GARMIN_PASSWORD`） |
+| `RUNDOWN_PROVIDER` | — | `garmin` | 数据源: garmin / coros / huawei |
+| `GROUP_PALS_TOKEN` | Huawei | — | 每个用户独立的 CrewPals JWT |
+| `HUAWEI_TOKEN_DIR` | — | `~/.rundown/users/<token-hash>/huawei-tokens` | Huawei AT 本地缓存目录 |
 | `RUNDOWN_DB_PATH` | — | `./data/rundown_data.db` | SQLite 数据库路径 |
 | `RUNDOWN_MEMORY_DIR` | — | `./memory` | 记忆存储目录（目标、档案、日报等） |
 | `RUNDOWN_HOME` | — | (当前目录) | 数据工作目录，设后所有相对路径基于此解析 |
@@ -220,6 +222,52 @@ output/
 | `GARMIN_DOMAIN` | — | `garmin.com` | Garmin 专用：API 域名 |
 | `GARMIN_TOKEN_DIR` | — | `~/.garmy` | Garmin 专用：Token 目录 |
 | `DEEPSEEK_API_KEY` | — | — | DeepSeek API Key（AI 洞察） |
+
+Huawei 配置只需要当前用户的 CrewPals token：
+
+```env
+RUNDOWN_PROVIDER=huawei
+GROUP_PALS_TOKEN=your-token
+HUAWEI_TOKEN_DIR=./data/user-a/huawei-tokens
+```
+
+然后运行：
+
+```bash
+rundown auth
+```
+
+`rundown sync` 当前支持 Huawei 运动列表和单条活动详情；睡眠、步数、HRV 等每日健康
+数据仍待按 `sampleSets` 的实际授权和字段口径接入。
+
+Rundown 通过 CrewPals 预发布 HTTPS 接口获取 Huawei AT，并将返回值保存在 `HUAWEI_TOKEN_DIR`
+指定目录下的 `huawei-oauth.json`，文件权限为 `0600`。本地 AT 未过期时不会重复请求；
+过期或缺失时使用 `GROUP_PALS_TOKEN` 重新获取。
+默认目录键由 `GROUP_PALS_TOKEN` 的 SHA-256 摘要派生，不包含原 token；不同用户默认写入不同目录。
+请求将原始 JWT 直接放入 `Authorization` header，不添加 `Bearer` 前缀。
+接口响应支持 `data.accessToken/refreshToken/expiredAt/openId`，并在本地归一化为
+`access_token/refresh_token/expired_at/open_id`。
+
+设置 `RUNDOWN_HOME` 时只加载该目录下的 `.env`，不会再从 `~/.rundown/.env` 补入其他
+用户的账号配置；需要共享的 API Key 应通过实际环境变量注入。
+`rundown init` 会为当前配置选择并以 `0700` 创建独立 Token 目录；`rundown auth`
+也会自动补建目录、检查已有 JSON，并将 token 文件权限收紧为 `0600`。系统不会创建
+空的 `huawei-oauth.json`，该文件只在取得或导入有效 token 后生成。
+
+也兼容外部系统导出的 Huawei token 结构：
+
+```json
+{
+  "user_id": 1,
+  "access_token": "...",
+  "refresh_token": "...",
+  "open_id": "...",
+  "expired_at": 1784110879
+}
+```
+
+过期时间同时接受 `expired_at` 和 `expires_at`（Unix 秒）；用户标识依次使用
+`user_id`、`open_id`、`openid` 或 `sub`。
 
 ### `rundown mcp`
 

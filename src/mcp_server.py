@@ -150,6 +150,14 @@ def create_server(config, provider, storage, memory_store, user_id: int):
     # ═══════════════════════════════════════════════════════
 
     @mcp.tool()
+    def authenticate_provider() -> str:
+        """认证当前运动数据 Provider；Huawei 使用每用户的 GROUP_PALS_TOKEN 获取 AT。"""
+        try:
+            return "认证成功" if provider.authenticate() else "认证失败，请检查账号配置"
+        except Exception as exc:
+            return f"认证失败: {exc}"
+
+    @mcp.tool()
     def query_activities(days: int = 7) -> str:
         """查询最近 N 天的活动列表（含距离、时长、心率、负荷）。"""
         activities = storage.get_recent_activities(user_id, days)
