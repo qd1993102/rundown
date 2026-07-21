@@ -6,6 +6,13 @@
 
 ## 8. 关键设计决策
 
+### 8.0 起步阶段的成本优先原则
+
+- **先实现当前约束**：只实现已确认的单账号、单平台连接和必要安全边界，不提前建设多平台聚合、邮件服务或 Web 管理后台。
+- **预留不预建**：未来能力通过清晰领域边界和可替换接口预留，不为尚未发生的需求增加运行依赖或运维流程。
+- **邀请码不自动过期**：系统随机生成的一次性邀请码在使用或管理员停用前持续有效，避免引入过期管理成本。
+- **例外**：可能导致账号接管、不可控数据删除或高迁移成本的风险不以“低成本”为由省略。
+
 ### 8.1 安全策略
 
 - **密码不入 Git**: `.env` 加入 `.gitignore`，提供 `.env.example` 模板
@@ -24,7 +31,7 @@
 
 - **中国区切换**: 仅需设置 `GARMIN_DOMAIN=garmin.cn`
 - **多用户支持**: 当前单用户设计，但 LocalDB 表结构已包含 `user_id` 字段，天然支持未来多用户
-- **MCP Server**: garmy 已内置 MCP Server，启动 `rundown mcp` 即可对接 Claude Desktop
+- **MCP Server**: garmy 已内置 MCP Server，启动 `neurun mcp` 即可对接 Claude Desktop
 - **自定义指标**: 可继承 garmy `BaseMetric` 注册自定义指标
 - **记忆扩展**: 新增记忆类型只需：(1) 定义 YAML Front Matter schema，(2) 创建目录，(3) 注册到 MemoryStore 的 type 枚举
 - **多语言记忆**: Front Matter 字段与 Markdown 正文分离，正文可自由使用任何语言
@@ -60,7 +67,7 @@ graph TB
         OPENCLAW["OpenClaw / Claude Desktop"]
     end
 
-    subgraph MCP["🔌 MCP Server (rundown mcp)"]
+    subgraph MCP["🔌 MCP Server (neurun mcp)"]
         subgraph CONTEXT["📋 对话上下文自动注入"]
             DAILY_CTX["今日日报<br/>(auto/daily/today.md)"]
             RECENT_CTX["近 7 天趋势"]

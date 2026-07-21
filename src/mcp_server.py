@@ -1,4 +1,4 @@
-"""MCP Server — 将 Rundown 数据暴露为 MCP Resources 和 Tools。
+"""MCP Server — 将 neurun 数据暴露为 MCP Resources 和 Tools。
 
 基于 fastmcp 框架，供 OpenClaw / Claude Desktop 连接。
 """
@@ -14,7 +14,15 @@ from typing import Any
 logger = logging.getLogger(__name__)
 
 
-def create_server(config, provider, storage, memory_store, user_id: int):
+def create_server(
+    config,
+    provider,
+    storage,
+    memory_store,
+    user_id: int,
+    *,
+    enable_admin_tools: bool = False,
+):
     """创建并配置 FastMCP 服务器。
 
     暴露 Resources（只读上下文）和 Tools（AI 可调用的查询/分析函数）。
@@ -22,8 +30,8 @@ def create_server(config, provider, storage, memory_store, user_id: int):
     from fastmcp import FastMCP
 
     mcp = FastMCP(
-        name="rundown",
-        instructions="""你已接入 Rundown——一个 运动数据 + AI 跑步教练系统。
+        name="neurun",
+        instructions="""你已接入 neurun——一个 运动数据 + AI 跑步教练系统。
 
 ## 核心能力
 - **每日综合报告**：包含昨日训练详情（分段配速、步频、功率、心率、触地时间）、昨夜睡眠质量、今晨恢复状态（HRV、静息心率、身体电量）、训练负荷（ACWR）、7日趋势、异常检测、今日训练建议。
@@ -32,12 +40,12 @@ def create_server(config, provider, storage, memory_store, user_id: int):
 - **静态HTML报告**：可生成三主题（运动/清新/暗黑）完整HTML日报，包含趋势图，浏览器直接打开。
 
 ## 何时主动触发
-- 用户提到"今天状态"、"昨天训练"、"睡眠"、"恢复"、"HRV"、"跑步数据"→ 读取 `rundown://daily/latest`
-- 用户问"最近一周"、"趋势"、"负荷"、"训练量" → 读取 `rundown://context/full`
+- 用户提到"今天状态"、"昨天训练"、"睡眠"、"恢复"、"HRV"、"跑步数据"→ 读取 `neurun://daily/latest`
+- 用户问"最近一周"、"趋势"、"负荷"、"训练量" → 读取 `neurun://context/full`
 - 用户问"活动详情"、"配速"、"步频"、"功率"、"分段" → 调用 `get_activity_detail`
 - 用户说"生成报告"、"日报"、"HTML" → 调用 `generate_report` 或 `generate_html_report`
 - 用户说"截图"、"生成图片"、"分享"、"导出图片"、"打卡" → 调用 `generate_image`（可选 theme: fresh/sport/dark）
-- 用户问"目标"、"5K"、"备赛"、"PB" → 读取 `rundown://goals/active`
+- 用户问"目标"、"5K"、"备赛"、"PB" → 读取 `neurun://goals/active`
 - 用户要"更新资料"、"设置目标"、"输入身高体重" → 调用 `update_profile` 或 `set_goal`
 
 ## 典型对话示例
@@ -47,7 +55,7 @@ def create_server(config, provider, storage, memory_store, user_id: int):
 - 用户："生成今天的HTML日报" → 你调用 generate_html_report
 
 ## 数据时效
-- 健康数据每日更新（需先运行 `rundown daily` 或 `rundown sync`）
+- 健康数据每日更新（需先运行 `neurun daily` 或 `neurun sync`）
 - 日报每天早上自动生成
 - 活动详情随时可查""",
     )
@@ -56,17 +64,17 @@ def create_server(config, provider, storage, memory_store, user_id: int):
     # Resources: 只读数据，自动注入 AI 上下文
     # ═══════════════════════════════════════════════════════
 
-    @mcp.resource("rundown://daily/latest")
+    @mcp.resource("neurun://daily/latest")
     def get_latest_daily() -> str:
         """【最常用】最新每日综合报告。包含：昨日训练详情（类型/时长/距离/配速/心率/负荷）、
         昨夜睡眠（时长/质量/深睡占比）、今晨恢复状态（HRV/静息心率/身体电量/训练准备）、
         训练负荷ACWR、7日趋势、异常提醒、今日训练建议、AI教练洞察。"""
         mem = memory_store.get_latest("daily_report")
         if mem is None:
-            return "暂无日报，请先运行 rundown sync"
+            return "暂无日报，请先运行 neurun sync"
         return _format_memory(mem)
 
-    @mcp.resource("rundown://daily/{target_date}")
+    @mcp.resource("neurun://daily/{target_date}")
     def get_daily_by_date(target_date: str) -> str:
         """指定日期的日报。"""
         mem = memory_store.get(target_date)
@@ -74,7 +82,7 @@ def create_server(config, provider, storage, memory_store, user_id: int):
             return f"未找到 {target_date} 的日报"
         return _format_memory(mem)
 
-    @mcp.resource("rundown://context/full")
+    @mcp.resource("neurun://context/full")
     def get_full_context() -> str:
         """【全面分析时用】完整训练上下文包。包含：最新日报全文 + 前7天恢复/睡眠/训练趋势 +
         活跃训练目标 + 个人竞技档案。当用户问"最近一周"、"整体状态"、"趋势如何"时使用。"""
@@ -119,7 +127,7 @@ def create_server(config, provider, storage, memory_store, user_id: int):
 
         return "\n".join(parts)
 
-    @mcp.resource("rundown://goals/active")
+    @mcp.resource("neurun://goals/active")
     def get_active_goals() -> str:
         """进行中的训练目标。"""
         goals = memory_store.list_by_type("goal", status="active")
@@ -129,15 +137,15 @@ def create_server(config, provider, storage, memory_store, user_id: int):
             f"# {g.id}\n{g.body[:300]}" for g in goals
         )
 
-    @mcp.resource("rundown://profile")
+    @mcp.resource("neurun://profile")
     def get_profile() -> str:
         """个人竞技档案。"""
         mem = memory_store.get("fitness-assessment")
         if mem is None:
-            return "暂无档案，请运行 rundown setup"
+            return "暂无档案，请运行 neurun setup"
         return _format_memory(mem)
 
-    @mcp.resource("rundown://preferences")
+    @mcp.resource("neurun://preferences")
     def get_preferences() -> str:
         """训练偏好。"""
         mem = memory_store.get("preferences")
@@ -148,6 +156,35 @@ def create_server(config, provider, storage, memory_store, user_id: int):
     # ═══════════════════════════════════════════════════════
     # Tools: AI 可调用的查询/分析函数
     # ═══════════════════════════════════════════════════════
+
+    if enable_admin_tools:
+        from .invitations import InvitationStore
+
+        invitation_store = InvitationStore(config.invite_codes_path)
+
+        @mcp.tool()
+        def invite_create(count: int = 1) -> str:
+            """【仅本地管理员】生成随机一次性邀请码；返回 ID 和掩码，完整邀请码须用本地 CLI 查看。"""
+            records = [item.to_admin_dict() for item in invitation_store.create(count)]
+            return json.dumps(records, ensure_ascii=False)
+
+        @mcp.tool()
+        def invite_list() -> str:
+            """【仅本地管理员】列出邀请码状态；不会返回完整邀请码。"""
+            records = [item.to_admin_dict() for item in invitation_store.list_all()]
+            return json.dumps(records, ensure_ascii=False)
+
+        @mcp.tool()
+        def invite_show(invitation_id: str) -> str:
+            """【仅本地管理员】查看单个邀请码的掩码与状态；不会返回完整邀请码。"""
+            record = invitation_store.get(invitation_id).to_admin_dict()
+            return json.dumps(record, ensure_ascii=False)
+
+        @mcp.tool()
+        def invite_revoke(invitation_id: str) -> str:
+            """【仅本地管理员】停用一个邀请码。"""
+            record = invitation_store.revoke(invitation_id).to_admin_dict()
+            return json.dumps(record, ensure_ascii=False)
 
     @mcp.tool()
     def authenticate_provider() -> str:

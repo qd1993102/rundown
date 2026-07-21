@@ -1,8 +1,8 @@
-# CLAUDE.md — Rundown Project Instructions
+# CLAUDE.md — neurun Project Instructions
 
 ## Project Overview
 
-Rundown is a Python CLI app for Garmin data sync, AI coaching, and training knowledge base.
+neurun is a Python CLI app for Garmin data sync, AI coaching, and training knowledge base.
 Built on the `garmy` library. See [README.md](README.md) and [docs/design/](docs/design/) for full context.
 
 ## Documentation Sync Rule (MANDATORY)
@@ -75,7 +75,7 @@ Built on the `garmy` library. See [README.md](README.md) and [docs/design/](docs
 
 示例：
 ```markdown
-- **改动描述**: 新增 `RUNDOWN_HOME` 环境变量，设后所有相对路径基于此目录解析。
+- **改动描述**: 新增 `NEURUN_HOME` 环境变量，设后所有相对路径基于此目录解析。
 - **影响范围**: config.py, fastmcp.json
 - **关联文档**: [docs/design/04-modules.md](docs/design/04-modules.md)
 ```

@@ -345,7 +345,7 @@ tags: [daily, 2025-06-24, running, easy-run]
 
 ---
 
-*本报告由 rundown daily 自动生成*
+*本报告由 neurun daily 自动生成*
 ```
 
 ##### 运动摘要 (`auto/summaries/`)
@@ -774,7 +774,7 @@ tags: [peak-performance, 5k, polarized-training, case-study]
 ```mermaid
 graph TD
     SYNC["🔄 数据同步 (sync) 完成后自动触发"]
-    DAILY_TRIGGER["⏰ 每日定时触发<br/>(cron / launchd)<br/>或手动 rundown daily"]
+    DAILY_TRIGGER["⏰ 每日定时触发<br/>(cron / launchd)<br/>或手动 neurun daily"]
 
     subgraph AUTO["自动生成"]
         S0["⭐ 每日报告生成器"]
@@ -1293,7 +1293,7 @@ Level 3 — 完整性校验 (定期)
 校验触发时机:
 - 写入时: Level 1
 - sync 命令完成后: Level 1 + Level 2
-- rundown memory check 命令: Level 1 + Level 2 + Level 3
+- neurun memory check 命令: Level 1 + Level 2 + Level 3
 ```
 
 ---
@@ -1306,7 +1306,7 @@ Level 3 — 完整性校验 (定期)
 
 ```mermaid
 graph TD
-    GF["rundown"]
+    GF["neurun"]
 
     subgraph SYNC["sync — 同步数据 + 自动生成记忆"]
         S_ARGS["--days N | --from DATE | --to DATE<br/>--metrics | --full | --no-memory"]
@@ -1350,59 +1350,59 @@ graph TD
 # ═══ 日常使用 ═══
 
 # 每天早上运行：同步数据 + 生成今日日报
-rundown sync
+neurun sync
 
 # 单独生成/查看今日日报（不拉取新数据）
-rundown daily
+neurun daily
 
 # 查看指定日期的日报
-rundown daily --date 2025-06-23
+neurun daily --date 2025-06-23
 
 # 输出 JSON 格式日报（供程序消费）
-rundown daily --format json
+neurun daily --format json
 
 # 首次同步最近 30 天全部数据（数据 + 自动生成记忆摘要）
-rundown sync --full
+neurun sync --full
 
 # 仅同步数据，不生成记忆
-rundown sync --no-memory
+neurun sync --no-memory
 
 # ═══ 记忆管理 ═══
 
 # 手动触发本周摘要生成
-rundown memory summarize --period weekly
+neurun memory summarize --period weekly
 
 # 查看记忆列表
-rundown memory list --type activity_summary
-rundown memory list --tag 5k --status active
+neurun memory list --type activity_summary
+neurun memory list --tag 5k --status active
 
 # 搜索记忆
-rundown memory list --search "间歇跑"
+neurun memory list --search "间歇跑"
 
 # 创建训练目标
-rundown memory goal create
+neurun memory goal create
 
 # 更新目标进度
-rundown memory goal update 2025-h1-5k-sub20
+neurun memory goal update 2025-h1-5k-sub20
 
 # 查看训练计划及执行情况
-rundown memory plan show 2025-spring-5k-plan
+neurun memory plan show 2025-spring-5k-plan
 
 # 完整性检查
-rundown memory check
+neurun memory check
 
 # 导出活动数据
-rundown activities --recent 50 --type running --export running.csv
+neurun activities --recent 50 --type running --export running.csv
 
 # 启动 MCP Server 对接 Claude Desktop
-rundown mcp
+neurun mcp
 ```
 
 ---
 
 ### 4.7 AI 教练模块 (`coach.py`)
 
-为 `rundown daily --ai` 提供 DeepSeek API 驱动的智能训练洞察。
+为 `neurun daily --ai` 提供 DeepSeek API 驱动的智能训练洞察。
 
 #### 上下文收集策略
 
@@ -1449,7 +1449,7 @@ def get_coach_insight(fm, target_date=None, memory_store=None) -> dict | None:
 #### 调用链
 
 ```
-rundown daily --ai
+neurun daily --ai
   → _get_ai_insight(fm, target_date, memory_store)
     → coach.get_coach_insight(fm, target_date, memory_store)
       → _collect_profile / _collect_preferences / _collect_goals / _collect_history

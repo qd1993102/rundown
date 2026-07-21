@@ -7,7 +7,7 @@
 
 ## 现象
 
-外部 token 使用 `expired_at`、`open_id` 和 `user_id` 时，Rundown 只读取 `expires_at` 与 `openid`，导致仍有效的 AT 被判定为过期，继而尝试刷新或重新授权。
+外部 token 使用 `expired_at`、`open_id` 和 `user_id` 时，neurun 只读取 `expires_at` 与 `openid`，导致仍有效的 AT 被判定为过期，继而尝试刷新或重新授权。
 
 ## 根因
 

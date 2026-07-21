@@ -7,7 +7,7 @@
 
 ## 现象
 
-用户 6 月 25 日有跑步数据（Garmin 手表记录），但 `rundown daily --date 2026-06-25` 生成的日报显示为休息日（`is_rest_day: true`，无活动记录）。
+用户 6 月 25 日有跑步数据（Garmin 手表记录），但 `neurun daily --date 2026-06-25` 生成的日报显示为休息日（`is_rest_day: true`，无活动记录）。
 
 ## 根因
 
@@ -23,7 +23,7 @@ garmy SyncManager 的 `ActivitiesIterator` 是单向游标（从新到旧消费�
 
 ### Bug 3: `cmd_daily` 不自动同步
 
-`rundown daily` 普通路径（不带 `--image`）不触发数据同步，直接读本地 DB 生成报告。即使 Garmin Connect 有新数据也不会拉取。
+`neurun daily` 普通路径（不带 `--image`）不触发数据同步，直接读本地 DB 生成报告。即使 Garmin Connect 有新数据也不会拉取。
 
 ## 修复方案
 
@@ -45,6 +45,6 @@ garmy SyncManager 的 `ActivitiesIterator` 是单向游标（从新到旧消费�
 
 ## 验证
 
-1. 运行 `rundown sync --days 3` → 确认 activities 不再 stuck 在 pending
-2. 运行 `rundown daily --date 2026-06-25` → 确认日报显示「静安区 跑步 15.0km 79min」
+1. 运行 `neurun sync --days 3` → 确认 activities 不再 stuck 在 pending
+2. 运行 `neurun daily --date 2026-06-25` → 确认日报显示「静安区 跑步 15.0km 79min」
 3. 查询 DB 确认 6/25 activities 已入库

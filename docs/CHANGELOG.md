@@ -1,8 +1,33 @@
 # Changelog
 
-Rundown 项目变更日志，按日期倒序。
+neurun 项目变更日志，按日期倒序。
 
 ---
+
+## 2026-07-21
+
+### Added
+- **Web 邀请码注册与应用账号登录**: 首次访问改为邀请码两步注册，基本信息包含昵称、邮箱和密码；每份 Invitation 由系统随机生成，且定义为不预绑定邮箱、由首个成功使用者获得、仅能创建一个账号、使用或停用前不过期的一次性注册资格；JSON 保留完整邀请码并按敏感凭证保护；新增邀请码核销、邮箱唯一性、`scrypt` 密码哈希、登录页与 30 天 Cookie。数据源绑定接口现在要求已登录应用账号，不再隐式创建用户。
+- **影响范围**: src/invitations.py, src/users.py, src/config.py, src/web.py, src/main.py, src/mcp_server.py, web/templates/auth.html, web/templates/profile.html, docker-compose.yml, tests/test_registration.py
+- **关联文档**: [领域语言](../CONTEXT.md), [MVP ADR](adr/0010-cost-first-invitation-registration-mvp.md), [平台连接 ADR](adr/0001-platform-connection-cardinality.md), [邮箱 ADR](adr/0003-login-email-is-not-verified.md), [管理员工具 ADR](adr/0006-gate-invitation-administration-tools.md), [旧数据 ADR](adr/0009-do-not-migrate-legacy-accounts-or-cookies.md), [模块设计](design/04-modules.md), [数据流](design/05-data-flow.md), [Web 部署设计](design/13-sae-deployment.md), [开发过程](process/2026-07-21-invite-registration.md), [README](../README.md)
+
+## 2026-07-19
+
+### Added
+- **Web 单日/批量同步拆分**: `/sync` 页面拆为单日同步和批量日期范围同步两个入口；`POST /api/sync` 新增 `mode=single|batch`、`from_date`、`to_date`，返回标准化同步范围并保留旧请求格式兼容。
+- **影响范围**: web/templates/sync.html, src/web.py, tests/test_web.py
+- **关联文档**: [Web 部署设计](design/13-sae-deployment.md), [README](../README.md)
+
+### Fixed
+- **Coros 活动时长包含暂停时间**: 活动列表改为读取原始 `workoutTime`，统一时长排除暂停并在缺失时回退 `totalTime`；普通重同步会更新已有活动时长，Coros API/token 错误不再被吞掉后误报成功，失效 token 会转为 `expired` 并提供重新绑定入口。
+- **影响范围**: providers/coros.py, main.py, web.py, web/templates/sync.html, tests/test_providers.py, tests/test_storage.py, tests/test_web.py
+- **关联文档**: [Bug 记录](bugfixes/2026-07-19-coros-active-duration.md), [多平台设计](design/12-multi-platform.md), [README](../README.md)
+- **批量同步后报告列表只有一天**: 批量模式在一次范围数据拉取后为首尾区间逐日补建日报，响应新增 `reports_generated`；结束日期保留在线 AI 洞察，历史日期使用本地规则，报告列表现在可展示完整批量范围。
+- **影响范围**: src/web.py, tests/test_web.py
+- **关联文档**: [Bug 记录](bugfixes/2026-07-19-batch-sync-report-list.md), [Web 部署设计](design/13-sae-deployment.md), [README](../README.md)
+- **Coros Web 同步误入 Garmin 链路**: Web 同步现在将用户注册表中的 provider 注入用户配置，并按用户目录恢复 Coros token；单一 active Coros 用户可自动迁移旧版全局 token，多用户时拒绝猜测归属；同时兼容缺少 `warning()` 的 garmy `ProgressReporter`，避免底层活动拉取异常被 `AttributeError` 覆盖。
+- **影响范围**: config.py, web.py, providers/coros.py, main.py, storage.py, tests/test_config.py, tests/test_providers.py, tests/test_storage.py, tests/test_web.py
+- **关联文档**: [Bug 记录](bugfixes/2026-07-19-coros-sync-progress-reporter.md), [多平台设计](design/12-multi-platform.md), [Web 部署设计](design/13-sae-deployment.md)
 
 ## 2026-07-18
 
@@ -16,7 +41,7 @@ Rundown 项目变更日志，按日期倒序。
 ## 2026-07-15
 
 ### Added
-- **Huawei CrewPals 认证**: 新增 Huawei Provider，通过每用户 `GROUP_PALS_TOKEN` 从 CrewPals 预发布 HTTPS 接口获取并缓存 Huawei AT；Authorization 使用原始 JWT，不添加 Bearer 前缀；新增 `rundown auth` 与 MCP 认证入口。
+- **Huawei CrewPals 认证**: 新增 Huawei Provider，通过每用户 `GROUP_PALS_TOKEN` 从 CrewPals 预发布 HTTPS 接口获取并缓存 Huawei AT；Authorization 使用原始 JWT，不添加 Bearer 前缀；新增 `neurun auth` 与 MCP 认证入口。
 - **Huawei 配置**: 新增 `GROUP_PALS_TOKEN` 和 `HUAWEI_TOKEN_DIR`，Huawei 模式不要求账号密码或开发者 OAuth 凭证；默认以 token 摘要派生隔离目录。
 - **CrewPals 响应兼容**: 支持预发布接口的 `data` wrapper 与 `accessToken/refreshToken/expiredAt/openId` camelCase 字段，并统一转换为本地 snake_case token。
 - **影响范围**: config.py, main.py, mcp_server.py, providers/huawei.py, providers/__init__.py
@@ -26,7 +51,7 @@ Rundown 项目变更日志，按日期倒序。
 - **三平台数据标准对齐**: 按 `ActivityData` / `DailyHealth` 逐字段列出 Garmin、Coros、Huawei 的实际接入差异，并明确单位、缺失值、近似语义、平台分数和时区处理规范。
 - **影响范围**: docs/design/12-multi-platform.md
 - **关联文档**: [docs/design/12-multi-platform.md](design/12-multi-platform.md)
-- **Huawei Token store 初始化**: `rundown init` 为当前配置选择并创建 `0700` token 目录；`rundown auth` 自动检测目录和 token JSON、校验 `access_token` 并收紧文件权限为 `0600`，不创建无效空文件。
+- **Huawei Token store 初始化**: `neurun init` 为当前配置选择并创建 `0700` token 目录；`neurun auth` 自动检测目录和 token JSON、校验 `access_token` 并收紧文件权限为 `0600`，不创建无效空文件。
 - **影响范围**: main.py, providers/huawei.py, tests/test_providers.py
 - **关联文档**: [docs/design/12-multi-platform.md](design/12-multi-platform.md), [实现过程](process/2026-07-15-huawei-crewpals-auth.md)
 
@@ -34,10 +59,10 @@ Rundown 项目变更日志，按日期倒序。
 - **外部 Huawei Token 结构不兼容**: 兼容 `expired_at`、`open_id` 和 `user_id` 字段，保留已有绝对过期时间，避免有效 AT 被误判过期并错误进入刷新/授权流程。
 - **影响范围**: providers/huawei.py, tests/test_providers.py
 - **关联文档**: [Bug 记录](bugfixes/2026-07-15-huawei-external-token-fields.md), [docs/design/12-multi-platform.md](design/12-multi-platform.md)
-- **Huawei `rundown sync` 提前退出**: 移除 Huawei 同步硬编码返回，接入 `/activityRecords` 运动列表和 `activityRecordId` 详情查询，并通过统一 Provider 入库路径写入用户 SQLite。
+- **Huawei `neurun sync` 提前退出**: 移除 Huawei 同步硬编码返回，接入 `/activityRecords` 运动列表和 `activityRecordId` 详情查询，并通过统一 Provider 入库路径写入用户 SQLite。
 - **影响范围**: main.py, providers/huawei.py, tests/test_providers.py
 - **关联文档**: [Bug 记录](bugfixes/2026-07-15-huawei-sync-disabled.md), [docs/design/12-multi-platform.md](design/12-multi-platform.md)
-- **`RUNDOWN_HOME` 继承全局用户凭证**: 显式用户目录不再加载 `~/.rundown/.env`，避免 Huawei 用户配置被另一个全局 Garmin 账号污染。
+- **`NEURUN_HOME` 继承全局用户凭证**: 显式用户目录不再加载 `~/.neurun/.env`，避免 Huawei 用户配置被另一个全局 Garmin 账号污染。
 - **影响范围**: config.py, tests/test_config.py
 - **关联文档**: [Bug 记录](bugfixes/2026-07-15-rundown-home-global-credentials.md), [docs/design/12-multi-platform.md](design/12-multi-platform.md)
 
@@ -57,8 +82,8 @@ Rundown 项目变更日志，按日期倒序。
 - **关联文档**: [docs/design/13-sae-deployment.md](docs/design/13-sae-deployment.md)
 
 ### Changed
-- **`rundown mcp` 支持多传输模式**: 新增 `--transport` / `--host` / `--port` 参数，支持 sse/http/streamable-http
-- **`Config` 增强**: 新增 `non_interactive`、`data_dir` 字段；`token_dir` 纳入 `RUNDOWN_HOME` 解析；Web 服务模式跳过全局 Garmin 凭证校验；新增 `UserConfig` 和 `for_user()` 工厂方法
+- **`neurun mcp` 支持多传输模式**: 新增 `--transport` / `--host` / `--port` 参数，支持 sse/http/streamable-http
+- **`Config` 增强**: 新增 `non_interactive`、`data_dir` 字段；`token_dir` 纳入 `NEURUN_HOME` 解析；Web 服务模式跳过全局 Garmin 凭证校验；新增 `UserConfig` 和 `for_user()` 工厂方法
 - **`GarminAuth` 增强**: 支持 `non_interactive` 参数，SAE/Web 环境下不阻塞等待 stdin 输入
 
 ---
@@ -70,7 +95,7 @@ Rundown 项目变更日志，按日期倒序。
   - `cmd_daily` 增强：自动检查本地数据完整性（支持 Garmin + Coros），缺失时自动拉取
   - `cmd_daily` 新增 `--sync-days`、`--skip-sync`、`--full`、`--force` 参数，灵活控制同步行为
   - `cmd_sync` 简化为纯数据同步工具，移除记忆生成功能和 `--no-memory` 参数
-  - `cmd_sync` 完成后提示用户运行 `rundown daily` 生成报告
+  - `cmd_sync` 完成后提示用户运行 `neurun daily` 生成报告
   - 移除 `_generate_memories()` 函数（功能已整合到 `daily`）
 - **影响范围**: main.py, mcp_server.py, README.md
 - **关联文档**: [docs/design/04-modules.md](docs/design/04-modules.md)
@@ -80,11 +105,11 @@ Rundown 项目变更日志，按日期倒序。
 ## 2026-06-28
 
 ### Changed
-- **多目录数据隔离**: 新增 `RUNDOWN_MEMORY_DIR` 和 `RUNDOWN_HOME` 环境变量支持
-  - `RUNDOWN_MEMORY_DIR` — 覆盖记忆存储目录（目标、档案、日报等），支持多数据目录共享同一份记忆，或各自独立记忆
-  - `RUNDOWN_HOME` — 设后所有相对路径（db_path、memory_dir）及 .env 加载均基于此目录解析，实现一键切换数据工作目录
-  - `get_config()` 增强：若设 `RUNDOWN_HOME`，.env 从该目录加载，相对路径自动解析为绝对路径
-  - `fastmcp.json` 新增 `RUNDOWN_MEMORY_DIR` 环境变量注入，确保 MCP Server 使用正确的记忆目录
+- **多目录数据隔离**: 新增 `NEURUN_MEMORY_DIR` 和 `NEURUN_HOME` 环境变量支持
+  - `NEURUN_MEMORY_DIR` — 覆盖记忆存储目录（目标、档案、日报等），支持多数据目录共享同一份记忆，或各自独立记忆
+  - `NEURUN_HOME` — 设后所有相对路径（db_path、memory_dir）及 .env 加载均基于此目录解析，实现一键切换数据工作目录
+  - `get_config()` 增强：若设 `NEURUN_HOME`，.env 从该目录加载，相对路径自动解析为绝对路径
+  - `fastmcp.json` 新增 `NEURUN_MEMORY_DIR` 环境变量注入，确保 MCP Server 使用正确的记忆目录
 
 ### Fixed
 - **多目录下 AI 分析目标/档案缺失**: 从非项目根目录执行命令时，`memory_dir` 依赖 cwd，导致找不到目标、偏好等 AI 上下文文件。现已支持独立配置记忆路径。
@@ -111,7 +136,7 @@ Rundown 项目变更日志，按日期倒序。
   - 更新 `_build_coach_prompt()` — 提示 AI 结合运动员竞技水平给出针对性建议
   - Token 上限 800 → 1200，适配更丰富的上下文
 - **命名对齐**: 注释/文档中的 "昨日训练" → "当日训练/今日训练"，减少混淆
-- **CLI 收敛**: `rundown daily` 移除 `--ai`/`--html`/`--image`/`--no-ai` 参数。每次执行自动完成：同步数据 → md → HTML → PNG → AI 洞察。保留 `--date`/`--theme`/`--format`
+- **CLI 收敛**: `neurun daily` 移除 `--ai`/`--html`/`--image`/`--no-ai` 参数。每次执行自动完成：同步数据 → md → HTML → PNG → AI 洞察。保留 `--date`/`--theme`/`--format`
 
 ---
 

@@ -7,7 +7,7 @@
 
 ## 现象
 
-Huawei `rundown auth` 成功后，执行 `rundown sync` 仍只显示尚未接入提示，不发送数据请求。
+Huawei `neurun auth` 成功后，执行 `neurun sync` 仍只显示尚未接入提示，不发送数据请求。
 
 ## 根因
 

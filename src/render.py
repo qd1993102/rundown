@@ -232,7 +232,7 @@ def _anomalies(fm: dict) -> str:
 
 CSS = r"""
 /* ═══════════════════════════════════════════
-   Rundown Theme System
+   neurun Theme System
    data-theme: fresh | sport | dark
    ═══════════════════════════════════════════ */
 
@@ -431,14 +431,14 @@ body{background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSy
 THEME_SCRIPT = """<script>
 (function(){
   var initial = document.body.getAttribute('data-theme') || 'sport';
-  var t = localStorage.getItem('rundown-theme') || initial;
+  var t = localStorage.getItem('neurun-theme') || initial;
   document.body.setAttribute('data-theme', t);
   document.querySelectorAll('.theme-btn').forEach(function(b){
     if (b.dataset.theme === t) b.classList.add('active');
   });
   window.setTheme = function(theme){
     document.body.setAttribute('data-theme', theme);
-    localStorage.setItem('rundown-theme', theme);
+    localStorage.setItem('neurun-theme', theme);
     document.querySelectorAll('.theme-btn').forEach(function(b){
       b.classList.toggle('active', b.dataset.theme === theme);
     });
@@ -466,7 +466,7 @@ def render_daily_html(memory: Memory, output_path: str | None = None) -> str:
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>RUNDOWN · {target_date} · Daily Report</title>
+<title>NEURUN · {target_date} · Daily Report</title>
 <style>{CSS}</style>
 </head>
 <body data-theme="sport">
@@ -481,7 +481,7 @@ def render_daily_html(memory: Memory, output_path: str | None = None) -> str:
 
   <header class="header">
     <div>
-      <div class="header-brand">RUNDOWN</div>
+      <div class="header-brand">NEURUN</div>
       <div class="header-date">{target_date} <span>{wd}</span></div>
     </div>
     <div class="header-gen">生成于 {gen_time[:16] if gen_time else '—'}</div>
@@ -510,7 +510,7 @@ def render_daily_html(memory: Memory, output_path: str | None = None) -> str:
   </details>
 
   <footer class="footer">
-    <span>RUNDOWN</span> · {target_date}
+    <span>NEURUN</span> · {target_date}
   </footer>
 
 </div>

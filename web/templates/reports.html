@@ -3,12 +3,29 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Rundown — 日报列表</title>
+<title>neurun — 日报列表</title>
 <style>
 /* ═══════════════════════════════════════════
-   Rundown Reports List — 沿用 render.py dark 主题
+   neurun Reports List — 三主题系统
    ═══════════════════════════════════════════ */
-:root {
+
+[data-theme="fresh"] {
+  --bg:#e8efe9; --bg-card:#fff; --text:#1a2e23; --text-secondary:#5a7d6e; --text-muted:#8aa89a;
+  --accent:#2d9d6f; --accent-glow:rgba(45,157,111,.1); --recovery:#3b82b6; --recovery-glow:rgba(59,130,246,.08);
+  --performance:#22a86e; --performance-glow:rgba(34,168,110,.08); --sleep:#7c6fcf; --sleep-glow:rgba(124,111,207,.08);
+  --warning:#d4a017; --danger:#dc5b51; --hrv:#3b9fc6;
+  --card-shadow:0 2px 8px rgba(0,0,0,.06); --card-shadow-hover:0 8px 30px rgba(0,0,0,.1);
+  --border-subtle:#dde5df; --bg-subtle:#f0f4f0;
+}
+[data-theme="sport"] {
+  --bg:#f0f0f0; --bg-card:#fff; --text:#171717; --text-secondary:#525252; --text-muted:#a3a3a3;
+  --accent:#f15b2a; --accent-glow:rgba(241,91,42,.08); --recovery:#2563eb; --recovery-glow:rgba(37,99,235,.08);
+  --performance:#16a34a; --performance-glow:rgba(22,163,74,.08); --sleep:#7c3aed; --sleep-glow:rgba(124,58,237,.08);
+  --warning:#eab308; --danger:#ef4444; --hrv:#0891b2;
+  --card-shadow:0 2px 10px rgba(0,0,0,.07); --card-shadow-hover:0 10px 35px rgba(0,0,0,.1);
+  --border-subtle:#ebebeb; --bg-subtle:#f5f5f5;
+}
+[data-theme="dark"] {
   --bg:#0b1120; --bg-card:#1a2333; --text:#e2e8f0; --text-secondary:#94a3b8; --text-muted:#64748b;
   --accent:#34d399; --accent-glow:rgba(52,211,153,.12); --recovery:#60a5fa; --recovery-glow:rgba(96,165,250,.1);
   --performance:#4ade80; --performance-glow:rgba(74,222,128,.1); --sleep:#a78bfa; --sleep-glow:rgba(167,139,250,.1);
@@ -18,27 +35,41 @@
 }
 
 *{margin:0;padding:0;box-sizing:border-box}
-body{background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSystemFont,'SF Pro Display','Segoe UI',Roboto,sans-serif;line-height:1.6;-webkit-font-smoothing:antialiased}
+body{background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSystemFont,'SF Pro Display','Segoe UI',Roboto,sans-serif;line-height:1.6;-webkit-font-smoothing:antialiased;transition:background .3s,color .3s}
 .container{max-width:720px;margin:0 auto;padding:24px 20px 80px}
 
 /* Header */
-.header{display:flex;justify-content:space-between;align-items:center;padding:0 0 28px}
-.header-left{display:flex;align-items:center;gap:20px}
-.header-brand{font-size:13px;font-weight:800;letter-spacing:1.5px;background:linear-gradient(135deg,var(--accent),#ef4444);-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text;text-transform:uppercase}
-.header-nav{display:flex;gap:4px}
-.nav-link{padding:6px 14px;border-radius:20px;font-size:12px;font-weight:600;color:var(--text-muted);text-decoration:none;transition:all .2s;letter-spacing:.5px}
-.nav-link:hover{color:var(--text-secondary);background:var(--bg-card)}
-.nav-link.active{background:var(--accent);color:#0b1120}
+.header{display:flex;justify-content:space-between;align-items:center;padding:0 0 20px;flex-wrap:wrap;gap:8px}
+.nav-tabs{display:flex;gap:4px;background:var(--bg-card);border-radius:24px;padding:4px;box-shadow:var(--card-shadow)}
+.nav-tab{padding:8px 20px;border-radius:20px;font-size:13px;font-weight:600;color:var(--text-muted);text-decoration:none;transition:all .2s;letter-spacing:.5px}
+.nav-tab:hover{color:var(--text-secondary)}
+.nav-tab.active{background:var(--accent);color:#fff}
+.header-actions{display:flex;align-items:center;gap:8px}
 
-.btn{padding:7px 16px;border-radius:20px;border:1px solid var(--border-subtle);background:transparent;color:var(--text-secondary);font-size:12px;font-weight:600;cursor:pointer;transition:all .2s;letter-spacing:.5px}
+/* Theme Bar */
+.theme-bar{display:flex;gap:4px}
+.theme-btn{border:none;padding:5px 12px;border-radius:20px;font-size:11px;font-weight:600;cursor:pointer;background:var(--border-subtle);color:var(--text-muted);transition:all .2s;letter-spacing:.5px}
+.theme-btn:hover{opacity:.8}
+.theme-btn.active{background:var(--accent);color:#fff}
+
+.btn{padding:6px 14px;border-radius:20px;border:1px solid var(--border-subtle);background:transparent;color:var(--text-secondary);font-size:12px;font-weight:600;cursor:pointer;transition:all .2s;letter-spacing:.5px;white-space:nowrap}
 .btn:hover{border-color:var(--accent);color:var(--accent)}
+.btn.primary{background:var(--accent);border-color:var(--accent);color:#fff}
+.btn.primary:hover{opacity:.85}
+.btn:disabled{opacity:.4;cursor:not-allowed}
+.spinner-sm{display:inline-block;width:14px;height:14px;border:2px solid rgba(255,255,255,.3);border-top-color:#fff;border-radius:50%;animation:spin .6s linear infinite;vertical-align:middle;margin-right:6px}
+.gen-card{background:var(--bg-card);border-radius:16px;padding:20px 24px;box-shadow:var(--card-shadow);margin-bottom:20px;display:flex;align-items:center;gap:14px;flex-wrap:wrap}
+.gen-card input[type=date]{padding:8px 12px;border-radius:10px;border:1px solid var(--border-subtle);background:var(--bg-subtle);color:var(--text);font-size:14px;outline:none;font-family:inherit}
+.gen-card input[type=date]:focus{border-color:var(--accent)}
+.gen-card .gen-hint{font-size:12px;color:var(--text-muted);flex:1}
+.gen-msg{font-size:13px;margin-left:8px}
 
 /* Loading */
 .loading{text-align:center;padding:60px 20px;color:var(--text-muted);font-size:14px}
-.spinner{display:inline-block;width:20px;height:20px;border:2px solid rgba(255,255,255,.3);border-top-color:#fff;border-radius:50%;animation:spin .6s linear infinite;margin-bottom:12px}
+.spinner{display:inline-block;width:20px;height:20px;border:2px solid rgba(255,255,255,.3);border-top-color:#fff;border-radius:50%;animation:spin .6s linear infinite;margin-bottom:12px;display:block;margin-left:auto;margin-right:auto}
 @keyframes spin{to{transform:rotate(360deg)}}
 
-/* Report cards */
+/* Report Cards */
 .report-list{display:flex;flex-direction:column;gap:10px}
 .report-card{background:var(--bg-card);border-radius:16px;padding:20px 24px;box-shadow:var(--card-shadow);cursor:pointer;transition:transform .15s,box-shadow .15s;text-decoration:none;display:block;color:inherit}
 .report-card:hover{transform:translateY(-2px);box-shadow:var(--card-shadow-hover)}
@@ -55,13 +86,11 @@ body{background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSy
 .report-score .sv.sleep-c{color:var(--sleep)}.report-score .sv.recovery-c{color:var(--recovery)}
 .report-score .sl{font-size:9px;color:var(--text-muted);text-transform:uppercase;letter-spacing:.5px;margin-top:1px}
 
-/* Empty */
+/* Empty / Footer */
 .empty-state{text-align:center;padding:60px 20px}
 .empty-state .icon{font-size:48px;margin-bottom:16px}
 .empty-state h2{font-size:18px;color:var(--text);margin-bottom:8px}
 .empty-state p{font-size:13px;color:var(--text-muted);line-height:1.6}
-
-/* Footer */
 .footer{text-align:center;padding:40px 0 20px;font-size:11px;color:var(--text-muted);letter-spacing:1px;font-weight:500}
 .footer span{background:linear-gradient(135deg,var(--accent),#ef4444);-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text;font-weight:700}
 
@@ -73,19 +102,31 @@ body{background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSy
 }
 </style>
 </head>
-<body>
+<body data-theme="dark">
 
 <div class="container">
 
 <div class="header">
-  <div class="header-left">
-    <div class="header-brand">Rundown</div>
-    <div class="header-nav">
-      <a href="/" class="nav-link">仪表盘</a>
-      <a href="/reports" class="nav-link active">日报列表</a>
+  <div class="nav-tabs">
+    <a href="/sync" class="nav-tab">同步</a>
+    <a href="/" class="nav-tab active">日报</a>
+    <a href="/profile" class="nav-tab">我的</a>
+  </div>
+  <div class="header-actions">
+    <div class="theme-bar">
+      <button class="theme-btn active" data-theme="dark" onclick="setTheme('dark')">暗黑</button>
+      <button class="theme-btn" data-theme="sport" onclick="setTheme('sport')">运动</button>
+      <button class="theme-btn" data-theme="fresh" onclick="setTheme('fresh')">清新</button>
     </div>
   </div>
-  <button class="btn" onclick="doLogout()">退出</button>
+</div>
+
+<!-- Generate Report -->
+<div class="gen-card">
+  <input type="date" id="genDate">
+  <button class="btn primary" id="genBtn" onclick="genReport()">📰 生成日报</button>
+  <span class="gen-hint">基于已有本地数据生成，不拉取新数据。需要同步最新数据请到 <a href="/sync" style="color:var(--accent)">同步</a></span>
+  <span id="genMsg" class="gen-msg"></span>
 </div>
 
 <div class="loading" id="loading"><span class="spinner"></span>加载中...</div>
@@ -98,17 +139,32 @@ body{background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSy
   <p>点击<a href="/" style="color:var(--accent)">仪表盘</a>同步数据，生成第一篇日报。</p>
 </div>
 
-<div class="footer">Built with <span>Rundown</span></div>
+<div class="footer">Built with <span>neurun</span></div>
 
 </div>
 
 <script>
+// ── Theme (shared with dashboard via localStorage) ──
+var savedTheme = localStorage.getItem('neurun-theme')||'dark';
+document.body.setAttribute('data-theme', savedTheme);
+document.querySelectorAll('.theme-btn').forEach(function(b){
+  b.classList.toggle('active', b.dataset.theme===savedTheme);
+});
+
+function setTheme(t){
+  document.body.setAttribute('data-theme', t);
+  localStorage.setItem('neurun-theme', t);
+  document.querySelectorAll('.theme-btn').forEach(function(b){
+    b.classList.toggle('active', b.dataset.theme===t);
+  });
+}
+
 var weekdays = ['周日','周一','周二','周三','周四','周五','周六'];
 
 async function load(){
   try{
     var r = await fetch('/api/reports');
-    if(r.status===401){location.href='/setup';return}
+    if(r.status===401){location.href='/';return}
     var reports = await r.json();
     render(reports);
   }catch(e){
@@ -147,13 +203,30 @@ function render(reports){
     html += '</div>';
     html += '</div></a>';
   });
-
   document.getElementById('reportList').innerHTML = html;
 }
 
+async function genReport(){
+  var btn=document.getElementById('genBtn'),d=document.getElementById('genDate').value,msg=document.getElementById('genMsg');
+  btn.disabled=true;btn.innerHTML='<span class="spinner-sm"></span>生成中';
+  msg.textContent='';
+  try{
+    var r=await fetch('/api/sync',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({date:d,skip_sync:true})});
+    var j=await r.json();
+    if(j.status==='ok'){
+      msg.innerHTML='<span style="color:var(--performance)">✅ 已生成 <a href="/?date='+j.date+'" style="color:var(--recovery)">查看 →</a></span>';
+      load();
+    }else{msg.innerHTML='<span style="color:var(--danger)">❌ '+(j.message||'失败')+'</span>'}
+  }catch(e){msg.innerHTML='<span style="color:var(--danger)">网络错误</span>'}
+  btn.disabled=false;btn.textContent='📰 生成日报';
+}
+
+var todayStr=new Date().toISOString().slice(0,10);
+document.getElementById('genDate').value=todayStr;
+
 async function doLogout(){
   await fetch('/api/logout',{method:'POST'});
-  location.href='/setup';
+  location.href='/login';
 }
 
 load();

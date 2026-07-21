@@ -1,20 +1,21 @@
 """CLI 入口模块 — 命令行参数解析与流程编排。
 
-Rundown — Your daily running rundown.
+neurun — Your AI running coach.
 
 Commands:
-    rundown daily       自动同步数据并生成每日综合报告（HTML + PNG + 终端）
-    rundown sync        纯数据同步（批量拉取，不含报告生成）
-    rundown activities  查询活动列表
-    rundown health      查询健康指标
-    rundown memory      记忆管理（list/show/summarize/goal/plan/...）
-    rundown status      查看同步状态
-    rundown mcp         启动 MCP Server
+    neurun daily       自动同步数据并生成每日综合报告（HTML + PNG + 终端）
+    neurun sync        纯数据同步（批量拉取，不含报告生成）
+    neurun activities  查询活动列表
+    neurun health      查询健康指标
+    neurun memory      记忆管理（list/show/summarize/goal/plan/...）
+    neurun status      查看同步状态
+    neurun mcp         启动 MCP Server
 """
 
 from __future__ import annotations
 
 import argparse
+import json
 import logging
 import os
 import sys
@@ -117,11 +118,11 @@ def _parse_date(date_str: str) -> date:
 # ═══════════════════════════════════════════════════════════════
 
 def cmd_sync(args: argparse.Namespace) -> None:
-    """sync 命令：纯数据同步（不含记忆生成，使用 rundown daily 生成报告）。"""
+    """sync 命令：纯数据同步（不含记忆生成，使用 neurun daily 生成报告）。"""
     config, provider, storage, memory_store, user_id = _setup()
 
     console.print(Panel.fit(
-        f"[bold blue]🔄 Rundown Sync ({config.provider_type})[/]\n同步运动数据",
+        f"[bold blue]🔄 neurun Sync ({config.provider_type})[/]\n同步运动数据",
         border_style="blue",
     ))
 
@@ -164,13 +165,15 @@ def cmd_sync(args: argparse.Namespace) -> None:
     elif config.provider_type in ("coros", "huawei"):
         # Coros/Huawei: Provider 标准化后直接写入 SQLite
         try:
-            provider.authenticate()
+            if not provider.authenticate():
+                raise RuntimeError(f"{config.provider_type} 认证失败，请重新绑定账号")
+            user_id = provider.user_id
             _sync_provider(provider, storage, user_id, start, end, config.provider_type)
         except Exception as exc:
             console.print(f"[red]❌ 同步失败: {exc}[/]")
             return
 
-    console.print("[dim]💡 运行 [bold]rundown daily[/bold] 生成日报[/]")
+    console.print("[dim]💡 运行 [bold]neurun daily[/bold] 生成日报[/]")
 
 
 def cmd_auth(args: argparse.Namespace) -> None:
@@ -264,9 +267,10 @@ def _sync_provider(provider, storage, user_id: int, start: date, end: date,
     activities = provider.activities.fetch_activities(start, end)
     session = storage.db.get_session()
     stored_act = 0
+    updated_act = 0
     for a in activities:
         existing = session.execute(
-            text("SELECT 1 FROM activities WHERE activity_id = :aid"),
+            text("SELECT duration_seconds FROM activities WHERE activity_id = :aid"),
             {"aid": a.activity_id}
         ).fetchone()
         if not existing:
@@ -289,9 +293,19 @@ def _sync_provider(provider, storage, user_id: int, start: date, end: date,
                 "st": a.start_time, "dist": a.distance_meters,
             })
             stored_act += 1
+        elif existing[0] != a.duration_seconds:
+            session.execute(text("""
+                UPDATE activities
+                SET duration_seconds = :dur
+                WHERE activity_id = :aid
+            """), {"dur": a.duration_seconds, "aid": a.activity_id})
+            updated_act += 1
     session.commit()
     session.close()
-    console.print(f"  ✅ 活动: {stored_act} 条新增 (共 {len(activities)} 条)")
+    console.print(
+        f"  ✅ 活动: {stored_act} 条新增, {updated_act} 条时长更新 "
+        f"(共 {len(activities)} 条)"
+    )
 
     console.print("[dim]📥 拉取健康数据...[/]")
     d = start
@@ -404,7 +418,9 @@ def _do_daily_sync(config, target: date | None = None,
                 storage.sync_range(user_id, from_day, to_day)
                 _sync_garmin_activities(provider, storage, user_id, from_day, to_day)
             elif config.provider_type in ("coros", "huawei"):
-                provider.authenticate()
+                if not provider.authenticate():
+                    raise RuntimeError(f"{config.provider_type} 认证失败，请重新绑定账号")
+                user_id = provider.user_id
                 if force_sync:
                     storage.reset_pending_metrics(user_id, from_day, to_day, force=True)
                 _sync_provider(provider, storage, user_id, from_day, to_day,
@@ -733,7 +749,7 @@ def cmd_status(args: argparse.Namespace) -> None:
     status_list = storage.get_all_sync_status(user_id)
 
     if not status_list:
-        console.print("[yellow]暂无同步记录，请先运行 rundown sync[/]")
+        console.print("[yellow]暂无同步记录，请先运行 neurun sync[/]")
         return
 
     table = Table(title="📡 同步状态")
@@ -753,7 +769,7 @@ def cmd_status(args: argparse.Namespace) -> None:
 
 def cmd_init(args: argparse.Namespace) -> None:
     """init 命令：引导式创建配置文件。"""
-    console.rule("[bold green]🚀 Rundown Init[/]")
+    console.rule("[bold green]🚀 neurun Init[/]")
     console.print("首次使用？让我帮你创建配置文件。\n")
 
     # 1. 选择 Provider
@@ -781,21 +797,21 @@ def cmd_init(args: argparse.Namespace) -> None:
     sync_days = _ask("默认同步天数", "30")
 
     huawei_token_dir = ""
-    env_content = f"""# Rundown 配置
-RUNDOWN_PROVIDER={provider}
-RUNDOWN_DB_PATH={location}
-RUNDOWN_SYNC_DAYS={sync_days}
-RUNDOWN_LOG_LEVEL=INFO
+    env_content = f"""# neurun 配置
+NEURUN_PROVIDER={provider}
+NEURUN_DB_PATH={location}
+NEURUN_SYNC_DAYS={sync_days}
+NEURUN_LOG_LEVEL=INFO
 """
     if provider != "huawei":
-        env_content += f"RUNDOWN_ACCOUNT={account}\nRUNDOWN_PASSWORD={password}\n"
+        env_content += f"NEURUN_ACCOUNT={account}\nNEURUN_PASSWORD={password}\n"
     if provider == "garmin":
         domain = _ask("Garmin 区域 (garmin.com/garmin.cn)", "garmin.com")
         env_content += f"GARMIN_DOMAIN={domain}\n"
     elif provider == "huawei":
         group_pals_token = _ask("CrewPals GROUP_PALS_TOKEN")
         from .config import huawei_user_key
-        default_token_dir = str(Path.home() / ".rundown" / "users" /
+        default_token_dir = str(Path.home() / ".neurun" / "users" /
                                 huawei_user_key(group_pals_token) / "huawei-tokens")
         huawei_token_dir = _ask("Huawei Token 目录", default_token_dir)
         env_content += (f"GROUP_PALS_TOKEN={group_pals_token}\n"
@@ -818,9 +834,9 @@ RUNDOWN_LOG_LEVEL=INFO
         console.print(f"[green]✅ Huawei Token 目录已准备: {token_path}[/]")
 
     # 询问全局配置
-    make_global = _ask("同时写入全局配置 ~/.rundown/.env？(y/n)", "y")
+    make_global = _ask("同时写入全局配置 ~/.neurun/.env？(y/n)", "y")
     if make_global.lower() == "y":
-        global_dir = Path.home() / ".rundown"
+        global_dir = Path.home() / ".neurun"
         global_dir.mkdir(parents=True, exist_ok=True)
         (global_dir / ".env").write_text(env_content)
         console.print(f"[green]✅ 全局配置已写入: {global_dir / '.env'}[/]")
@@ -846,7 +862,7 @@ def cmd_setup(args: argparse.Namespace) -> None:
     from datetime import datetime
     from src.memory import build_memory_file
 
-    console.rule("[bold green]⚙️  Rundown Setup[/]")
+    console.rule("[bold green]⚙️  neurun Setup[/]")
     console.print("输入你的基本信息（回车跳过可留空）\n")
 
     # ── 1. 基本信息 ──
@@ -1006,7 +1022,7 @@ def cmd_setup(args: argparse.Namespace) -> None:
     pref_path.write_text(build_memory_file(pref_fm, pref_body), encoding="utf-8")
     console.print(f"  ✅ 训练偏好: {pref_path}")
 
-    console.print("\n[green]✅ Setup 完成！运行 rundown daily 即可自动同步数据并查看日报。[/]")
+    console.print("\n[green]✅ Setup 完成！运行 neurun daily 即可自动同步数据并查看日报。[/]")
 
 
 def _ask(prompt: str, default: str = "") -> str:
@@ -1028,25 +1044,97 @@ def cmd_mcp(args: argparse.Namespace) -> None:
     host = os.getenv("MCP_HOST", getattr(args, 'host', None) or "127.0.0.1")
     port = int(os.getenv("MCP_PORT", str(getattr(args, 'port', None) or 8000)))
 
-    server = create_server(config, provider, storage, memory_store, user_id)
+    enable_admin_tools = _admin_mcp_tools_enabled(transport, host)
+    server = create_server(
+        config, provider, storage, memory_store, user_id,
+        enable_admin_tools=enable_admin_tools,
+    )
 
     if transport == "stdio":
-        console.print("[bold blue]🔌 启动 Rundown MCP Server...[/]")
+        console.print("[bold blue]🔌 启动 neurun MCP Server...[/]")
         console.print("[green]✅ MCP Server 已启动 (stdio mode)[/]")
         console.print("[dim]等待 OpenClaw / Claude Desktop 连接...[/]")
         server.run(transport="stdio")
     else:
-        console.print(f"[bold blue]🔌 启动 Rundown MCP Server ({transport} mode)...[/]")
+        console.print(f"[bold blue]🔌 启动 neurun MCP Server ({transport} mode)...[/]")
         console.print(f"[green]✅ 监听 http://{host}:{port}[/]")
         server.run(transport=transport, host=host, port=port)
+
+
+def _admin_mcp_tools_enabled(transport: str, host: str) -> bool:
+    """仅允许显式开启的本地 MCP 注册邀请码管理工具。"""
+    requested = os.getenv("NEURUN_ENABLE_ADMIN_TOOLS", "").lower() in ("1", "true", "yes")
+    if not requested:
+        return False
+    serve_mode = os.getenv("NEURUN_SERVE_MODE", "").lower() in ("1", "true", "yes")
+    if serve_mode:
+        raise ConfigError("公网 serve 模式禁止启用邀请码管理员 MCP tools")
+    if transport == "stdio":
+        return True
+    if host not in ("127.0.0.1", "localhost", "::1"):
+        raise ConfigError("邀请码管理员 MCP tools 只能监听 localhost 或使用 stdio")
+    return True
+
+
+def _invite_output(args: argparse.Namespace, payload: Any) -> None:
+    """输出邀请码管理员命令结果。"""
+    if args.output == "json":
+        console.print_json(json.dumps(payload, ensure_ascii=False, default=str))
+        return
+
+    records = payload if isinstance(payload, list) else [payload]
+    table = Table(title="neurun Invitations")
+    table.add_column("ID")
+    table.add_column("Code")
+    table.add_column("Status")
+    table.add_column("Created")
+    table.add_column("Used by")
+    for item in records:
+        status = "available" if item.get("available") else (
+            "revoked" if not item.get("enabled") else "used"
+        )
+        table.add_row(
+            str(item.get("id", "")),
+            str(item.get("code", "")),
+            status,
+            str(item.get("created_at", "")),
+            str(item.get("used_by") or "—"),
+        )
+    console.print(table)
+
+
+def cmd_invite(args: argparse.Namespace) -> None:
+    """invite 命令：在服务器本地生成、查看和停用邀请码。"""
+    from .invitations import InvitationError, InvitationStore
+
+    try:
+        if not args.invite_subcommand:
+            raise InvitationError("缺少 invite 子命令：create、list、show 或 revoke")
+        config = get_config(validate_credentials=False)
+        store = InvitationStore(config.invite_codes_path)
+        if args.invite_subcommand == "create":
+            records = [item.to_admin_dict(reveal=True) for item in store.create(args.count)]
+            _invite_output(args, records)
+        elif args.invite_subcommand == "list":
+            _invite_output(args, [item.to_admin_dict() for item in store.list_all()])
+        elif args.invite_subcommand == "show":
+            _invite_output(args, store.get(args.invitation_id).to_admin_dict(reveal=args.reveal))
+        elif args.invite_subcommand == "revoke":
+            _invite_output(args, store.revoke(args.invitation_id).to_admin_dict())
+    except InvitationError as exc:
+        if getattr(args, "output", "table") == "json":
+            print(json.dumps({"status": "error", "message": str(exc)}, ensure_ascii=False), file=sys.stderr)
+        else:
+            print(f"错误: {exc}", file=sys.stderr)
+        raise SystemExit(2) from exc
 
 
 def cmd_serve() -> None:
     """SAE / VPS 入口：启动 Web Chat 服务（含 MCP Server SSE）。
 
     环境变量驱动：
-    - RUNDOWN_DATA_DIR: 数据根目录 (默认 ./data)
-    - RUNDOWN_SERVE_MODE=true: 跳过 Garmin 凭证校验
+    - NEURUN_DATA_DIR: 数据根目录 (默认 ./data)
+    - NEURUN_SERVE_MODE=true: 跳过 Garmin 凭证校验
     - MCP_HOST / MCP_PORT: 监听地址
     """
     import logging as std_logging
@@ -1058,7 +1146,7 @@ def cmd_serve() -> None:
     )
 
     # 标记 Web 服务模式（跳过全局 Garmin 凭证校验）
-    os.environ["RUNDOWN_SERVE_MODE"] = "true"
+    os.environ["NEURUN_SERVE_MODE"] = "true"
 
     config = get_config()
 
@@ -1077,7 +1165,7 @@ def cmd_serve() -> None:
     host = os.getenv("MCP_HOST", "0.0.0.0")
     port = int(os.getenv("MCP_PORT", "8080"))
 
-    logger.info("🚀 Rundown Web Chat 启动中... transport=%s host=%s port=%s", transport, host, port)
+    logger.info("🚀 neurun Web Chat 启动中... transport=%s host=%s port=%s", transport, host, port)
     logger.info("📂 数据目录: %s", config.data_dir)
 
     server.run(transport=transport, host=host, port=port)
@@ -1115,8 +1203,8 @@ def _restore_all_users(user_manager) -> None:
 def build_parser() -> argparse.ArgumentParser:
     """构建命令行参数解析器。"""
     parser = argparse.ArgumentParser(
-        prog="rundown",
-        description="Rundown — Your daily running rundown",
+        prog="neurun",
+        description="neurun — Your AI running coach",
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
 
@@ -1198,6 +1286,26 @@ def build_parser() -> argparse.ArgumentParser:
     p_mcp.add_argument("--host", help="监听地址 (环境变量: MCP_HOST)")
     p_mcp.add_argument("--port", type=int, help="监听端口 (环境变量: MCP_PORT)")
 
+    # ── invite（服务器本地管理员命令）──────────
+    p_invite = sub.add_parser("invite", help="管理 Web 注册邀请码")
+    p_invite_sub = p_invite.add_subparsers(dest="invite_subcommand", help="子命令")
+
+    p_invite_create = p_invite_sub.add_parser("create", help="生成随机一次性邀请码")
+    p_invite_create.add_argument("-n", "--count", type=int, default=1, help="生成数量（1-100）")
+    p_invite_create.add_argument("-o", "--output", choices=["table", "json"], default="table")
+
+    p_invite_list = p_invite_sub.add_parser("list", help="列出邀请码（默认掩码）")
+    p_invite_list.add_argument("-o", "--output", choices=["table", "json"], default="table")
+
+    p_invite_show = p_invite_sub.add_parser("show", help="查看单个邀请码")
+    p_invite_show.add_argument("invitation_id", help="邀请码 ID")
+    p_invite_show.add_argument("--reveal", action="store_true", help="显示完整邀请码（仅本地 CLI）")
+    p_invite_show.add_argument("-o", "--output", choices=["table", "json"], default="table")
+
+    p_invite_revoke = p_invite_sub.add_parser("revoke", help="停用邀请码")
+    p_invite_revoke.add_argument("invitation_id", help="邀请码 ID")
+    p_invite_revoke.add_argument("-o", "--output", choices=["table", "json"], default="table")
+
     return parser
 
 
@@ -1217,11 +1325,12 @@ COMMAND_HANDLERS = {
     "setup": cmd_setup,
     "status": cmd_status,
     "mcp": cmd_mcp,
+    "invite": cmd_invite,
 }
 
 
 def main(argv: list[str] | None = None) -> None:
-    """Rundown CLI 入口。
+    """neurun CLI 入口。
 
     Args:
         argv: 命令行参数列表，None 表示使用 sys.argv。

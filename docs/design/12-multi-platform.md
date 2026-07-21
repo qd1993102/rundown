@@ -8,11 +8,11 @@
 
 ### 12.1 设计目标
 
-Rundown 支持 Garmin、Coros 和 Huawei 三种运动平台，通过统一的 `DataProvider` 接口切换。
+neurun 支持 Garmin、Coros 和 Huawei 三种运动平台，通过统一的 `DataProvider` 接口切换。
 用户只需在 `.env` 中修改一行即可切换数据源：
 
 ```bash
-RUNDOWN_PROVIDER=garmin  # 或 coros / huawei
+NEURUN_PROVIDER=garmin  # 或 coros / huawei
 ```
 
 ### 12.2 架构
@@ -59,7 +59,7 @@ graph TD
 
 ### 12.3 数据可用性对比
 
-以下表格描述的是 **Rundown 当前实际接入状态**，不等同于各平台 App 展示的全部能力。
+以下表格描述的是 **neurun 当前实际接入状态**，不等同于各平台 App 展示的全部能力。
 
 - ✅：已读取并映射到统一字段
 - ◐：已接入部分数据或语义为近似映射
@@ -75,7 +75,7 @@ graph TD
 | `activity_name` | string | ✅ | ✅ | ✅ | 空值使用通用运动名称，不用于类型判断 |
 | `activity_type` | enum string | ✅ | ◐ | ◐ | Huawei 保留 API 原始类型；原始记录同时放入 `extra` |
 | `start_time` | ISO 8601 + 时区 | ◐ | ◐ | ✅ | Huawei 毫秒时间戳转换为 UTC ISO 8601 |
-| `duration_seconds` | integer, s | ✅ | ✅ | ✅ | Huawei 无 duration 时以结束减开始计算 |
+| `duration_seconds` | integer, s | ✅ | ✅ | ✅ | Coros 优先使用排除暂停的 `workoutTime`，缺失时回退 `totalTime`；Huawei 无 duration 时以结束减开始计算 |
 | `distance_meters` | float, m | ✅ | ✅ | ✅ | 无距离的运动使用 `0`，未知值不得伪装成实测 `0` |
 | `avg_heart_rate` | integer, bpm / null | ✅ | ✅ | ✅ | 无样本或无权限时为 `null` |
 | `max_heart_rate` | integer, bpm / null | ✅ | △ | ✅ | Coros 当前 summary 未映射，可能存在于详情数据 |
@@ -118,24 +118,24 @@ graph TD
 
 ```bash
 # Garmin (默认)
-RUNDOWN_PROVIDER=garmin
-RUNDOWN_ACCOUNT=user@gmail.com
-RUNDOWN_PASSWORD=xxx
+NEURUN_PROVIDER=garmin
+NEURUN_ACCOUNT=user@gmail.com
+NEURUN_PASSWORD=xxx
 
 # Coros (中国区手机号)
-RUNDOWN_PROVIDER=coros
-RUNDOWN_ACCOUNT=13812345678
-RUNDOWN_PASSWORD=xxx
+NEURUN_PROVIDER=coros
+NEURUN_ACCOUNT=13812345678
+NEURUN_PASSWORD=xxx
 
 # Huawei（每用户独立 CrewPals token）
-RUNDOWN_PROVIDER=huawei
+NEURUN_PROVIDER=huawei
 GROUP_PALS_TOKEN=xxx
 HUAWEI_TOKEN_DIR=./data/user-a/huawei-tokens
 ```
 
 每个 Provider 独立管理自己的数据库和 Token。切换到不同目录 + 不同 `.env` 即可隔离数据。
 
-Huawei 使用每用户独立的 `GROUP_PALS_TOKEN`：`rundown auth` 通过 HTTPS GET
+Huawei 使用每用户独立的 `GROUP_PALS_TOKEN`：`neurun auth` 通过 HTTPS GET
 `https://api.crewpals.com/api/v1/huawei/access_token` 获取 Huawei AT。请求将原始 JWT
 放入 `Authorization` header，不添加 `Bearer` 前缀，
 返回的 token 保存到 `HUAWEI_TOKEN_DIR/huawei-oauth.json`，权限为 `0600`。本地 AT 有效时
@@ -147,13 +147,13 @@ snake_case，同时保留对早期扁平 snake_case 响应的兼容。
 
 Token store 生命周期规则：
 
-- `rundown init` 为当前配置选择并创建独立的 `HUAWEI_TOKEN_DIR`，目录权限为 `0700`。
-- `rundown auth` 在认证前执行相同检查，目录缺失时自动创建。
+- `neurun init` 为当前配置选择并创建独立的 `HUAWEI_TOKEN_DIR`，目录权限为 `0700`。
+- `neurun auth` 在认证前执行相同检查，目录缺失时自动创建。
 - 已有 `huawei-oauth.json` 必须是包含 `access_token` 的 JSON object，否则立即报告文件路径和原因。
 - 已有 token 文件权限自动收紧为 `0600`；空 token 文件不会被预创建。
 - Token 兼容 `expired_at` / `expires_at` 和 `open_id` / `openid` 两套命名；若存在数值 `user_id`，优先作为统一用户 ID。
 - 用户隔离必须覆盖 token、SQLite、memory 和 output，不能只通过 token 文件名区分用户。
-- 显式设置 `RUNDOWN_HOME` 时不加载全局 `~/.rundown/.env`，避免不同用户的账号和密码互相补入。
+- 显式设置 `NEURUN_HOME` 时不加载全局 `~/.neurun/.env`，避免不同用户的账号和密码互相补入。
 
 ### 12.5 Huawei 数据 API 接入细节
 
@@ -173,14 +173,32 @@ Huawei API 返回字段存在嵌套差异，Provider 对 ID、名称、类型、
 基于 `coros-mcp` 库（MIT 协议，GitHub: cygnusb/coros-mcp）：
 
 - **认证**：POST `/account/login`，MD5 密码 + mobile encrypt fallback
-- **活动列表**：GET `/activity/query`，日期格式 `YYYYMMDD`（无连字符）
+- **Web Token 隔离**：绑定成功后将 `StoredAuth` 保存到
+  `data/<api_key>/tokens/coros-auth.json`；目录权限为 `0700`，文件权限为 `0600`。
+  后续同步不保存或重用明文密码，而是从当前用户目录恢复 token
+- **旧 Token 迁移**：用户目录尚无 token 且系统中只有一个 active Coros 用户时，
+  `/api/sync` 可将 coros-mcp 旧版全局 token 一次性迁入该用户目录；多个 Coros
+  用户时跳过自动迁移，避免错误共享凭证
+- **活动列表**：GET `/activity/query`，日期格式 `YYYYMMDD`（无连字符）；Rundown
+  直接保留原始 `workoutTime` 和 `totalTime`，因为 coros-mcp 的 `ActivitySummary`
+  当前只暴露 `totalTime`
+- **活动时长**：统一 `duration_seconds` 使用 `workoutTime`（排除暂停）；仅当该字段
+  缺失、为零或大于 `totalTime` 时回退 `totalTime`。`extra` 同时记录
+  `workout_time_seconds`、`total_time_seconds` 和派生的 `paused_seconds`
+- **已有活动修正**：非 Garmin 同步遇到已存在的 `activity_id` 时会比较并更新
+  `duration_seconds`，因此重新同步即可修正旧数据，无需删除数据库
 - **HRV 数据**：GET `/dashboard/query`，返回 7 天 HRV
 - **每日指标**：GET `/analyse/query`，返回 RHR/距离/时长/负荷/VO2max
 - **睡眠**：依赖库可访问 Mobile API，但当前 `CorosHealth` 尚未映射到 `DailyHealth`
 
 已知限制：
+- Web 同步必须将 `UserRecord.provider` 注入 `UserConfig.provider`，用户级 provider
+  优先于服务级 `NEURUN_PROVIDER`，避免 Coros 用户误入 Garmin 同步链路
 - `/activity/query` 日期参数必须 `YYYYMMDD` 格式
-- 睡眠数据即使已取得 mobile token，当前 Rundown 仍不会写入统一健康模型
+- Coros token 失效或活动接口返回非 `0000` 时同步必须失败并提示重新绑定，禁止把
+  空活动列表误报为同步成功；`result=1019` 会把 `UserRecord.token_status` 更新为
+  `expired`，使 `/setup` 可以在原用户目录中重新完成绑定
+- 睡眠数据即使已取得 mobile token，当前 neurun 仍不会写入统一健康模型
 - 身体电量和训练准备仅 Garmin 已映射；Coros `tiredRate` 只近似放入压力字段
 
 ---

@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>neurun — 账号</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{min-height:100vh;display:flex;align-items:center;justify-content:center;padding:20px;background:#0a0a0a;color:#e8e8e8;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif}
+.card{width:100%;max-width:430px;background:#141414;border:1px solid #252525;border-radius:20px;padding:38px 32px;box-shadow:0 18px 60px rgba(0,0,0,.35)}
+.brand{color:#4caf50;font-size:13px;font-weight:700;letter-spacing:1.4px;margin-bottom:18px}
+h1{font-size:25px;margin-bottom:8px}.desc{font-size:14px;color:#777;line-height:1.6;margin-bottom:26px}
+.progress{display:flex;gap:8px;margin-bottom:26px}.progress span{height:4px;flex:1;border-radius:4px;background:#282828}.progress span.active{background:#4caf50}
+.panel{display:none}.panel.active{display:block}.form-group{margin-bottom:17px}.form-group label{display:block;color:#999;font-size:13px;margin-bottom:7px}
+input{width:100%;border:1px solid #292929;background:#1b1b1b;color:#fff;border-radius:11px;padding:13px 14px;font-size:15px;outline:none}input:focus{border-color:#4caf50}
+.hint{font-size:11px;color:#5f5f5f;margin-top:6px}.btn{width:100%;border:0;border-radius:11px;padding:14px;font-size:15px;font-weight:650;cursor:pointer;margin-top:7px;background:#4caf50;color:#fff}.btn:hover{background:#43a047}.btn:disabled{opacity:.45;cursor:not-allowed}
+.secondary{background:transparent;color:#999;border:1px solid #333;margin-top:10px}.secondary:hover{background:#1d1d1d}.switch{text-align:center;color:#777;font-size:13px;margin-top:22px}.switch a{color:#65bd69;text-decoration:none}
+.message{display:none;font-size:13px;margin-top:13px;line-height:1.5}.message.error{display:block;color:#ef6c67}.message.success{display:block;color:#67bd6b}
+.spinner{display:inline-block;width:14px;height:14px;border:2px solid rgba(255,255,255,.35);border-top-color:#fff;border-radius:50%;animation:spin .6s linear infinite;vertical-align:-2px;margin-right:7px}@keyframes spin{to{transform:rotate(360deg)}}
+@media(max-width:480px){.card{padding:30px 20px}}
+</style>
+</head>
+<body>
+<main class="card">
+  <div class="brand">NEURUN</div>
+
+  <section id="login" class="panel">
+    <h1>欢迎回来</h1>
+    <p class="desc">登录后继续查看训练数据和 AI 教练建议。</p>
+    <div class="form-group"><label>邮箱</label><input id="loginEmail" type="email" autocomplete="email" placeholder="you@example.com"></div>
+    <div class="form-group"><label>密码</label><input id="loginPassword" type="password" autocomplete="current-password" placeholder="输入密码"></div>
+    <button id="loginButton" class="btn" onclick="login()">登录</button>
+    <div id="loginMessage" class="message"></div>
+    <div class="switch">还没有账号？<a href="/register">使用邀请码注册</a></div>
+  </section>
+
+  <section id="invite" class="panel">
+    <div class="progress"><span class="active"></span><span></span></div>
+    <h1>输入邀请码</h1>
+    <p class="desc">neurun 目前采用邀请注册。邀请码验证通过后，再填写基本信息。</p>
+    <div class="form-group"><label>邀请码</label><input id="inviteCode" autocomplete="one-time-code" placeholder="例如 NEURUN-XXXX"></div>
+    <button id="inviteButton" class="btn" onclick="validateInvite()">验证并继续</button>
+    <div id="inviteMessage" class="message"></div>
+    <div class="switch">已有账号？<a href="/login">直接登录</a></div>
+  </section>
+
+  <section id="register" class="panel">
+    <div class="progress"><span class="active"></span><span class="active"></span></div>
+    <h1>填写基本信息</h1>
+    <p class="desc">这些信息用于创建 neurun 账号，运动平台账号将在下一步单独绑定。</p>
+    <div class="form-group"><label>昵称</label><input id="nickname" maxlength="32" autocomplete="nickname" placeholder="怎么称呼你"></div>
+    <div class="form-group"><label>邮箱</label><input id="registerEmail" type="email" autocomplete="email" placeholder="you@example.com"></div>
+    <div class="form-group"><label>密码</label><input id="registerPassword" type="password" minlength="8" maxlength="128" autocomplete="new-password" placeholder="至少 8 个字符"><div class="hint">密码只保存安全哈希，服务端不会保存明文。</div></div>
+    <button id="registerButton" class="btn" onclick="registerAccount()">创建账号</button>
+    <button class="btn secondary" onclick="showPanel('invite')">返回修改邀请码</button>
+    <div id="registerMessage" class="message"></div>
+  </section>
+</main>
+<script>
+var verifiedInvite='';
+function el(id){return document.getElementById(id)}
+function showPanel(id){document.querySelectorAll('.panel').forEach(function(p){p.classList.remove('active')});el(id).classList.add('active');clearMessage(id+'Message')}
+function clearMessage(id){var node=el(id);if(node){node.className='message';node.textContent=''}}
+function message(id,text,kind){var node=el(id);node.textContent=text;node.className='message '+kind}
+function loading(button,on,label){button.disabled=on;button.innerHTML=on?'<span class="spinner"></span>'+label:button.dataset.label;}
+document.querySelectorAll('.btn').forEach(function(button){button.dataset.label=button.textContent});
+
+async function validateInvite(){
+  clearMessage('inviteMessage');var code=el('inviteCode').value.trim();if(!code){message('inviteMessage','请输入邀请码','error');return}
+  var button=el('inviteButton');loading(button,true,'验证中...');
+  try{var response=await fetch('/api/invitations/validate',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({invite_code:code})});var data=await response.json();if(response.ok&&data.status==='ok'){verifiedInvite=code;showPanel('register')}else{message('inviteMessage',data.message||'邀请码不可用','error')}}catch(error){message('inviteMessage','网络错误：'+error.message,'error')}finally{loading(button,false)}
+}
+
+async function registerAccount(){
+  clearMessage('registerMessage');var nickname=el('nickname').value.trim(),email=el('registerEmail').value.trim(),password=el('registerPassword').value;
+  if(!nickname||!email||!password){message('registerMessage','请完整填写昵称、邮箱和密码','error');return}
+  var button=el('registerButton');loading(button,true,'创建中...');
+  try{var response=await fetch('/api/register',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({invite_code:verifiedInvite,nickname:nickname,email:email,password:password})});var data=await response.json();if(response.ok&&data.status==='ok'){message('registerMessage','注册成功，正在进入数据源设置…','success');setTimeout(function(){location.href=data.next||'/setup'},500)}else{message('registerMessage',data.message||'注册失败','error')}}catch(error){message('registerMessage','网络错误：'+error.message,'error')}finally{loading(button,false)}
+}
+
+async function login(){
+  clearMessage('loginMessage');var email=el('loginEmail').value.trim(),password=el('loginPassword').value;if(!email||!password){message('loginMessage','请输入邮箱和密码','error');return}
+  var button=el('loginButton');loading(button,true,'登录中...');
+  try{var response=await fetch('/api/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({email:email,password:password})});var data=await response.json();if(response.ok&&data.status==='ok'){location.href=data.next||'/'}else{message('loginMessage',data.message||'登录失败','error')}}catch(error){message('loginMessage','网络错误：'+error.message,'error')}finally{loading(button,false)}
+}
+
+document.addEventListener('keydown',function(event){if(event.key!=='Enter')return;if(el('login').classList.contains('active'))login();else if(el('invite').classList.contains('active'))validateInvite();else if(el('register').classList.contains('active'))registerAccount()});
+showPanel(location.pathname==='/register'?'invite':'login');
+</script>
+</body>
+</html>

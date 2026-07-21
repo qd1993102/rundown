@@ -20,6 +20,16 @@ from .config import Config
 logger = logging.getLogger(__name__)
 
 
+def _ensure_progress_reporter_compat(progress_reporter: Any) -> None:
+    """补齐旧版 garmy ``ProgressReporter.warning`` 缺失的兼容接口。
+
+    garmy 的 ``ActivitiesIterator`` 在拉取失败时调用 ``warning``，但部分
+    版本的 ``ProgressReporter`` 只实现了 ``info``/``error``，会覆盖原始异常。
+    """
+    if not callable(getattr(progress_reporter, "warning", None)):
+        progress_reporter.warning = logger.warning
+
+
 class Storage:
     """运动数据存储管理器。
 
@@ -56,6 +66,7 @@ class Storage:
         """
         if self._sync_manager is None:
             self._sync_manager = SyncManager(db_path=str(self._db_path))
+            _ensure_progress_reporter_compat(self._sync_manager.progress)
         return self._sync_manager
 
     def initialize_sync(self) -> None:

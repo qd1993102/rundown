@@ -1,8 +1,7 @@
-"""AI 教练模块 — 通过 DeepSeek API 生成训练洞察。
+"""AI 教练模块 — 通过 DeepSeek API + Tool Use 生成训练洞察。
 
-DeepSeek 提供 OpenAI 兼容接口，使用 httpx 直接调用。
-上下文包含：当日日报 + 前 7 天数据趋势 + 活跃目标 + 运动员档案
-+ 训练周期分析 + 个体恢复模式。
+Prompt 外置在 prompts/coach.md，可随时编辑调整。
+数据收集抽象为 tools，AI 自行决定需要调用哪些工具获取上下文。
 """
 
 from __future__ import annotations
@@ -10,293 +9,215 @@ from __future__ import annotations
 import json
 import logging
 import os
-from collections.abc import AsyncIterator
 from datetime import date, timedelta
+from pathlib import Path
 from typing import Any
 
 logger = logging.getLogger(__name__)
 
 DEEPSEEK_BASE_URL = "https://api.deepseek.com/chat/completions"
 DEEPSEEK_MODEL = "deepseek-chat"
+_PROMPT_FILE = Path(__file__).parent.parent / "prompts" / "coach.md"
 
-# ── 历史上下文收集 ────────────────────────────
+# ═══════════════════════════════════════════════════════════════
+# Prompt
+# ═══════════════════════════════════════════════════════════════
 
 
-def _collect_profile(memory_store: Any) -> str:
-    """从 memory store 读取竞技档案（personal bests、身体数据）。
+def load_coach_prompt() -> str:
+    """从 prompts/coach.md 加载系统提示词（用户可随时编辑）。"""
+    if _PROMPT_FILE.exists():
+        return _PROMPT_FILE.read_text(encoding="utf-8")
+    return "你是一位专业的跑步教练 AI，名叫 neurun Coach。"
 
-    Returns:
-        运动员档案文本，用于 AI prompt。
-    """
+
+# ═══════════════════════════════════════════════════════════════
+# Tool Definitions (OpenAI function-calling format)
+# ═══════════════════════════════════════════════════════════════
+
+TOOLS = [
+    {
+        "type": "function",
+        "function": {
+            "name": "get_athlete_profile",
+            "description": "获取运动员档案：身高体重年龄性别、个人最佳成绩(5K/10K/半马/全马/VO2max)、训练偏好(时间/地形/类型/伤病/理念)",
+            "parameters": {"type": "object", "properties": {}, "required": []},
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_training_goals",
+            "description": "获取所有活跃训练目标：目标距离、目标成绩、截止日期、周跑量目标",
+            "parameters": {"type": "object", "properties": {}, "required": []},
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_training_history",
+            "description": "获取最近 N 天的训练与恢复数据汇总：训练天数、总跑量、周均跑量、前后半段跑量/HRV 趋势、平均睡眠/恢复/HRV/RHR、近7天每日明细表",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "days": {
+                        "type": "integer",
+                        "description": "查询最近多少天的数据，建议 14-30",
+                    }
+                },
+                "required": ["days"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_recovery_pattern",
+            "description": "分析个体恢复模式：近 N 天所有训练日和休息日的 HRV/RHR/身体电量/恢复评分，高强度训练后需要几天恢复",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "days": {
+                        "type": "integer",
+                        "description": "分析天数，建议 14-30",
+                    }
+                },
+                "required": ["days"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_training_cycle",
+            "description": "获取训练周期分析：距离每个活跃目标的比赛还有多少周、当前处于什么训练阶段(基础期/强化期/高峰期/减量期/比赛周)",
+            "parameters": {"type": "object", "properties": {}, "required": []},
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_daily_report",
+            "description": "获取指定日期的完整日报：训练详情(每节训练的类型/名称/时长/距离/心率/负荷)、睡眠(时长/深睡/REM/评分)、晨起指标(HRV/RHR/电量/训练准备)、负荷(ACWR/状态)、恢复评分",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "date": {
+                        "type": "string",
+                        "description": "日期，YYYY-MM-DD 格式",
+                    }
+                },
+                "required": ["date"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_today_data",
+            "description": "获取今天/最新日报的核心指标摘要：训练摘要、睡眠、HRV、RHR、电量、恢复评分、ACWR，适合快速了解当前状态",
+            "parameters": {"type": "object", "properties": {}, "required": []},
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_training_plan",
+            "description": "获取当前运动大纲：目标比赛、训练阶段、每周结构、周跑量目标、关键课次、配速区间、恢复警戒线",
+            "parameters": {"type": "object", "properties": {}, "required": []},
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "save_training_plan",
+            "description": "新建或更新运动大纲。必须包含完整的训练计划内容。如果大纲不存在则创建，如果存在则基于当前数据调整",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "content": {
+                        "type": "string",
+                        "description": "完整的大纲内容（Markdown 格式），包含：目标比赛、训练阶段、每周结构、周跑量目标、关键课次、配速区间、恢复警戒线、最近调整说明",
+                    }
+                },
+                "required": ["content"],
+            },
+        },
+    },
+]
+
+
+# ═══════════════════════════════════════════════════════════════
+# Tool Executors
+# ═══════════════════════════════════════════════════════════════
+
+
+def _exec_get_athlete_profile(memory_store: Any) -> str:
+    """执行 get_athlete_profile 工具。"""
+    parts = []
     try:
         mem = memory_store.get("fitness-assessment")
-        if not mem:
-            return ""
-        body = mem.body or ""
-        fm = mem.front_matter or {}
-        info = fm.get("personal_info", {}) or {}
-        pbs = fm.get("personal_bests", {}) or {}
-
-        lines = ["## 运动员档案"]
-        if info:
-            parts = []
-            if info.get("height_cm"):
-                parts.append(f"{info['height_cm']}cm")
-            if info.get("weight_kg"):
-                parts.append(f"{info['weight_kg']}kg")
-            if info.get("gender"):
-                parts.append(info["gender"])
-            if info.get("age"):
-                parts.append(f"{info['age']}岁")
-            if parts:
-                lines.append("- 基本信息: " + " / ".join(parts))
-        if pbs:
-            pb_lines = []
-            for dist, data in pbs.items():
-                if isinstance(data, dict) and "time" in data:
-                    pb_lines.append(f"{dist}: {data['time']}")
-                elif dist == "vo2max_estimate" and data:
-                    pb_lines.append(f"VO2max: {data}")
-            if pb_lines:
-                lines.append("- 个人最佳: " + " | ".join(pb_lines))
-        # 也提取 body 中的关键段落（前 300 字）
-        if body:
-            body_intro = body[:500].strip()
-            if body_intro:
-                lines.append(f"\n{body_intro}")
-        return "\n".join(lines)
+        if mem:
+            fm = mem.front_matter or {}
+            info = fm.get("personal_info", {}) or {}
+            pbs = fm.get("personal_bests", {}) or {}
+            if info:
+                items = []
+                for k, label in [("height_cm", "身高"), ("weight_kg", "体重"), ("age", "年龄"), ("gender", "性别")]:
+                    if info.get(k):
+                        items.append(f"{label}: {info[k]}")
+                if items:
+                    parts.append("身体数据: " + " | ".join(items))
+            if pbs:
+                pb_items = []
+                for dist in ["5k", "10k", "half_marathon", "marathon"]:
+                    v = pbs.get(dist, {})
+                    if isinstance(v, dict) and v.get("time"):
+                        pb_items.append(f"{dist}: {v['time']}")
+                if pbs.get("vo2max_estimate"):
+                    pb_items.append(f"VO2max: {pbs['vo2max_estimate']}")
+                if pb_items:
+                    parts.append("最佳成绩: " + " | ".join(pb_items))
     except Exception:
-        return ""
-
-
-def _collect_preferences(memory_store: Any) -> str:
-    """从 memory store 读取训练偏好和哲学。
-
-    Returns:
-        偏好文本，用于 AI prompt。
-    """
+        pass
     try:
-        mem = memory_store.get("preferences")
-        if not mem:
-            return ""
-        body = mem.body or ""
-        if not body.strip():
-            return ""
-        return f"## 训练偏好\n\n{body.strip()[:800]}"
+        pref = memory_store.get("preferences")
+        if pref and pref.body:
+            parts.append("训练偏好:\n" + pref.body.strip()[:600])
     except Exception:
-        return ""
+        pass
+    return "\n\n".join(parts) if parts else "暂无运动员档案"
 
 
-def _collect_goals(memory_store: Any) -> str:
-    """从 memory store 读取活跃目标（包含 body 里的详细配速表）。
-
-    Returns:
-        目标文本，用于 AI prompt。
-    """
+def _exec_get_training_goals(memory_store: Any) -> str:
+    """执行 get_training_goals 工具。"""
     try:
         goals = memory_store.list_by_type("goal", status="active")
         if not goals:
-            return ""
-
-        lines = ["## 活跃训练目标"]
-        for g in goals[:3]:
+            return "暂无活跃训练目标"
+        lines = []
+        for g in goals:
             fm = g.front_matter or {}
-            body = g.body or ""
-
-            title = body.split("\n")[0].lstrip("# ") if body else (
-                fm.get("title") or fm.get("id", g.id)
-            )
-            lines.append(f"\n### {title}")
-
-            # FM 中的关键字段
-            if fm.get("target_date"):
-                lines.append(f"- 截止日期: {fm['target_date']}")
-            if fm.get("status"):
-                lines.append(f"- 状态: {fm['status']}")
-
-            # body 中的具体数据（配速表、差距等）
-            if body:
-                # 提取前 600 字的关键内容
-                body_content = body.strip()
-                # 跳过标题行
-                if body_content.startswith("#"):
-                    body_content = "\n".join(body_content.split("\n")[1:]).strip()
-                lines.append(f"\n{body_content[:800]}")
-
-        return "\n".join(lines)
-    except Exception:
-        return ""
-
-
-def _collect_training_cycle(memory_store: Any, target_date: date) -> str:
-    """分析训练周期：距离目标比赛还有多少周、当前处于什么阶段。
-
-    Returns:
-        训练周期分析文本。
-    """
-    try:
-        goals = memory_store.list_by_type("goal", status="active")
-        if not goals:
-            return ""
-
-        lines = ["## 训练周期分析"]
-        for g in goals[:2]:
-            fm = g.front_matter or {}
-            target_str = fm.get("target_date", "")
-            if not target_str:
-                continue
-
-            try:
-                goal_date = date.fromisoformat(str(target_str)[:10])
-            except ValueError:
-                continue
-
-            weeks_to_go = max(0, (goal_date - target_date).days / 7)
-            goal_body = g.body or ""
-            goal_title = goal_body.split("\n")[0].lstrip("# ") if goal_body else str(fm.get("title", "目标"))
-
-            if weeks_to_go > 12:
-                phase = "基础期 — 以有氧耐力积累为主，逐步增加跑量，配速以轻松跑和中等强度为主"
-            elif weeks_to_go > 8:
-                phase = "强化期 — 加入节奏跑和长距离马拉松配速跑，提升专项耐力"
-            elif weeks_to_go > 4:
-                phase = "高峰期 — 以比赛配速训练为核心，加入模拟比赛的长距离，强度达到峰值"
-            elif weeks_to_go > 1:
-                phase = "赛前调整/减量期 — 降低跑量保持强度，让身体充分恢复迎接比赛"
-            else:
-                phase = "比赛周 — 以轻松跑和短距离激活为主，保证睡眠和碳水储备"
-
-            lines.append(f"- **{goal_title}**: 距比赛 {weeks_to_go:.0f} 周 → **{phase}**")
-            lines.append(f"- 目标日期: {goal_date}，当前日期: {target_date}")
-            lines.append(f"- 评估训练是否与当前阶段匹配：基础期不应频繁进行高于马拉松配速的强度训练")
-
-        return "\n".join(lines)
-    except Exception:
-        return ""
-
-
-def _collect_recovery_pattern(memory_store: Any, target_date: date) -> str:
-    """分析个体恢复模式：训练后 HRV/RHR/电量如何变化、恢复速度如何。
-
-    Returns:
-        个体恢复模式分析文本。
-    """
-    try:
-        training_days: list[dict] = []
-        rest_days: list[dict] = []
-
-        for i in range(14, -1, -1):
-            d = target_date - timedelta(days=i)
-            mem = memory_store.get(str(d))
-            if not mem:
-                continue
-            fm = mem.front_matter
-            ya = fm.get("yesterday_activities", {})
-            mo = fm.get("this_morning", {})
-            rec = fm.get("recovery", {})
-
-            entry = {
-                "date": str(d),
-                "hrv": mo.get("hrv_ms"),
-                "rhr": mo.get("resting_hr"),
-                "bb": mo.get("body_battery_morning"),
-                "recovery": rec.get("overall_score"),
-            }
-
-            if ya.get("is_rest_day"):
-                rest_days.append(entry)
-            else:
-                entry["load"] = ya.get("total_training_load", 0)
-                entry["duration"] = ya.get("total_duration_min", 0)
-                entry["distance"] = ya.get("total_distance_km", 0)
-                training_days.append(entry)
-
-        if not training_days:
-            return ""
-
-        lines = ["## 个体恢复模式（近 14 天）"]
-
-        # 训练日统计
-        lines.append("\n### 训练日")
-        for td in training_days[-7:]:
+            m = fm.get("metrics", {})
+            dist = next((k.replace("target_", "") for k in m if k.startswith("target_")), "?")
             lines.append(
-                f"- {td['date']} {td.get('duration',0)}min "
-                f"{td.get('distance',0):.1f}km load={td.get('load',0)}"
+                f"- {fm.get('title') or g.id}: {dist} "
+                f"目标{m.get('target_'+dist, '—')} "
+                f"截止{fm.get('target_date', '—')} "
+                f"周跑量{m.get('weekly_mileage_km', '—')}km "
+                f"状态{fm.get('status', 'active')}"
             )
-
-        # 恢复日统计
-        if rest_days:
-            lines.append("\n### 休息日恢复指标")
-            for rd in rest_days[-7:]:
-                lines.append(
-                    f"- {rd['date']} HRV={rd['hrv']}ms RHR={rd['rhr']} "
-                    f"BB={rd['bb']} 恢复={rd['recovery']}"
-                )
-
-        # 恢复能力评估
-        high_load_threshold = 100
-        high_load_days = [t for t in training_days if t.get("load", 0) >= high_load_threshold]
-        if high_load_days:
-            lines.append(f"\n### 高强度训练后恢复分析")
-            lines.append(f"- 近 14 天有 {len(high_load_days)} 次高强度训练（load≥{high_load_threshold}）")
-            # 找高强度训练后的恢复数据
-            for hld in high_load_days[-3:]:
-                hld_date = date.fromisoformat(hld["date"])
-                next_day = hld_date + timedelta(days=1)
-                next_day_rest = next((r for r in rest_days if r["date"] == str(next_day)), None)
-                next2_day = hld_date + timedelta(days=2)
-                next2_rest = next((r for r in rest_days if r["date"] == str(next2_day)), None)
-                if next_day_rest:
-                    hrv_drop = (next_day_rest.get("hrv") or 0)
-                    lines.append(
-                        f"- {hld['date']} (load={hld.get('load',0)}): "
-                        f"次日 HRV={next_day_rest.get('hrv')}ms RHR={next_day_rest.get('rhr')} "
-                        f"BB={next_day_rest.get('bb')} 恢复={next_day_rest.get('recovery')}"
-                    )
-                    if next2_rest:
-                        lines.append(
-                            f"  第 2 天: HRV={next2_rest.get('hrv')}ms "
-                            f"RHR={next2_rest.get('rhr')} BB={next2_rest.get('bb')} "
-                            f"恢复={next2_rest.get('recovery')}"
-                        )
-
-        # 个体恢复特征总结
-        if rest_days and training_days:
-            avg_rest_hrv = sum(r["hrv"] for r in rest_days[-5:] if r["hrv"]) / max(
-                sum(1 for r in rest_days[-5:] if r["hrv"]), 1
-            )
-            avg_train_next_hrv = sum(
-                r["hrv"] for r in rest_days[-5:] if r["hrv"]
-            ) / max(sum(1 for r in rest_days[-5:] if r["hrv"]), 1)
-            lines.append(f"\n### 恢复特征")
-            lines.append(f"- 近期休息日平均 HRV: {avg_rest_hrv:.0f}ms")
-            # 计算 HRV 从训练后恢复到基线需要几天
-            lines.append(
-                f"- 观察：高负荷训练后 HRV 需 1-2 天恢复至平衡区间，"
-                f"身体电量恢复速度中等偏快（符合精英跑者特征）"
-            )
-            lines.append(
-                f"- 关键指标：若 HRV 持续低于基线 5ms 以上且 RHR 偏高 3bpm+，"
-                f"说明恢复不足，应减量"
-            )
-
-        return "\n".join(lines)
+        return "活跃目标:\n" + "\n".join(lines)
     except Exception:
-        return ""
+        return "无法获取目标"
 
 
-def _collect_history(memory_store: Any, target_date: date) -> str:
-    """从 memory store 收集前 7 天的日报摘要 + 近 3 天训练细节。
-
-    返回压缩后的文本，供 AI prompt 使用。
-    """
-    lines: list[str] = []
-
-    # 1. 前 7 天日报摘要
-    daily_summaries: list[dict[str, Any]] = []
-    recent_session_analyses: list[str] = []
-    for i in range(1, 8):
-        d = target_date - timedelta(days=i)
+def _exec_get_training_history(memory_store: Any, days: int) -> str:
+    """执行 get_training_history 工具 — N 天训练与恢复汇总。"""
+    days = max(1, min(days, 90))
+    entries = []
+    for i in range(days):
+        d = date.today() - timedelta(days=i)
         mem = memory_store.get(str(d))
         if mem:
             fm = mem.front_matter
@@ -304,152 +225,306 @@ def _collect_history(memory_store: Any, target_date: date) -> str:
             sl = fm.get("last_night_sleep", {})
             mo = fm.get("this_morning", {})
             rec = fm.get("recovery", {})
-            daily_summaries.append({
+            entries.append({
                 "date": str(d),
-                "training": (
-                    f"{ya.get('day_type', 'rest')} "
-                    f"{ya.get('total_duration_min', 0)}min "
-                    f"{ya.get('total_distance_km', 0):.1f}km "
-                    f"load {ya.get('total_training_load', 0)}"
-                    if not ya.get("is_rest_day") else
-                    f"rest (steps {ya.get('daily_steps', 0)})"
-                ),
-                "sleep": f"{sl.get('total_hours', '?')}h {sl.get('quality', '?')}",
-                "hrv": f"{mo.get('hrv_ms', '?')}ms {mo.get('hrv_status', '?')}",
-                "rhr": mo.get("resting_hr", "?"),
-                "body_battery": mo.get("body_battery_morning", "?"),
-                "recovery": f"{rec.get('overall_score', '?')}/100 {rec.get('level', '?')}",
+                "is_rest": ya.get("is_rest_day", False),
+                "duration": ya.get("total_duration_min", 0) or 0,
+                "distance": ya.get("total_distance_km", 0) or 0,
+                "load": ya.get("total_training_load", 0) or 0,
+                "sleep_h": sl.get("total_hours", 0) or 0,
+                "sleep_score": sl.get("sleep_score"),
+                "hrv": mo.get("hrv_ms"),
+                "rhr": mo.get("resting_hr"),
+                "bb": mo.get("body_battery_morning"),
+                "recovery": rec.get("overall_score"),
+                "readiness": mo.get("training_readiness_score"),
             })
-            # 收集近 3 天的训练细节
-            if i <= 3 and not ya.get("is_rest_day"):
-                analyses = fm.get("session_analyses", [])
-                for analysis_text in analyses[:2]:  # 最多 2 节
-                    # 提取关键数据行（跳过标题和分隔符）
-                    key_lines = []
-                    for line in analysis_text.split("\n"):
-                        stripped = line.strip()
-                        if stripped and not stripped.startswith("#") and not stripped.startswith("*"):
-                            key_lines.append(stripped)
-                    if key_lines:
-                        recent_session_analyses.append(
-                            f"**{d}** " + " | ".join(key_lines[:8])
-                        )
 
-    if daily_summaries:
-        lines.append("## 前 7 天数据趋势")
-        lines.append("| 日期 | 训练 | 睡眠 | HRV | RHR | 电量 | 恢复 |")
-        lines.append("|------|------|------|-----|-----|------|------|")
-        for d in daily_summaries:
-            lines.append(
-                f"| {d['date']} | {d['training']} | {d['sleep']} | "
-                f"{d['hrv']} | {d['rhr']} | {d['body_battery']} | {d['recovery']} |"
-            )
+    if not entries:
+        return "暂无历史数据"
 
-    # 2. 近 3 天训练细节
-    if recent_session_analyses:
-        lines.append("\n## 近期训练细节（配速/步频/功率等）")
-        for detail in recent_session_analyses[:5]:
-            lines.append(f"- {detail}")
+    n = len(entries)
+    train_entries = [e for e in entries if not e["is_rest"]]
+    tc = len(train_entries)
+    total_km = sum(e["distance"] for e in train_entries)
+    total_dur = sum(e["duration"] for e in train_entries)
+    total_load = sum(e["load"] for e in train_entries)
 
-    return "\n".join(lines) if lines else "（暂无历史数据）"
+    sleep_s = [e["sleep_score"] for e in entries if e["sleep_score"]]
+    rec_s = [e["recovery"] for e in entries if e["recovery"]]
+    hrv_s = [e["hrv"] for e in entries if e["hrv"]]
+    rhr_s = [e["rhr"] for e in entries if e["rhr"]]
+
+    mid = max(n // 2, 1)
+    first, second = entries[:mid], entries[mid:]
+    f_km = sum(e["distance"] for e in first if not e["is_rest"])
+    s_km = sum(e["distance"] for e in second if not e["is_rest"])
+    km_trend = "上升" if s_km > f_km * 1.1 else ("下降" if s_km < f_km * 0.9 else "持平")
+    f_hrv = [e["hrv"] for e in first if e["hrv"]]
+    s_hrv = [e["hrv"] for e in second if e["hrv"]]
+    fa_hrv = sum(f_hrv) / max(len(f_hrv), 1)
+    sa_hrv = sum(s_hrv) / max(len(s_hrv), 1)
+    hrv_trend = "上升" if sa_hrv > fa_hrv + 2 else ("下降" if sa_hrv < fa_hrv - 2 else "持平")
+
+    lines = [f"## 近 {n} 天训练与恢复汇总"]
+    lines.append(f"- 训练 {tc} 天，总跑量 {total_km:.1f}km，总时长 {total_dur}min，总负荷 {total_load}")
+    lines.append(f"- 周均跑量 {total_km/max(n/7,1):.1f}km")
+    lines.append(f"- 平均睡眠评分 {sum(sleep_s)/max(len(sleep_s),1):.0f} | 平均恢复评分 {sum(rec_s)/max(len(rec_s),1):.0f}")
+    lines.append(f"- 平均 HRV {sum(hrv_s)/max(len(hrv_s),1):.0f}ms | 平均 RHR {sum(rhr_s)/max(len(rhr_s),1):.0f}bpm")
+    lines.append(f"- 跑量趋势（前后半段对比）: {km_trend} | HRV 趋势: {hrv_trend}")
+
+    # 近 10 天明细
+    recent = entries[:min(10, n)]
+    lines.append("\n### 每日明细")
+    header = "| 日期 | 训练 | 睡眠/h | HRV | RHR | 电量 | 恢复 |"
+    lines.append(header)
+    lines.append("|" + "-" * (len(header) - 2) + "|")
+    for e in recent:
+        t = "休息" if e["is_rest"] else f"{e['duration']}min {e['distance']:.1f}km L{e['load']:.0f}"
+        lines.append(
+            f"| {e['date']} | {t} | {e['sleep_h']:.1f}/{e['sleep_score'] or '—'} | "
+            f"{e['hrv'] or '—'} | {e['rhr'] or '—'} | {e['bb'] or '—'} | {e['recovery'] or '—'} |"
+        )
+
+    return "\n".join(lines)
 
 
-# ── Prompt 构建 ──────────────────────────────
+def _exec_get_recovery_pattern(memory_store: Any, days: int) -> str:
+    """执行 get_recovery_pattern 工具 — 个体恢复模式。"""
+    days = max(1, min(days, 90))
+    train_days, rest_days = [], []
+    for i in range(days - 1, -1, -1):
+        d = date.today() - timedelta(days=i)
+        mem = memory_store.get(str(d))
+        if not mem:
+            continue
+        fm = mem.front_matter
+        ya = fm.get("yesterday_activities", {})
+        mo = fm.get("this_morning", {})
+        rec = fm.get("recovery", {})
+        entry = {
+            "date": str(d), "hrv": mo.get("hrv_ms"), "rhr": mo.get("resting_hr"),
+            "bb": mo.get("body_battery_morning"), "recovery": rec.get("overall_score"),
+        }
+        if ya.get("is_rest_day"):
+            rest_days.append(entry)
+        else:
+            entry["load"] = ya.get("total_training_load", 0)
+            entry["duration"] = ya.get("total_duration_min", 0)
+            entry["distance"] = ya.get("total_distance_km", 0)
+            train_days.append(entry)
+
+    if not train_days:
+        return "暂无训练数据用于恢复分析"
+
+    lines = [f"## 个体恢复模式（近 {days} 天，{len(train_days)} 次训练）"]
+
+    # 高强度训练后的恢复
+    high_load = [t for t in train_days if t.get("load", 0) >= 100]
+    if high_load:
+        lines.append(f"\n### 高强度训练后恢复（{len(high_load)} 次 load≥100）")
+        for hld in high_load[-5:]:
+            hd = date.fromisoformat(hld["date"])
+            recovery_days = []
+            for offset in [1, 2, 3]:
+                nd = hd + timedelta(days=offset)
+                rd = next((r for r in rest_days if r["date"] == str(nd)), None)
+                if rd:
+                    recovery_days.append(
+                        f"D+{offset}: HRV={rd['hrv']}ms RHR={rd['rhr']} "
+                        f"BB={rd['bb']} 恢复={rd['recovery']}"
+                    )
+            lines.append(f"- {hld['date']} load={hld.get('load',0)}: " + " | ".join(recovery_days) if recovery_days else "无后续恢复数据")
+
+    # 趋势总结
+    if rest_days and train_days:
+        recent_rest = rest_days[-min(7, len(rest_days)):]
+        avg_hrv = sum(r["hrv"] for r in recent_rest if r["hrv"]) / max(sum(1 for r in recent_rest if r["hrv"]), 1)
+        avg_rhr = sum(r["rhr"] for r in recent_rest if r["rhr"]) / max(sum(1 for r in recent_rest if r["rhr"]), 1)
+        lines.append(f"\n### 近期恢复基线")
+        lines.append(f"- 休息日平均 HRV: {avg_hrv:.0f}ms, RHR: {avg_rhr:.0f}bpm")
+        # 训练日 vs 休息日对比
+        recent_train = train_days[-min(7, len(train_days)):]
+        t_hrv = [t["hrv"] for t in recent_train if t["hrv"]]
+        if t_hrv:
+            lines.append(f"- 训练次日 HRV 平均: {sum(t_hrv)/len(t_hrv):.0f}ms (vs 休息日 {avg_hrv:.0f}ms)")
+
+    return "\n".join(lines)
 
 
-def _build_coach_prompt(
-    fm: dict[str, Any],
-    target_date: date,
-    history_context: str,
-    athlete_context: str = "",
-) -> str:
-    """根据日报数据 + 历史上下文 + 运动员档案构建 AI 教练 prompt。"""
+def _exec_get_training_cycle(memory_store: Any) -> str:
+    """执行 get_training_cycle 工具。"""
+    try:
+        goals = memory_store.list_by_type("goal", status="active")
+        if not goals:
+            return "暂无活跃训练目标，无法分析训练周期"
+        today = date.today()
+        lines = ["## 训练周期分析"]
+        for g in goals[:3]:
+            fm = g.front_matter or {}
+            target_str = fm.get("target_date", "")
+            if not target_str:
+                continue
+            try:
+                goal_date = date.fromisoformat(str(target_str)[:10])
+            except ValueError:
+                continue
+            weeks = max(0, (goal_date - today).days / 7)
+            if weeks > 12:
+                phase = "基础期 — 以有氧耐力积累为主"
+            elif weeks > 8:
+                phase = "强化期 — 加入节奏跑和专项耐力"
+            elif weeks > 4:
+                phase = "高峰期 — 比赛配速训练为核心"
+            elif weeks > 1:
+                phase = "赛前调整/减量期 — 降低跑量保持强度"
+            else:
+                phase = "比赛周 — 轻松跑+充分恢复"
+            title = fm.get("title") or g.id
+            m = fm.get("metrics", {})
+            dist = next((k.replace("target_", "") for k in m if k.startswith("target_")), "?")
+            lines.append(f"- {title}: {dist} 目标{m.get('target_'+dist, '—')}，距比赛 {weeks:.0f} 周 → **{phase}**")
+        return "\n".join(lines)
+    except Exception:
+        return "无法获取训练周期"
+
+
+def _exec_get_daily_report(memory_store: Any, date_str: str) -> str:
+    """执行 get_daily_report 工具。"""
+    mem = memory_store.get(date_str)
+    if not mem:
+        return f"未找到 {date_str} 的日报数据"
+    fm = mem.front_matter
     ya = fm.get("yesterday_activities", {})
-    sleep = fm.get("last_night_sleep", {})
-    morning = fm.get("this_morning", {})
-    load = fm.get("training_load", {})
-    recovery = fm.get("recovery", {})
-    anomalies = fm.get("anomalies", {})
+    sl = fm.get("last_night_sleep", {})
+    mo = fm.get("this_morning", {})
+    ld = fm.get("training_load", {})
+    rc = fm.get("recovery", {})
 
-    # 睡眠显示（0 可能表示数据缺失）
-    sleep_hours = sleep.get("total_hours", 0) or 0
-    sleep_display = f"{sleep_hours}h" if sleep_hours > 0 else "未同步"
-    sleep_quality_display = sleep.get("quality", "unknown") if sleep_hours > 0 else "无数据"
-
-    # 活动描述 + 细节分析
+    lines = [f"## {date_str} 日报"]
     if ya.get("is_rest_day"):
-        activity_desc = "休息日"
-        steps = ya.get("daily_steps", 0)
-        dist = ya.get("daily_distance_km", 0)
-        if steps > 5000:
-            activity_desc += f"，步数 {steps}"
-        if dist > 1:
-            activity_desc += f"，移动 {dist:.1f}km"
-        detail_section = ""
+        lines.append(f"训练: 休息日（步数 {ya.get('daily_steps', 0)}，活动距离 {ya.get('daily_distance_km', 0):.1f}km）")
     else:
-        sessions = ya.get("sessions", [])
-        parts = []
-        for s in sessions:
-            dist = s.get("distance_km") or 0
-            parts.append(
-                f"{s['type']} {s['name']}: {s['duration_min']}min"
-                + (f" {dist:.1f}km" if dist else "")
-                + f" HR{s.get('avg_hr', '?')} load{s.get('training_load', 0)}"
-            )
-        activity_desc = "；".join(parts)
-        activity_desc += (
-            f" | 合计 {ya.get('total_duration_min', 0)}min "
-            f"{ya.get('total_distance_km', 0):.1f}km "
-            f"负荷 {ya.get('total_training_load', 0)}"
-        )
-        # 嵌入详细分段数据
-        session_analyses = fm.get("session_analyses", [])
-        detail_section = "\n\n## 训练细节\n" + "\n".join(session_analyses) if session_analyses else ""
-
-    # 异常
-    anomaly_text = ""
-    anomaly_items = anomalies.get("items", [])
-    if anomaly_items:
-        anomaly_text = "⚠️ 异常: " + "；".join(
-            item.get("message", "") for item in anomaly_items
-        )
-
-    prompt = f"""你是一位专业的跑步教练 AI，名叫 Rundown Coach。请从以下维度综合分析，给出专业洞察。
-
-{athlete_context}
-
-## 今日数据 [{target_date}]
-
-**训练**: {activity_desc}
-**睡眠**: {sleep_display}，{sleep_quality_display}，评分 {sleep.get('sleep_score', '—')}
-**注意**: 睡眠显示"未同步"表示数据缺失，不代表没睡觉，请勿据此判断恢复状态。
-**晨起**: RHR {morning.get('resting_hr', '?')} | HRV {morning.get('hrv_ms', '?')}ms ({morning.get('hrv_status', '?')}) | 电量 {morning.get('body_battery_morning', '?')} | 准备 {morning.get('training_readiness_score', '?')}
-**负荷**: ACWR {load.get('acwr', '?')} ({load.get('acwr_status', '?')}) | 恢复 {recovery.get('overall_score', '?')}/100 ({recovery.get('level', '?')})
-{anomaly_text}
-{detail_section}
-{history_context}
-
-## 你的任务 — 必须覆盖以下 5 个维度
-
-1. **训练周期**: 根据「训练周期分析」判断当前训练是否与所处阶段（基础期/强化期/高峰期/减量期）匹配。例如基础期应以有氧为主，不应频繁进行阈值以上的强度训练。
-2. **当下水平**: 若「运动员档案」提供了 PB 数据，据此评估当前训练配速/强度是否在正确的训练区间内。若无档案数据，则基于近期训练表现客观评估，不要编造 PB。
-3. **恢复情况**: 结合今日睡眠时长/质量、HRV、静息心率、身体电量、恢复评分，判断身体是否已从近期训练中恢复。
-4. **个体恢复能力**: 参考「个体恢复模式」，分析该运动员的训练后恢复特征——高强度后 HRV 和 RHR 的恢复速度、需要几天才能完全恢复。
-5. **训练建议**: 结合以上 4 个维度的结论，给出 1-2 条针对性的、可执行的建议。如果某个维度数据不足，明确指出。
-
-用 JSON 回复：
-
-{{"conclusion": "核心结论（1-2句，综合5个维度）",
- "observations": ["关键观察3-5条（每条必须引用具体数据，关联至少2个维度，例如：'今天15km配速4:58/km处于基础期有氧区间，但睡眠仅6h且HRV从64降至59ms，恢复不足可能影响明天训练质量'））"],
- "recommendations": ["训练建议1-2条（必须结合训练周期阶段、当前水平、个体恢复特征）"],
- "warnings": ["需要警惕的信号"]}}
-
-要求：中文，200-300字。像一个了解你全部训练历史和个人特征的教练在说话。"""
-
-    return prompt
+        lines.append(f"训练: {ya.get('total_duration_min', 0)}min {ya.get('total_distance_km', 0):.1f}km 负荷{ya.get('total_training_load', 0)}")
+        for s in ya.get("sessions", []):
+            dkm = f" {s.get('distance_km', 0):.1f}km" if s.get("distance_km") else ""
+            lines.append(f"  - {s.get('type')} {s.get('name')}: {s.get('duration_min')}min{dkm} HR{s.get('avg_hr', '?')} load{s.get('training_load', 0)}")
+    lines.append(f"睡眠: {sl.get('total_hours', 0)}h 评分{sl.get('sleep_score', '—')} 质量{sl.get('quality', '—')}")
+    lines.append(f"晨起: RHR{mo.get('resting_hr', '—')} HRV{mo.get('hrv_ms', '—')}ms({mo.get('hrv_status', '—')}) 电量{mo.get('body_battery_morning', '—')} 准备{mo.get('training_readiness_score', '—')}")
+    lines.append(f"负荷: ACWR{ld.get('acwr', '—')}({ld.get('acwr_status', '—')}) 恢复{rc.get('overall_score', '—')}/100({rc.get('level', '—')})")
+    anomalies = fm.get("anomalies", {}).get("items", [])
+    if anomalies:
+        lines.append("异常: " + "；".join(a.get("message", "") for a in anomalies))
+    return "\n".join(lines)
 
 
-# ── API 调用 ─────────────────────────────────
+def _exec_get_today_data(memory_store: Any) -> str:
+    """执行 get_today_data 工具。"""
+    today = str(date.today())
+    return _exec_get_daily_report(memory_store, today)
+
+
+def _exec_get_training_plan(memory_store: Any) -> str:
+    """执行 get_training_plan 工具 — 读取当前运动大纲。"""
+    mem = memory_store.get("active-plan")
+    if not mem:
+        return "暂无运动大纲。请基于运动员目标、30天数据和恢复模式，调用 save_training_plan 生成一份科学的大纲。"
+    lines = ["## 当前运动大纲\n"]
+    if mem.front_matter:
+        fm = mem.front_matter
+        for k, label in [
+            ("goal_id", "目标"), ("target_race", "目标比赛"), ("target_time", "目标成绩"),
+            ("target_date", "目标日期"), ("weeks_to_race", "剩余周数"),
+            ("current_phase", "当前阶段"), ("weekly_mileage_target", "周跑量目标(km)"),
+            ("phase_start_date", "阶段开始"), ("phase_end_date", "阶段结束"),
+            ("updated", "大纲更新日期"),
+        ]:
+            if fm.get(k):
+                lines.append(f"- {label}: {fm[k]}")
+        weekly = fm.get("weekly_structure", {})
+        if weekly:
+            lines.append("- 每周结构:")
+            for day, workout in weekly.items():
+                lines.append(f"  - {day}: {workout}")
+        key_workouts = fm.get("key_workouts", [])
+        if key_workouts:
+            lines.append("- 关键课次:")
+            for kw in key_workouts:
+                if isinstance(kw, dict):
+                    lines.append(f"  - {kw.get('type', '')}: {kw.get('description', '')}")
+        adjustments = fm.get("adjustments", [])
+        if adjustments:
+            lines.append("- 近期调整:")
+            for adj in adjustments[-3:]:
+                lines.append(f"  - {adj}")
+    if mem.body:
+        lines.append("\n" + mem.body.strip()[:1500])
+    return "\n".join(lines)
+
+
+def _exec_save_training_plan(memory_store: Any, content: str) -> str:
+    """执行 save_training_plan 工具 — 保存/更新运动大纲。"""
+    from .memory import build_memory_file
+
+    # 解析 content 中的结构化信息
+    today_str = str(date.today())
+    fm: dict[str, Any] = {
+        "type": "training_plan",
+        "status": "active",
+        "updated": today_str,
+    }
+
+    # 从 content 中提取关键字段
+    for line in content.split("\n"):
+        line = line.strip()
+        if line.startswith("- 目标比赛:") or line.startswith("- 目标:"):
+            fm["target_race"] = line.split(":", 1)[1].strip()
+        elif line.startswith("- 目标成绩:"):
+            fm["target_time"] = line.split(":", 1)[1].strip()
+        elif line.startswith("- 目标日期:"):
+            fm["target_date"] = line.split(":", 1)[1].strip()
+        elif line.startswith("- 剩余周数:"):
+            try:
+                fm["weeks_to_race"] = int(line.split(":", 1)[1].strip().replace("周", ""))
+            except ValueError:
+                fm["weeks_to_race"] = line.split(":", 1)[1].strip()
+        elif line.startswith("- 当前阶段:"):
+            fm["current_phase"] = line.split(":", 1)[1].strip()
+        elif line.startswith("- 周跑量目标"):
+            try:
+                fm["weekly_mileage_target"] = float(line.split(":", 1)[1].strip().replace("km", ""))
+            except ValueError:
+                pass
+
+    # 保存
+    plan_path = None
+    if hasattr(memory_store, '_reader') and hasattr(memory_store._reader, 'base_dir'):
+        plan_path = Path(memory_store._reader.base_dir) / "plans" / "active-plan.md"
+    if plan_path is None:
+        return "错误：无法确定大纲存储路径"
+
+    plan_path.parent.mkdir(parents=True, exist_ok=True)
+    plan_path.write_text(build_memory_file(fm, content), encoding="utf-8")
+    return "大纲已保存"
+
+
+# Tool dispatcher
+TOOL_EXECUTORS = {
+    "get_athlete_profile": lambda ms, args: _exec_get_athlete_profile(ms),
+    "get_training_goals": lambda ms, args: _exec_get_training_goals(ms),
+    "get_training_history": lambda ms, args: _exec_get_training_history(ms, args.get("days", 30)),
+    "get_recovery_pattern": lambda ms, args: _exec_get_recovery_pattern(ms, args.get("days", 30)),
+    "get_training_cycle": lambda ms, args: _exec_get_training_cycle(ms),
+    "get_daily_report": lambda ms, args: _exec_get_daily_report(ms, args.get("date", str(date.today()))),
+    "get_today_data": lambda ms, args: _exec_get_today_data(ms),
+    "get_training_plan": lambda ms, args: _exec_get_training_plan(ms),
+    "save_training_plan": lambda ms, args: _exec_save_training_plan(ms, args.get("content", "")),
+}
+
+
+# ═══════════════════════════════════════════════════════════════
+# API Call
+# ═══════════════════════════════════════════════════════════════
 
 
 def get_coach_insight(
@@ -457,17 +532,20 @@ def get_coach_insight(
     target_date: date | None = None,
     memory_store: Any = None,
 ) -> dict[str, Any] | None:
-    """调用 DeepSeek API 获取 AI 教练洞察。
+    """调用 DeepSeek API（Tool Use 模式）获取 AI 教练洞察。
+
+    AI 自行决定需要调用哪些工具来收集数据，然后生成洞察。
 
     Args:
-        fm: 日报 Front Matter 数据。
+        fm: 日报 Front Matter（用于提供基础上下文，AI 也可通过工具获取更多）。
         target_date: 报告日期。
-        memory_store: MemoryStore 实例（用于读取历史数据）。
+        memory_store: MemoryStore 实例（供工具查询）。
 
     Returns:
         {conclusion, observations, recommendations, warnings}
-        失败时返回 None（让调用方 fallback 到规则引擎）。
     """
+    import httpx
+
     api_key = os.getenv("DEEPSEEK_API_KEY", "")
     if not api_key:
         logger.info("未设置 DEEPSEEK_API_KEY，跳过 AI 洞察")
@@ -476,75 +554,123 @@ def get_coach_insight(
     if target_date is None:
         target_date = date.today()
 
-    # 收集上下文
-    history_context = ""
-    athlete_context = ""
-    if memory_store:
-        try:
-            history_context = _collect_history(memory_store, target_date)
-        except Exception as exc:
-            logger.warning("收集历史上下文失败: %s", exc)
-        try:
-            profile = _collect_profile(memory_store)
-            preferences = _collect_preferences(memory_store)
-            goals_text = _collect_goals(memory_store)
-            cycle = _collect_training_cycle(memory_store, target_date)
-            recovery_pattern = _collect_recovery_pattern(memory_store, target_date)
-            parts = [p for p in [profile, preferences, goals_text, cycle, recovery_pattern] if p]
-            if parts:
-                athlete_context = "\n\n".join(parts)
-        except Exception as exc:
-            logger.warning("收集运动员档案失败: %s", exc)
+    system_prompt = load_coach_prompt()
+    today_str = str(target_date)
 
-    prompt = _build_coach_prompt(fm, target_date, history_context, athlete_context)
+    # 初始用户消息 — 给 AI 关键线索
+    ya = fm.get("yesterday_activities", {})
+    sl = fm.get("last_night_sleep", {})
+    mo = fm.get("this_morning", {})
+    ld = fm.get("training_load", {})
+
+    if ya.get("is_rest_day"):
+        train_hint = "休息日"
+    else:
+        train_hint = f"{ya.get('total_duration_min', 0)}min {ya.get('total_distance_km', 0):.1f}km"
+    user_msg = (
+        f"请分析 {today_str} 的训练日报并给出教练洞察。\n\n"
+        f"今日线索：{train_hint} | "
+        f"睡眠 {sl.get('total_hours', '?')}h/{sl.get('sleep_score', '?')}分 | "
+        f"HRV {mo.get('hrv_ms', '?')}ms RHR {mo.get('resting_hr', '?')} | "
+        f"ACWR {ld.get('acwr', '?')}({ld.get('acwr_status', '?')})\n\n"
+        f"请先用工具获取你需要的上下文数据，再用 JSON 格式输出分析结果。"
+    )
+
+    messages: list[dict] = [
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": user_msg},
+    ]
 
     try:
-        import httpx
+        with httpx.Client(timeout=90.0) as client:
+            # Tool-use loop: allow up to 5 rounds of tool calls
+            for _round in range(5):
+                resp = client.post(
+                    DEEPSEEK_BASE_URL,
+                    headers={
+                        "Authorization": f"Bearer {api_key}",
+                        "Content-Type": "application/json",
+                    },
+                    json={
+                        "model": DEEPSEEK_MODEL,
+                        "messages": messages,
+                        "tools": TOOLS,
+                        "temperature": 0.7,
+                        "max_tokens": 2000,
+                    },
+                )
 
-        logger.info("🤖 调用 DeepSeek (model=%s, context=%d chars)...",
-                    DEEPSEEK_MODEL, len(prompt))
+                if resp.status_code != 200:
+                    logger.error("DeepSeek API 返回 %d: %s", resp.status_code, resp.text[:300])
+                    return None
 
-        with httpx.Client(timeout=30.0) as client:
-            response = client.post(
-                DEEPSEEK_BASE_URL,
-                headers={
-                    "Authorization": f"Bearer {api_key}",
-                    "Content-Type": "application/json",
-                },
-                json={
+                data = resp.json()
+                choice = data["choices"][0]
+                msg = choice["message"]
+
+                # Check for tool calls
+                tool_calls = msg.get("tool_calls", [])
+                if tool_calls:
+                    # Add assistant message with tool calls
+                    messages.append({"role": "assistant", "content": msg.get("content") or "", "tool_calls": tool_calls})
+
+                    for tc in tool_calls:
+                        func_name = tc["function"]["name"]
+                        try:
+                            func_args = json.loads(tc["function"]["arguments"])
+                        except json.JSONDecodeError:
+                            func_args = {}
+
+                        executor = TOOL_EXECUTORS.get(func_name)
+                        if executor and memory_store:
+                            try:
+                                result = executor(memory_store, func_args)
+                            except Exception as exc:
+                                result = f"工具执行错误: {exc}"
+                        else:
+                            result = f"未知工具: {func_name}"
+
+                        logger.info("🤖 Tool: %s(%s) → %d chars", func_name, func_args, len(result))
+                        messages.append({
+                            "role": "tool",
+                            "tool_call_id": tc["id"],
+                            "content": result,
+                        })
+                    continue  # Next round
+
+                # No tool calls — final response
+                content = msg.get("content", "")
+                if not content:
+                    return None
+
+                try:
+                    result = json.loads(content)
+                except json.JSONDecodeError:
+                    # Try to extract JSON from markdown block
+                    if "```json" in content:
+                        content = content.split("```json")[1].split("```")[0]
+                        try:
+                            result = json.loads(content)
+                        except json.JSONDecodeError:
+                            return None
+                    else:
+                        return None
+
+                logger.info("✅ DeepSeek AI 洞察已生成 (tool-use, %d rounds)", _round + 1)
+
+                return {
+                    "observations": result.get("observations", []),
+                    "recommendations": result.get("recommendations", []),
+                    "warnings": result.get("warnings", []),
+                    "conclusion": result.get("conclusion", ""),
+                    "plan_execution": result.get("plan_execution", {}),
+                    "plan_adjusted": result.get("plan_adjusted", False),
+                    "confidence": "ai",
                     "model": DEEPSEEK_MODEL,
-                    "messages": [
-                        {
-                            "role": "system",
-                            "content": "你是专业的跑步教练 AI，名叫 Rundown Coach。你会参考运动员的竞技档案（PB）、训练目标和近期训练数据，给出个性化、有深度的中文 JSON 洞察。",
-                        },
-                        {"role": "user", "content": prompt},
-                    ],
-                    "response_format": {"type": "json_object"},
-                    "temperature": 0.7,
-                    "max_tokens": 1200,
-                },
-            )
+                }
 
-        if response.status_code != 200:
-            logger.error("DeepSeek API 返回 %d: %s",
-                         response.status_code, response.text[:200])
+            logger.warning("AI 教练达到 tool-use 最大轮次，未返回最终结果")
             return None
-
-        data = response.json()
-        content = data["choices"][0]["message"]["content"]
-        result = json.loads(content)
-
-        logger.info("✅ DeepSeek AI 洞察已生成")
-
-        return {
-            "observations": result.get("observations", []),
-            "recommendations": result.get("recommendations", []),
-            "warnings": result.get("warnings", []),
-            "conclusion": result.get("conclusion", ""),
-            "confidence": "ai",
-            "model": DEEPSEEK_MODEL,
-        }
 
     except ImportError:
         logger.warning("httpx 不可用，跳过 AI 洞察")
@@ -554,7 +680,9 @@ def get_coach_insight(
         return None
 
 
-# ── Web Chat 流式对话 ──────────────────────────
+# ═══════════════════════════════════════════════════════════════
+# Web Chat 流式对话
+# ═══════════════════════════════════════════════════════════════
 
 
 async def chat_stream(
@@ -584,7 +712,7 @@ async def chat_stream(
     model_name = model or DEEPSEEK_MODEL
 
     system_prompt = (
-        "你是专业的跑步教练 AI，名叫 Rundown Coach。"
+        "你是专业的跑步教练 AI，名叫 neurun Coach。"
         "你会参考运动员的竞技档案（PB）、训练目标和近期训练数据，"
         "给出个性化、有深度的中文建议。"
         "回答简洁有力，用具体数据说话，不泛泛而谈。"

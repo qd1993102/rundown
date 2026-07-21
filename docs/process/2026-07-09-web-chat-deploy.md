@@ -5,7 +5,7 @@
 
 ## 背景与动机
 
-将 Rundown 从纯 CLI + MCP Server (stdio) 扩展为可部署到 VPS/SAE 的 Web 服务，
+将 neurun 从纯 CLI + MCP Server (stdio) 扩展为可部署到 VPS/SAE 的 Web 服务，
 面向非 AI 从业者的普通用户。用户打开浏览器即可绑定 Garmin、与 AI 教练对话。
 支持多用户，数据按 API Key 完全隔离。
 
@@ -20,7 +20,7 @@
 
 ## 实现步骤
 
-1. `config.py` — 新增 non_interactive、data_dir 字段；token_dir 纳入 RUNDOWN_HOME 解析；新增 UserConfig 类
+1. `config.py` — 新增 non_interactive、data_dir 字段；token_dir 纳入 NEURUN_HOME 解析；新增 UserConfig 类
 2. `auth.py` — MFA 两步拆分（start_login / complete_mfa），支持 Web 模式
 3. `storage.py` — SQLite backup_to / restore_from
 4. `providers/garmin.py` — non_interactive 参数传递

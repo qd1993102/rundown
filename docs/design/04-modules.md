@@ -21,16 +21,20 @@
 | `GARMIN_DB_PATH` | ❌ | `./data/garmin_data.db` | SQLite 数据库路径 |
 | `GARMIN_SYNC_DAYS` | ❌ | `30` | 默认同步最近 N 天的数据 |
 | `GARMIN_LOG_LEVEL` | ❌ | `INFO` | 日志级别 |
-| `RUNDOWN_MEMORY_DIR` | ❌ | `./memory` | 记忆存储根目录（目标、档案、日报等） |
-| `RUNDOWN_HOME` | ❌ | (当前目录) | 数据工作目录，设后所有相对路径基于此解析 |
+| `NEURUN_MEMORY_DIR` | ❌ | `./memory` | 记忆存储根目录（目标、档案、日报等） |
+| `NEURUN_HOME` | ❌ | (当前目录) | 数据工作目录，设后所有相对路径基于此解析 |
+| `NEURUN_DATA_DIR` | Web | `./data` | Web 多用户持久化目录 |
+| `NEURUN_INVITE_CODES_FILE` | Web | `<data_dir>/invite-codes.json` | 邀请码 JSON 路径 |
+| `NEURUN_ENABLE_ADMIN_TOOLS` | 本地 MCP | `false` | 仅 stdio/localhost 启用邀请码管理员 tools；公网 Web 禁止 |
 
 **设计要点**:
 - 使用 `python-dotenv` 支持 `.env` 文件（方便本地开发）
-- 环境变量优先级: 系统环境变量 > 项目 .env > ~/.rundown/.env > 默认值
-- 支持 `RUNDOWN_HOME` 环境变量（须为实际环境变量，不可写在 .env 中），设后 .env 及所有相对路径（db_path、memory_dir）均基于此目录解析
-- 支持 `RUNDOWN_MEMORY_DIR` 覆盖记忆存储目录，支持多目录共享同一份记忆
+- 环境变量优先级: 系统环境变量 > 项目 .env > ~/.neurun/.env > 默认值
+- 支持 `NEURUN_HOME` 环境变量（须为实际环境变量，不可写在 .env 中），设后 .env 及所有相对路径（db_path、memory_dir）均基于此目录解析
+- 支持 `NEURUN_MEMORY_DIR` 覆盖记忆存储目录，支持多目录共享同一份记忆
 - 密码类敏感信息绝不打印到日志
 - 启动时校验必填变量，缺失则明确报错退出
+- Web 邀请码默认随 `data_dir` 持久化；显式相对路径在 `NEURUN_HOME` 模式下基于该目录解析
 
 ---
 
@@ -150,6 +154,9 @@ garmy 本身提供了 `LocalDB` 模块（`SyncManager` + `HealthDB`），已实�
 - `SyncManager` 已处理去重、增量同步、失败重试
 - 自建存储层的收益不足以覆盖开发成本
 - 自定义查询直接在 SQLite 上写 SQL 即可
+- 初始化 `SyncManager` 时通过 `_ensure_progress_reporter_compat()` 补齐旧版
+  `ProgressReporter.warning()`；这样活动分页失败时保留原始警告，不会被兼容性
+  `AttributeError` 覆盖
 
 #### 4.4.2 garmy LocalDB 表结构（摘要）
 
@@ -221,3 +228,45 @@ progress:
   avg_weekly_km: 52
 tags: [5k, speed, spring-season]
 ---
+```
+
+---
+
+### 4.6 Web 应用账号与邀请码 (`users.py`, `invitations.py`, `web.py`)
+
+**职责拆分**：
+
+- `InvitationStore`：读取管理员维护的 JSON，校验和核销单次邀请码；
+- `UserManager`：创建昵称、规范化邮箱、`scrypt` 密码哈希与随机 `rd_` API Key，提供邮箱密码校验；
+- `web.py`：注册 `/login`、`/register` 及对应 JSON API，并在数据源绑定前执行应用会话门禁。
+
+账号记录包含 `nickname`、`email`、`password_hash`。其中 `email` 是 neurun 应用登录邮箱，
+Platform Account 的账号字段单独存储，两者不得互相覆盖。
+第一版 Login Email 只做格式和唯一性校验，创建后不可修改；昵称长度为 2–32 个字符，允许重复并可由用户后续编辑。
+第一版不提供账号自助删除；退出登录只撤销当前 Session，不删除 neurun Account 或任何数据。
+第一版不提供 Recovery Code、密码找回/修改、账号换绑、旧账号迁移和多设备会话管理。
+
+密码格式为 `scrypt$n$r$p$salt$digest`，每次注册生成 16 字节随机盐，比较使用
+`hmac.compare_digest`。服务端不保存注册密码明文，也不把密码或邀请码写入日志。
+密码长度保持 8–128 个字符，不要求大小写、数字或特殊符号组合。
+
+邀请码 JSON schema：
+
+```json
+{
+  "codes": [
+    {"id": "inv_xxx", "code": "完整随机邀请码", "enabled": true, "used_by": null, "used_at": null}
+  ]
+}
+```
+
+邀请码由系统使用加密安全随机数生成，JSON 保留完整邀请码，便于管理员之后重新查看和分发。
+因此文件必须视为敏感凭证并限制为服务账号和管理员可读；文件泄露意味着所有未使用邀请码同时泄露。
+起步阶段不设置自动过期时间，邀请码在成功使用或管理员停用前持续有效。
+
+管理员 CLI 提供 `invite create/list/show/revoke`，均支持 `--output json` 且无交互式确认。
+`list` 默认掩码，只有服务器本地 `show --reveal` 返回完整邀请码。对应 MCP tools 默认不注册，
+显式开启后也只允许 stdio/localhost，且不提供完整邀请码读取；公网 `serve` 模式强制禁用。
+
+验证接口只检查当前可用性，最终注册接口必须再次检查并核销。Web 服务使用单进程锁串行化核销；
+账号写入后若核销失败则回滚本次新账号，绝不回退为开放注册。

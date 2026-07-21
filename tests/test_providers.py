@@ -1,6 +1,10 @@
 """测试 providers — 数据类和数据源。"""
 
+import json
+import stat
+import time
 from datetime import date
+from unittest import mock
 
 from src.providers.base import ActivityData, DailyHealth, DataProvider
 
@@ -70,7 +74,6 @@ class TestProviderRegistry:
             pass  # Expected without real creds
 
     def test_coros_provider_creation(self):
-        from unittest import mock
         from src.providers import get_provider
 
         class FakeConfig:
@@ -83,6 +86,86 @@ class TestProviderRegistry:
         # Without real credentials, fetch returns empty list
         result = p.activities.fetch_activities(date.today(), date.today())
         assert result == []
+
+    def test_coros_auth_persists_and_restores_per_user_token(self, tmp_path):
+        from coros_mcp.models import StoredAuth
+        from src.providers.coros import CorosAuth
+
+        stored = StoredAuth(
+            access_token="secret-access-token",
+            user_id="12345",
+            region="eu",
+            timestamp=int(time.time() * 1000),
+        )
+        token_dir = tmp_path / "user-a" / "tokens"
+        auth = CorosAuth(str(token_dir))
+
+        async def fake_login(*args, **kwargs):
+            return stored
+
+        with mock.patch("coros_mcp.coros_api.login", side_effect=fake_login):
+            assert auth.login("runner@example.com", "password") is True
+
+        token_path = token_dir / "coros-auth.json"
+        assert json.loads(token_path.read_text(encoding="utf-8"))["user_id"] == "12345"
+        assert stat.S_IMODE(token_dir.stat().st_mode) == 0o700
+        assert stat.S_IMODE(token_path.stat().st_mode) == 0o600
+
+        restored = CorosAuth(str(token_dir))
+        assert restored.is_authenticated() is True
+        assert restored.get_user_id() == 12345
+
+    def test_coros_auth_migrates_legacy_global_token(self, tmp_path):
+        from coros_mcp.models import StoredAuth
+        from src.providers.coros import CorosAuth
+
+        stored = StoredAuth(
+            access_token="legacy-access-token",
+            user_id="67890",
+            region="eu",
+            timestamp=int(time.time() * 1000),
+        )
+        auth = CorosAuth(str(tmp_path / "tokens"))
+
+        with mock.patch("coros_mcp.coros_api.get_stored_auth", return_value=stored):
+            assert auth.migrate_legacy_token() is True
+
+        assert auth.get_user_id() == 67890
+        assert (tmp_path / "tokens" / "coros-auth.json").exists()
+
+    def test_coros_activity_prefers_workout_time_without_pauses(self):
+        from src.providers.coros import _parse_activity_item
+
+        activity = _parse_activity_item({
+            "labelId": "activity-1",
+            "name": "Paused Run",
+            "sportType": 100,
+            "startTime": 1784470800,
+            "endTime": 1784475000,
+            "totalTime": 4200,
+            "workoutTime": 3600,
+            "distance": 10000,
+            "avgHr": 145,
+        })
+
+        assert activity.duration_seconds == 3600
+        assert activity.extra["total_time_seconds"] == 4200
+        assert activity.extra["workout_time_seconds"] == 3600
+        assert activity.extra["paused_seconds"] == 600
+
+    def test_coros_activity_falls_back_to_total_time(self):
+        from src.providers.coros import _parse_activity_item
+
+        activity = _parse_activity_item({
+            "labelId": "activity-2",
+            "sportType": 100,
+            "startTime": 1784470800,
+            "totalTime": 1800,
+            "distance": 5000,
+        })
+
+        assert activity.duration_seconds == 1800
+        assert activity.extra["paused_seconds"] == 0
 
     def test_huawei_provider_creation(self, tmp_path):
         from src.providers import get_provider

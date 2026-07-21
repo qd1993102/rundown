@@ -26,7 +26,7 @@ def huawei_user_key(group_pals_token: str) -> str:
 
 def _default_huawei_token_dir() -> str:
     key = huawei_user_key(os.getenv("GROUP_PALS_TOKEN", ""))
-    return str(Path.home() / ".rundown" / "users" / key / "huawei-tokens")
+    return str(Path.home() / ".neurun" / "users" / key / "huawei-tokens")
 
 
 class ConfigError(Exception):
@@ -47,19 +47,24 @@ def _mask_email(email: str) -> str:
 class Config:
     """应用配置，所有值从环境变量读取。"""
 
-    # ── 必填（RUNDOWN_ACCOUNT 为主，兼容旧名 RUNDOWN_EMAIL / GARMIN_EMAIL）──
+    # ── 必填（NEURUN_ACCOUNT 为主，兼容旧名 RUNDOWN_*/GARMIN_*）──
     email: str = field(
-        default_factory=lambda: (os.getenv("RUNDOWN_ACCOUNT") or
+        default_factory=lambda: (os.getenv("NEURUN_ACCOUNT") or
+                                 os.getenv("RUNDOWN_ACCOUNT") or
+                                 os.getenv("NEURUN_EMAIL") or
                                  os.getenv("RUNDOWN_EMAIL") or
                                  os.getenv("GARMIN_EMAIL", ""))
     )
     password: str = field(
-        default_factory=lambda: os.getenv("RUNDOWN_PASSWORD") or os.getenv("GARMIN_PASSWORD", "")
+        default_factory=lambda: (os.getenv("NEURUN_PASSWORD") or
+                                os.getenv("RUNDOWN_PASSWORD") or
+                                os.getenv("GARMIN_PASSWORD", ""))
     )
 
     # ── 数据源 ────────────────────────────────
     provider_type: str = field(
-        default_factory=lambda: os.getenv("RUNDOWN_PROVIDER", "garmin")
+        default_factory=lambda: os.getenv("NEURUN_PROVIDER") or
+                               os.getenv("RUNDOWN_PROVIDER", "garmin")
     )
     # Garmin 专用
     domain: str = field(
@@ -78,35 +83,46 @@ class Config:
 
     # ── 存储 ──────────────────────────────────
     db_path: str = field(
-        default_factory=lambda: os.getenv(
-            "RUNDOWN_DB_PATH") or os.getenv("GARMIN_DB_PATH",
-            str(Path.home() / ".rundown" / "data.db"),
+        default_factory=lambda: os.getenv("NEURUN_DB_PATH") or
+                               os.getenv("RUNDOWN_DB_PATH") or
+                               os.getenv("GARMIN_DB_PATH",
+            str(Path.home() / ".neurun" / "data.db"),
         )
     )
     sync_days: int = field(
-        default_factory=lambda: int(os.getenv("RUNDOWN_SYNC_DAYS") or os.getenv("GARMIN_SYNC_DAYS", "30"))
+        default_factory=lambda: int(os.getenv("NEURUN_SYNC_DAYS") or
+                                   os.getenv("RUNDOWN_SYNC_DAYS") or
+                                   os.getenv("GARMIN_SYNC_DAYS", "30"))
     )
     log_level: str = field(
-        default_factory=lambda: os.getenv("RUNDOWN_LOG_LEVEL") or os.getenv("GARMIN_LOG_LEVEL", "INFO")
+        default_factory=lambda: os.getenv("NEURUN_LOG_LEVEL") or
+                               os.getenv("RUNDOWN_LOG_LEVEL") or
+                               os.getenv("GARMIN_LOG_LEVEL", "INFO")
     )
 
     # ── 内部路径 ──────────────────────────────
     memory_dir: str = field(
-        default_factory=lambda: os.getenv("RUNDOWN_MEMORY_DIR", "./memory")
+        default_factory=lambda: os.getenv("NEURUN_MEMORY_DIR") or
+                               os.getenv("RUNDOWN_MEMORY_DIR", "./memory")
     )
 
     # ── 工作目录（可选，设后所有相对路径基于此解析）──
     rundown_home: str = field(
-        default_factory=lambda: os.getenv("RUNDOWN_HOME", "")
+        default_factory=lambda: os.getenv("NEURUN_HOME", "")
     )
 
     # ── Web 服务 ────────────────────────────────
     data_dir: str = field(
-        default_factory=lambda: os.getenv("RUNDOWN_DATA_DIR", "./data")
+        default_factory=lambda: os.getenv("NEURUN_DATA_DIR") or
+                               os.getenv("RUNDOWN_DATA_DIR", "./data")
+    )
+    invite_codes_file: str = field(
+        default_factory=lambda: os.getenv("NEURUN_INVITE_CODES_FILE", "")
     )
     non_interactive: bool = field(
-        default_factory=lambda: os.getenv(
-            "RUNDOWN_NON_INTERACTIVE", ""
+        default_factory=lambda: (
+            os.getenv("NEURUN_NON_INTERACTIVE") or
+            os.getenv("RUNDOWN_NON_INTERACTIVE", "")
         ).lower() in ("1", "true", "yes")
     )
 
@@ -118,15 +134,15 @@ class Config:
                 missing.append("GROUP_PALS_TOKEN")
         else:
             if not self.email:
-                missing.append("RUNDOWN_ACCOUNT")
+                missing.append("NEURUN_ACCOUNT")
             if not self.password:
-                missing.append("RUNDOWN_PASSWORD")
+                missing.append("NEURUN_PASSWORD")
 
         if missing:
             raise ConfigError(
                 f"缺少必填环境变量: {', '.join(missing)}\n"
                 f"请复制 .env.example 为 .env 并填入真实值\n"
-                f"(也支持旧名 RUNDOWN_EMAIL / GARMIN_EMAIL)"
+                f"(也支持旧名 NEURUN_EMAIL / GARMIN_EMAIL)"
             )
 
     def log_config(self) -> None:
@@ -147,6 +163,11 @@ class Config:
         """为该用户生成专属配置（路径按 api_key 隔离）。"""
         return UserConfig(api_key=api_key, parent=self)
 
+    @property
+    def invite_codes_path(self) -> str:
+        """邀请码 JSON 路径；默认随 Web 数据目录持久化。"""
+        return self.invite_codes_file or str(Path(self.data_dir) / "invite-codes.json")
+
 
 @dataclass
 class UserConfig:
@@ -163,6 +184,7 @@ class UserConfig:
     email: str = ""
     password: str = ""
     _domain: str = ""  # 用户选择的 Garmin 区域，覆盖 parent.domain
+    provider: str = ""  # 用户绑定的数据源，覆盖服务级 NEURUN_PROVIDER
 
     @property
     def token_dir(self) -> str:
@@ -182,7 +204,7 @@ class UserConfig:
 
     @property
     def provider_type(self) -> str:
-        return self.parent.provider_type
+        return self.provider or self.parent.provider_type
 
     @property
     def non_interactive(self) -> bool:
@@ -197,35 +219,37 @@ class UserConfig:
         return str(Path(self.parent.data_dir) / self.api_key / "huawei-tokens")
 
 
-def get_config() -> Config:
+def get_config(*, validate_credentials: bool = True) -> Config:
     """创建并校验配置的单次入口。
 
     每次调用都重新加载 .env，确保读取当前工作目录的配置。
-    优先级: 系统环境变量 > 项目 .env > ~/.rundown/.env > 默认值
+    优先级: 系统环境变量 > 项目 .env > ~/.neurun/.env > 默认值
 
-    若设置 RUNDOWN_HOME 环境变量（须为实际环境变量，不可写在 .env 中）：
-    - 从 RUNDOWN_HOME/.env 加载项目配置
-    - 所有相对路径（db_path、memory_dir）基于 RUNDOWN_HOME 解析
+    若设置 NEURUN_HOME 环境变量（须为实际环境变量，不可写在 .env 中）：
+    - 从 NEURUN_HOME/.env 加载项目配置
+    - 所有相对路径（db_path、memory_dir）基于 NEURUN_HOME 解析
     """
-    # RUNDOWN_HOME 必须从实际环境变量读取（非 .env），避免鸡生蛋问题
-    rundown_home = os.getenv("RUNDOWN_HOME", "")
-    if rundown_home:
-        os.environ["RUNDOWN_HOME"] = rundown_home  # 确保后续 Config() 也能读到
+    # NEURUN_HOME 必须从实际环境变量读取（非 .env），避免鸡生蛋问题
+    neurun_home = os.getenv("NEURUN_HOME") or os.getenv("RUNDOWN_HOME", "")
+    if neurun_home:
+        os.environ["NEURUN_HOME"] = neurun_home  # 确保后续 Config() 也能读到
 
-    # 1. 加载 .env：优先当前目录（或 RUNDOWN_HOME），再加载全局
-    base_dir = Path(rundown_home) if rundown_home else Path.cwd()
+    # 1. 加载 .env：优先当前目录（或 NEURUN_HOME），再加载全局
+    base_dir = Path(neurun_home) if neurun_home else Path.cwd()
     cwd_env = base_dir / ".env"
     if cwd_env.exists():
         load_dotenv(cwd_env, override=True)  # 当前目录 .env 优先
-    home_env = Path.home() / ".rundown" / ".env"
-    if not rundown_home and home_env.exists():
+    home_env = Path.home() / ".neurun" / ".env"
+    if not neurun_home and home_env.exists():
         load_dotenv(home_env, override=False)  # 全局配置只补充缺失项
 
     config = Config()
 
-    # 2. 若设置了 RUNDOWN_HOME，将相对路径解析为基于 RUNDOWN_HOME 的绝对路径
-    if rundown_home:
-        home = Path(rundown_home)
+    # 2. 若设置了 NEURUN_HOME，将相对路径解析为基于 NEURUN_HOME 的绝对路径
+    if neurun_home:
+        home = Path(neurun_home)
+        if not Path(config.data_dir).is_absolute():
+            config.data_dir = str(home / config.data_dir)
         if not Path(config.db_path).is_absolute():
             config.db_path = str(home / config.db_path)
         if not Path(config.memory_dir).is_absolute():
@@ -234,9 +258,12 @@ def get_config() -> Config:
             config.token_dir = str(home / config.token_dir)
         if not Path(config.huawei_token_dir).is_absolute():
             config.huawei_token_dir = str(home / config.huawei_token_dir)
+        if config.invite_codes_file and not Path(config.invite_codes_file).is_absolute():
+            config.invite_codes_file = str(home / config.invite_codes_file)
 
-    # Web 服务模式下不校验 Garmin 凭证（用户各自绑定）
-    if not os.getenv("RUNDOWN_SERVE_MODE", "").lower() in ("1", "true", "yes"):
+    # Web 服务和管理员命令不校验运动平台凭证
+    serve_mode = os.getenv("NEURUN_SERVE_MODE") or os.getenv("RUNDOWN_SERVE_MODE", "")
+    if validate_credentials and not serve_mode.lower() in ("1", "true", "yes"):
         config.validate()
     # 配置日志
     logging.basicConfig(

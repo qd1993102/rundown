@@ -5,7 +5,7 @@
 
 ## 背景与动机
 
-每个用户已有独立的 CrewPals token，可由服务端代理获取 Huawei access token。Rundown 因此不需要保存 Huawei 开发者凭证，也不需要浏览器回调。
+每个用户已有独立的 CrewPals token，可由服务端代理获取 Huawei access token。neurun 因此不需要保存 Huawei 开发者凭证，也不需要浏览器回调。
 
 ## 方案选择
 

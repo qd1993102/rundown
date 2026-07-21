@@ -1,6 +1,6 @@
-# Rundown
+# neurun
 
-> Your daily running rundown — Garmin data, AI coaching, and training knowledge base.
+> Your AI running coach — Garmin data, AI coaching, and training knowledge base.
 
 ## Quick Start
 
@@ -13,25 +13,25 @@ cp .env.example .env
 pip install -e .
 
 # 3. 首次同步
-rundown sync --full
+neurun sync --full
 
 # 4. 查看今日日报（自动同步 + md + HTML + PNG + AI）
-rundown daily
+neurun daily
 ```
 
 ## Commands
 
-### `rundown sync`
+### `neurun sync`
 
-纯数据同步：从运动平台拉取数据到本地，不生成报告（报告生成使用 `rundown daily`）。
+纯数据同步：从运动平台拉取数据到本地，不生成报告（报告生成使用 `neurun daily`）。
 
 ```bash
-rundown sync                        # 默认：拉取最近 30 天
-rundown sync --days 90              # 拉取最近 90 天
-rundown sync --from 2026-01-01 --to 2026-06-24  # 指定日期范围
-rundown sync --full                 # 全量同步（最多回溯 3 年）
-rundown sync --force                # 强制覆盖：清除已有数据后重新拉取
-rundown sync --metrics sleep hrv    # 仅同步指定指标
+neurun sync                        # 默认：拉取最近 30 天
+neurun sync --days 90              # 拉取最近 90 天
+neurun sync --from 2026-01-01 --to 2026-06-24  # 指定日期范围
+neurun sync --full                 # 全量同步（最多回溯 3 年）
+neurun sync --force                # 强制覆盖：清除已有数据后重新拉取
+neurun sync --metrics sleep hrv    # 仅同步指定指标
 ```
 
 | Option | Type | Default | Description |
@@ -43,23 +43,23 @@ rundown sync --metrics sleep hrv    # 仅同步指定指标
 | `--full` | flag | — | 全量同步（最多 3 年） |
 | `--force` | flag | — | 强制覆盖：清除已有数据后重新拉取 |
 
-> 💡 同步完成后运行 `rundown daily` 生成日报。
+> 💡 同步完成后运行 `neurun daily` 生成日报。
 
 ---
 
-### `rundown daily`
+### `neurun daily`
 
 一站式命令：自动检查并同步数据 → 生成完整日报（md + HTML + PNG + AI 洞察）。
 
 ```bash
-rundown daily                       # 今天（自动检查并补同步缺失数据）
-rundown daily --date 2026-06-25     # 指定日期
-rundown daily --theme dark          # 暗黑主题
-rundown daily --format json         # 仅 JSON 输出
-rundown daily --skip-sync           # 跳过同步，仅基于本地数据生成报告
-rundown daily --sync-days 7         # 同步最近 7 天数据后生成报告
-rundown daily --full                # 全量同步（3年）后生成报告
-rundown daily --force               # 强制覆盖已有数据后重新同步
+neurun daily                       # 今天（自动检查并补同步缺失数据）
+neurun daily --date 2026-06-25     # 指定日期
+neurun daily --theme dark          # 暗黑主题
+neurun daily --format json         # 仅 JSON 输出
+neurun daily --skip-sync           # 跳过同步，仅基于本地数据生成报告
+neurun daily --sync-days 7         # 同步最近 7 天数据后生成报告
+neurun daily --full                # 全量同步（3年）后生成报告
+neurun daily --force               # 强制覆盖已有数据后重新同步
 ```
 
 每次执行自动：检查本地数据完整性 →（缺失时自动拉取）→ 生成 md → AI 洞察 → HTML → PNG → 终端展示。
@@ -81,17 +81,102 @@ rundown daily --force               # 强制覆盖已有数据后重新同步
 | `--full` | flag | — | 全量同步后生成报告 |
 | `--force` | flag | — | 强制覆盖已有数据后重新同步 |
 
+### Web 邀请注册
+
+Web 服务不再通过“绑定运动平台”隐式创建用户。首次访问会进入登录页，新用户必须：
+
+1. 输入有效邀请码；
+2. 填写昵称、邮箱和至少 8 位密码；
+3. 注册成功后，再单独绑定 Garmin、Coros 或 Huawei 数据源。
+
+应用账号邮箱只用于 neurun 登录，和运动平台账号相互独立。密码使用随机盐 `scrypt`
+哈希保存，不写入日志或用户 JSON 明文字段。登录成功后继续使用 HttpOnly Cookie 维持会话。
+
+管理员通过 JSON 文件维护邀请码。默认路径为
+`<NEURUN_DATA_DIR>/invite-codes.json`，也可用 `NEURUN_INVITE_CODES_FILE` 覆盖：
+
+```bash
+neurun invite create --output json
+neurun invite list --output json
+neurun invite show inv_xxx --reveal --output json
+neurun invite revoke inv_xxx --output json
+```
+
+| 子命令 | 关键参数 | 说明 |
+|--------|----------|------|
+| `invite create` | `-n/--count`, `-o/--output` | 生成 1–100 个随机一次性邀请码，返回完整码 |
+| `invite list` | `-o/--output` | 列出状态，邀请码默认掩码 |
+| `invite show` | `invitation_id`, `--reveal`, `-o/--output` | 查看单条记录；仅本地 CLI 可显式显示完整码 |
+| `invite revoke` | `invitation_id`, `-o/--output` | 非交互式停用邀请码 |
+
+```json
+{
+  "codes": [
+    {
+      "id": "inv_xxx",
+      "code": "neurun_系统随机生成的完整邀请码",
+      "enabled": true,
+      "created_at": "2026-07-21T00:00:00+00:00",
+      "used_by": null,
+      "used_at": null
+    }
+  ]
+}
+```
+
+每个邀请码严格只能创建一个账号，不自动过期；`enabled=false` 可立即停用。
+每次成功注册后服务端原子写入 `used_by` 和 `used_at`。邀请码文件缺失或
+格式错误时，注册接口返回可操作的 `503` 错误，不会降级为开放注册。
+普通 `list` 只显示掩码，完整邀请码必须通过服务器本地 `show --reveal` 显式读取。
+
+Docker 部署可在服务启动后生成首个邀请码：
+
+```bash
+docker compose exec neurun neurun invite create --output json
+```
+
+对应 MCP 管理工具默认关闭，仅当本地 MCP 设置 `NEURUN_ENABLE_ADMIN_TOOLS=true` 时注册；
+公网 `serve` 模式始终拒绝启用，MCP 也不提供完整邀请码读取。
+
+相关 Web API：
+
+- `POST /api/invitations/validate`：验证邀请码，不预占名额；
+- `POST /api/register`：提交 `invite_code`、`nickname`、`email`、`password`；
+- `POST /api/login`：提交应用账号 `email`、`password`。
+
+### Web 同步页面
+
+`/sync` 将同步分为两个独立入口：
+
+- **单日同步**：选择一个日期，只拉取该日数据并生成该日日报。
+- **批量同步**：选择开始和结束日期（包含首尾两天），批量补齐数据并为范围内每一天生成日报。
+
+两种模式均支持“强制覆盖已有数据”。对应的机器可读请求为：
+
+```json
+{"mode":"single","date":"2026-07-19","force":false}
+```
+
+```json
+{"mode":"batch","from_date":"2026-07-01","to_date":"2026-07-19","force":false}
+```
+
+`POST /api/sync` 成功响应包含 `mode`、`from_date`、`to_date`、报告 `date` 和
+`reports_generated`。批量模式只对结束日期调用在线 AI 教练，历史日期使用本地规则生成
+结构化洞察，避免一次补数据触发大量外部 AI 请求；
+未提供 `mode` 时继续兼容原来的 `date`、`sync_days`、`full`、`skip_sync` 请求。
+
 ---
 
-### `rundown activities`
+### `neurun activities`
 
 查询运动活动列表，支持按类型筛选和 CSV 导出。
 
 ```bash
-rundown activities                  # 最近 30 天全部活动
-rundown activities --recent 10      # 最近 10 条
-rundown activities --type running   # 跑步活动
-rundown activities --type cycling --export cycling.csv  # 导出 CSV
+neurun activities                  # 最近 30 天全部活动
+neurun activities --recent 10      # 最近 10 条
+neurun activities --type running   # 跑步活动
+neurun activities --type cycling --export cycling.csv  # 导出 CSV
 ```
 
 | Option | Type | Default | Description |
@@ -102,16 +187,16 @@ rundown activities --type cycling --export cycling.csv  # 导出 CSV
 
 ---
 
-### `rundown health`
+### `neurun health`
 
 查询健康指标数据。
 
 ```bash
-rundown health                      # 最近 7 天全部指标
-rundown health --days 14            # 最近 14 天
-rundown health --metric sleep       # 仅查看睡眠
-rundown health --metric hrv         # 仅查看 HRV
-rundown health --export health.csv  # 导出 CSV
+neurun health                      # 最近 7 天全部指标
+neurun health --days 14            # 最近 14 天
+neurun health --metric sleep       # 仅查看睡眠
+neurun health --metric hrv         # 仅查看 HRV
+neurun health --export health.csv  # 导出 CSV
 ```
 
 可选指标：`sleep`, `heart_rate`, `hrv`, `stress`, `body_battery`, `steps`, `calories`, `respiration`, `training_readiness`
@@ -124,30 +209,30 @@ rundown health --export health.csv  # 导出 CSV
 
 ---
 
-### `rundown memory`
+### `neurun memory`
 
 记忆管理 — 浏览、搜索、生成记忆，管理目标和训练计划。
 
 ```bash
 # 列出记忆
-rundown memory list
-rundown memory list --type daily_report          # 按类型
-rundown memory list --tag 5k                     # 按标签
-rundown memory list --status active              # 按状态
-rundown memory list --search "间歇跑"             # 全文搜索
+neurun memory list
+neurun memory list --type daily_report          # 按类型
+neurun memory list --tag 5k                     # 按标签
+neurun memory list --status active              # 按状态
+neurun memory list --search "间歇跑"             # 全文搜索
 
 # 查看单条记忆
-rundown memory show 2026-06-24                   # 查看 6/24 日报
-rundown memory show 2026-W26                     # 查看第 26 周摘要
+neurun memory show 2026-06-24                   # 查看 6/24 日报
+neurun memory show 2026-W26                     # 查看第 26 周摘要
 
 # 手动生成摘要
-rundown memory summarize --period weekly         # 生成本周摘要
-rundown memory summarize --period monthly        # 生成本月摘要
-rundown memory summarize --date 2026-06-20       # 指定日期
+neurun memory summarize --period weekly         # 生成本周摘要
+neurun memory summarize --period monthly        # 生成本月摘要
+neurun memory summarize --date 2026-06-20       # 指定日期
 
 # 校验与维护
-rundown memory check                             # 完整性校验
-rundown memory index                             # 重建所有索引
+neurun memory check                             # 完整性校验
+neurun memory index                             # 重建所有索引
 ```
 
 | 子命令 | 参数 | Description |
@@ -162,23 +247,23 @@ rundown memory index                             # 重建所有索引
 
 ---
 
-### `rundown status`
+### `neurun status`
 
 查看数据同步状态。
 
 ```bash
-rundown status
+neurun status
 ```
 
 ---
 
-### `rundown mcp`
+### `neurun mcp`
 
 启动 MCP Server，供 OpenClaw / Claude Desktop 连接进行 AI 教练对话。
 
 ```bash
-rundown mcp                         # 默认端口 8765
-rundown mcp --port 9876             # 自定义端口
+neurun mcp                         # 默认端口 8765
+neurun mcp --port 9876             # 自定义端口
 ```
 
 | Option | Type | Default | Description |
@@ -189,7 +274,7 @@ rundown mcp --port 9876             # 自定义端口
 
 ## HTML Daily Report
 
-`rundown daily` 自动生成静态 HTML 日报 + PNG 截图，输出到统一目录 `output/`。
+`neurun daily` 自动生成静态 HTML 日报 + PNG 截图，输出到统一目录 `output/`。
 
 绿黑色硬核风格，无需服务器，浏览器直接打开。
 
@@ -209,24 +294,40 @@ output/
 
 | 变量 | 必填 | 默认值 | 说明 |
 |------|:---:|--------|------|
-| `RUNDOWN_ACCOUNT` | Garmin/Coros | — | 运动平台账号（邮箱或手机号，兼容旧名 `RUNDOWN_EMAIL`/`GARMIN_EMAIL`） |
-| `RUNDOWN_PASSWORD` | Garmin/Coros | — | 运动平台登录密码（兼容旧名 `GARMIN_PASSWORD`） |
-| `RUNDOWN_PROVIDER` | — | `garmin` | 数据源: garmin / coros / huawei |
+| `NEURUN_ACCOUNT` | Garmin/Coros | — | 运动平台账号（邮箱或手机号，兼容旧名 `NEURUN_EMAIL`/`GARMIN_EMAIL`） |
+| `NEURUN_PASSWORD` | Garmin/Coros | — | 运动平台登录密码（兼容旧名 `GARMIN_PASSWORD`） |
+| `NEURUN_PROVIDER` | — | `garmin` | 数据源: garmin / coros / huawei |
 | `GROUP_PALS_TOKEN` | Huawei | — | 每个用户独立的 CrewPals JWT |
-| `HUAWEI_TOKEN_DIR` | — | `~/.rundown/users/<token-hash>/huawei-tokens` | Huawei AT 本地缓存目录 |
-| `RUNDOWN_DB_PATH` | — | `./data/rundown_data.db` | SQLite 数据库路径 |
-| `RUNDOWN_MEMORY_DIR` | — | `./memory` | 记忆存储目录（目标、档案、日报等） |
-| `RUNDOWN_HOME` | — | (当前目录) | 数据工作目录，设后所有相对路径基于此解析 |
-| `RUNDOWN_SYNC_DAYS` | — | `30` | 默认同步天数 |
-| `RUNDOWN_LOG_LEVEL` | — | `INFO` | 日志级别 |
+| `HUAWEI_TOKEN_DIR` | — | `~/.neurun/users/<token-hash>/huawei-tokens` | Huawei AT 本地缓存目录 |
+| `NEURUN_DB_PATH` | — | `./data/rundown_data.db` | SQLite 数据库路径 |
+| `NEURUN_MEMORY_DIR` | — | `./memory` | 记忆存储目录（目标、档案、日报等） |
+| `NEURUN_HOME` | — | (当前目录) | 数据工作目录，设后所有相对路径基于此解析 |
+| `NEURUN_DATA_DIR` | Web | `./data` | Web 用户记录、邀请码、Token、数据库与记忆的持久化根目录 |
+| `NEURUN_INVITE_CODES_FILE` | Web | `<NEURUN_DATA_DIR>/invite-codes.json` | 管理员维护的邀请码 JSON 文件路径 |
+| `NEURUN_ENABLE_ADMIN_TOOLS` | 本地 MCP | `false` | 仅在 stdio/localhost 注册邀请码管理 tools；公网 Web 模式禁止 |
+| `NEURUN_SYNC_DAYS` | — | `30` | 默认同步天数 |
+| `NEURUN_LOG_LEVEL` | — | `INFO` | 日志级别 |
 | `GARMIN_DOMAIN` | — | `garmin.com` | Garmin 专用：API 域名 |
 | `GARMIN_TOKEN_DIR` | — | `~/.garmy` | Garmin 专用：Token 目录 |
 | `DEEPSEEK_API_KEY` | — | — | DeepSeek API Key（AI 洞察） |
 
+Web 模式会按用户注册记录选择 Garmin、Coros 或 Huawei，不受服务级
+`NEURUN_PROVIDER` 默认值影响。Coros 绑定成功后，访问 token 保存到
+`data/<api_key>/tokens/coros-auth.json`（目录 `0700`、文件 `0600`）；后续同步不保存
+明文密码，而是恢复该用户的 token。token 无效或缺失时，接口会提示重新绑定账号。
+从旧版本升级时，如果系统中恰好只有一个已激活 Coros 用户，会自动把 coros-mcp 的
+旧版全局 token 迁入该用户目录；存在多个 Coros 用户时不会猜测 token 归属。
+
+Coros 活动时长使用 API 的 `workoutTime`（实际运动时间，不包含暂停），缺失时才回退
+`totalTime`。重新执行包含旧活动日期的单日或批量同步，会自动更新数据库中已有活动的
+`duration_seconds`；不需要开启“强制覆盖”。如果 Coros 返回 token 失效，接口会明确
+失败、将连接状态改为 `expired` 并在同步页提供重新绑定入口，不再把空活动列表误报为
+同步成功。
+
 Huawei 配置只需要当前用户的 CrewPals token：
 
 ```env
-RUNDOWN_PROVIDER=huawei
+NEURUN_PROVIDER=huawei
 GROUP_PALS_TOKEN=your-token
 HUAWEI_TOKEN_DIR=./data/user-a/huawei-tokens
 ```
@@ -234,13 +335,13 @@ HUAWEI_TOKEN_DIR=./data/user-a/huawei-tokens
 然后运行：
 
 ```bash
-rundown auth
+neurun auth
 ```
 
-`rundown sync` 当前支持 Huawei 运动列表和单条活动详情；睡眠、步数、HRV 等每日健康
+`neurun sync` 当前支持 Huawei 运动列表和单条活动详情；睡眠、步数、HRV 等每日健康
 数据仍待按 `sampleSets` 的实际授权和字段口径接入。
 
-Rundown 通过 CrewPals 预发布 HTTPS 接口获取 Huawei AT，并将返回值保存在 `HUAWEI_TOKEN_DIR`
+neurun 通过 CrewPals 预发布 HTTPS 接口获取 Huawei AT，并将返回值保存在 `HUAWEI_TOKEN_DIR`
 指定目录下的 `huawei-oauth.json`，文件权限为 `0600`。本地 AT 未过期时不会重复请求；
 过期或缺失时使用 `GROUP_PALS_TOKEN` 重新获取。
 默认目录键由 `GROUP_PALS_TOKEN` 的 SHA-256 摘要派生，不包含原 token；不同用户默认写入不同目录。
@@ -248,9 +349,9 @@ Rundown 通过 CrewPals 预发布 HTTPS 接口获取 Huawei AT，并将返回值
 接口响应支持 `data.accessToken/refreshToken/expiredAt/openId`，并在本地归一化为
 `access_token/refresh_token/expired_at/open_id`。
 
-设置 `RUNDOWN_HOME` 时只加载该目录下的 `.env`，不会再从 `~/.rundown/.env` 补入其他
+设置 `NEURUN_HOME` 时只加载该目录下的 `.env`，不会再从 `~/.neurun/.env` 补入其他
 用户的账号配置；需要共享的 API Key 应通过实际环境变量注入。
-`rundown init` 会为当前配置选择并以 `0700` 创建独立 Token 目录；`rundown auth`
+`neurun init` 会为当前配置选择并以 `0700` 创建独立 Token 目录；`neurun auth`
 也会自动补建目录、检查已有 JSON，并将 token 文件权限收紧为 `0600`。系统不会创建
 空的 `huawei-oauth.json`，该文件只在取得或导入有效 token 后生成。
 
@@ -269,12 +370,12 @@ Rundown 通过 CrewPals 预发布 HTTPS 接口获取 Huawei AT，并将返回值
 过期时间同时接受 `expired_at` 和 `expires_at`（Unix 秒）；用户标识依次使用
 `user_id`、`open_id`、`openid` 或 `sub`。
 
-### `rundown mcp`
+### `neurun mcp`
 
 启动 MCP Server，供 OpenClaw / Claude Desktop 连接进行 AI 教练对话。
 
 ```bash
-rundown mcp                         # stdio 模式（默认）
+neurun mcp                         # stdio 模式（默认）
 ```
 
 **OpenClaw 配置** (`mcp.json`):
@@ -282,8 +383,8 @@ rundown mcp                         # stdio 模式（默认）
 ```json
 {
   "mcpServers": {
-    "rundown": {
-      "command": "rundown",
+    "neurun": {
+      "command": "neurun",
       "args": ["mcp"],
       "description": "Garmin 运动数据 + AI 教练"
     }
@@ -292,12 +393,12 @@ rundown mcp                         # stdio 模式（默认）
 ```
 
 MCP 提供的 Resources:
-- `rundown://daily/latest` — 最新日报
-- `rundown://daily/{date}` — 指定日期日报
-- `rundown://context/full` — 完整 AI 上下文（日报+7天趋势+目标+资料）
-- `rundown://goals/active` — 进行中的目标
-- `rundown://profile` — 个人档案
-- `rundown://preferences` — 训练偏好
+- `neurun://daily/latest` — 最新日报
+- `neurun://daily/{date}` — 指定日期日报
+- `neurun://context/full` — 完整 AI 上下文（日报+7天趋势+目标+资料）
+- `neurun://goals/active` — 进行中的目标
+- `neurun://profile` — 个人档案
+- `neurun://preferences` — 训练偏好
 
 MCP 提供的 Tools:
 - `query_activities` — 查询活动列表
@@ -309,7 +410,7 @@ MCP 提供的 Tools:
 ## Architecture
 
 ```
-Rundown
+neurun
 ├── Data Layer:    SQLite (via garmy LocalDB)
 ├── Memory Layer:  Markdown + YAML Front Matter
 ├── Output Layer:  Terminal (rich) / JSON / Static HTML
@@ -319,7 +420,7 @@ Rundown
 ## Project Structure
 
 ```
-rundown/
+neurun/
 ├── src/
 │   ├── main.py          CLI 入口 (argparse + rich)
 │   ├── config.py        环境变量管理

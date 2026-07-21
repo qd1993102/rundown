@@ -15,7 +15,7 @@
 | **Phase 5** | CLI 基础命令：main.py，sync / daily / activities / health / status 命令 | P0 |
 | **Phase 6** | 记忆核心：memory.py — MemoryStore 类、MemoryReader、MemoryWriter、MemoryValidator、MemoryLinker | P0 |
 | **Phase 7** | 记忆生成器：**日报生成器**、运动摘要聚合、恢复摘要聚合、执行跟踪更新、异常检测 | P0 |
-| **Phase 8** | 日报 CLI：`rundown daily` 命令，支持 --date / --format json / --no-ai，rich 美化终端输出 | P0 |
+| **Phase 8** | 日报 CLI：`neurun daily` 命令，支持 --date / --format json / --no-ai，rich 美化终端输出 | P0 |
 | **Phase 9** | 记忆 CLI：memory 子命令（list / show / summarize / goal / plan / case / profile / check / index） | P0 |
 | **Phase 9.5** | HTML 日报渲染：render.py — Markdown + YAML → 静态 HTML，绿黑色风格，output/YYYY-MM-DD.html | P0 |
 | **Phase 10** | MCP Server 核心：mcp 子命令，Resources 暴露（daily/latest、context/full）、Tools 暴露（查询+分析） | P0 |

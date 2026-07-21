@@ -1,7 +1,7 @@
 [project]
-name = "rundown"
+name = "neurun"
 version = "0.1.0"
-description = "Your daily running rundown — Garmin data, AI coaching, and training knowledge base"
+description = "Your AI running coach — Garmin data sync, AI coaching, and training knowledge base"
 readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "MIT" }
@@ -41,7 +41,7 @@ dev = [
 ]
 
 [project.scripts]
-rundown = "src.main:main"
+neurun = "src.main:main"
 
 [build-system]
 requires = ["setuptools>=75.0", "wheel"]

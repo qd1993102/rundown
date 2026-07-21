@@ -66,7 +66,7 @@ graph TD
 
 ```mermaid
 graph TD
-    D1["rundown daily"]
+    D1["neurun daily"]
     D2["1. 确定 target_date<br/>(默认今天, --date 可指定)"]
     D3["2. 连接 SQLite (只读)"]
     D4["3. 查询昨日活动<br/>db.get_activities(yesterday)"]
@@ -116,3 +116,36 @@ graph TD
 ```
 
 ---
+
+### 5.5 Web 邀请注册与数据源绑定流程
+
+```mermaid
+sequenceDiagram
+    actor User as 用户
+    participant Web as 浏览器
+    participant API as web.py
+    participant Invite as InvitationStore
+    participant Users as UserManager
+    participant Provider as 运动平台
+
+    User->>Web: 打开首页（无会话）
+    Web->>API: GET /
+    API-->>Web: 302 /login
+    User->>API: POST /api/invitations/validate
+    API->>Invite: validate(invite_code)
+    Invite-->>API: 当前可用
+    User->>API: POST /api/register（昵称/邮箱/密码/邀请码）
+    API->>Invite: 再次 validate
+    API->>Users: register_account
+    Users->>Users: 邮箱唯一性 + scrypt 哈希 + 用户 JSON
+    API->>Invite: consume（写入 used_by / used_at）
+    API-->>Web: 201 + HttpOnly Cookie + next=/setup
+    User->>API: POST /api/setup（运动平台凭证）
+    API->>Users: 校验 Cookie 对应用户
+    API->>Provider: Garmin/Coros/Huawei 认证
+    Provider-->>API: Token / MFA 状态
+    API->>Users: 更新 provider 与 token_status
+```
+
+注册认证和运动平台认证是两层独立边界：`/api/setup` 不得为无会话请求自动创建用户；
+应用退出只删除 Cookie，不清理运动平台 Token。再次登录后仍使用原 API Key 和用户数据目录。

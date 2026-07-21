@@ -49,7 +49,7 @@ def _mfa_not_available() -> str:
     raise RuntimeError(
         "需要 MFA 二次验证，但当前环境不支持交互输入。\n"
         "Web 用户请通过 /api/mfa 提交验证码。\n"
-        "CLI 用户请在有终端的设备上运行 rundown sync。"
+        "CLI 用户请在有终端的设备上运行 neurun sync。"
     )
 
 

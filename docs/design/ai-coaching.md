@@ -10,13 +10,13 @@
 
 ```bash
 # 启动 MCP Server（默认端口 8765）
-rundown mcp
+neurun mcp
 
 # 指定端口
-rundown mcp --port 9876
+neurun mcp --port 9876
 
 # 后台运行
-rundown mcp --daemon
+neurun mcp --daemon
 ```
 
 **2. OpenClaw MCP 配置** (`~/.openclaw/mcp.json` 或 OpenClaw Settings)
@@ -25,7 +25,7 @@ rundown mcp --daemon
 {
   "mcpServers": {
     "garmin-coach": {
-      "command": "rundown",
+      "command": "neurun",
       "args": ["mcp"],
       "env": {
         "GARMIN_EMAIL": "${GARMIN_EMAIL}",
@@ -72,12 +72,12 @@ rundown mcp --daemon
 #### 8.4.7 完整的早晨使用流程
 
 ```
-07:00  系统 cron 触发: rundown sync
+07:00  系统 cron 触发: neurun sync
        ↓ 拉取 Garmin 新数据 → 写入 SQLite
        ↓ 自动生成今日日报 → auto/daily/2025-06-24.md
        
 08:00  用户起床，打开 OpenClaw，选择 "AI 跑步教练"
-       ↓ OpenClaw 连接 rundown MCP Server
+       ↓ OpenClaw 连接 neurun MCP Server
        ↓ MCP Server 自动注入今日日报 + 用户画像
 
 08:01  用户: "早上好，今天状态怎么样？"

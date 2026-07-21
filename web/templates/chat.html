@@ -3,13 +3,29 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Rundown — 训练日报</title>
+<title>neurun — 训练日报</title>
 <style>
 /* ═══════════════════════════════════════════
-   Rundown Dashboard — 沿用 render.py dark 主题设计令牌
+   neurun Dashboard — 复用 render.py 三主题系统
    ═══════════════════════════════════════════ */
 
-:root {
+[data-theme="fresh"] {
+  --bg:#e8efe9; --bg-card:#fff; --text:#1a2e23; --text-secondary:#5a7d6e; --text-muted:#8aa89a;
+  --accent:#2d9d6f; --accent-glow:rgba(45,157,111,.1); --recovery:#3b82b6; --recovery-glow:rgba(59,130,246,.08);
+  --performance:#22a86e; --performance-glow:rgba(34,168,110,.08); --sleep:#7c6fcf; --sleep-glow:rgba(124,111,207,.08);
+  --warning:#d4a017; --danger:#dc5b51; --hrv:#3b9fc6;
+  --card-shadow:0 2px 8px rgba(0,0,0,.06); --card-shadow-hover:0 8px 30px rgba(0,0,0,.1);
+  --border-subtle:#dde5df; --bg-subtle:#f0f4f0;
+}
+[data-theme="sport"] {
+  --bg:#f0f0f0; --bg-card:#fff; --text:#171717; --text-secondary:#525252; --text-muted:#a3a3a3;
+  --accent:#f15b2a; --accent-glow:rgba(241,91,42,.08); --recovery:#2563eb; --recovery-glow:rgba(37,99,235,.08);
+  --performance:#16a34a; --performance-glow:rgba(22,163,74,.08); --sleep:#7c3aed; --sleep-glow:rgba(124,58,237,.08);
+  --warning:#eab308; --danger:#ef4444; --hrv:#0891b2;
+  --card-shadow:0 2px 10px rgba(0,0,0,.07); --card-shadow-hover:0 10px 35px rgba(0,0,0,.1);
+  --border-subtle:#ebebeb; --bg-subtle:#f5f5f5;
+}
+[data-theme="dark"] {
   --bg:#0b1120; --bg-card:#1a2333; --text:#e2e8f0; --text-secondary:#94a3b8; --text-muted:#64748b;
   --accent:#34d399; --accent-glow:rgba(52,211,153,.12); --recovery:#60a5fa; --recovery-glow:rgba(96,165,250,.1);
   --performance:#4ade80; --performance-glow:rgba(74,222,128,.1); --sleep:#a78bfa; --sleep-glow:rgba(167,139,250,.1);
@@ -19,17 +35,27 @@
 }
 
 *{margin:0;padding:0;box-sizing:border-box}
-body{background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSystemFont,'SF Pro Display','Segoe UI',Roboto,sans-serif;line-height:1.6;-webkit-font-smoothing:antialiased}
+body{background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSystemFont,'SF Pro Display','Segoe UI',Roboto,sans-serif;line-height:1.6;-webkit-font-smoothing:antialiased;transition:background .3s,color .3s}
 .container{max-width:720px;margin:0 auto;padding:24px 20px 80px}
 
-/* ── Header (web 专用) ── */
-.header{display:flex;justify-content:space-between;align-items:center;padding:0 0 28px}
-.header-brand{font-size:13px;font-weight:800;letter-spacing:1.5px;background:linear-gradient(135deg,var(--accent),#ef4444);-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text;text-transform:uppercase}
-.header-actions{display:flex;align-items:center;gap:10px}
-.header-sync-status{font-size:11px;color:var(--text-muted)}
-.btn{padding:7px 16px;border-radius:20px;border:1px solid var(--border-subtle);background:transparent;color:var(--text-secondary);font-size:12px;font-weight:600;cursor:pointer;transition:all .2s;letter-spacing:.5px}
+/* ── Header ── */
+.header{display:flex;justify-content:space-between;align-items:center;padding:0 0 12px;flex-wrap:wrap;gap:8px}
+.nav-tabs{display:flex;gap:4px;background:var(--bg-card);border-radius:24px;padding:4px;box-shadow:var(--card-shadow)}
+.nav-tab{padding:8px 20px;border-radius:20px;font-size:13px;font-weight:600;color:var(--text-muted);text-decoration:none;transition:all .2s;letter-spacing:.5px}
+.nav-tab:hover{color:var(--text-secondary)}
+.nav-tab.active{background:var(--accent);color:#fff}
+.header-actions{display:flex;align-items:center;gap:8px}
+
+/* ── Theme Bar ── */
+.theme-bar{display:flex;gap:4px}
+.theme-btn{border:none;padding:5px 12px;border-radius:20px;font-size:11px;font-weight:600;cursor:pointer;background:var(--border-subtle);color:var(--text-muted);transition:all .2s;letter-spacing:.5px}
+.theme-btn:hover{opacity:.8}
+.theme-btn.active{background:var(--accent);color:#fff}
+
+/* ── Buttons ── */
+.btn{padding:6px 14px;border-radius:20px;border:1px solid var(--border-subtle);background:transparent;color:var(--text-secondary);font-size:12px;font-weight:600;cursor:pointer;transition:all .2s;letter-spacing:.5px;white-space:nowrap}
 .btn:hover{border-color:var(--accent);color:var(--accent)}
-.btn.primary{background:var(--accent);border-color:var(--accent);color:#0b1120}
+.btn.primary{background:var(--accent);border-color:var(--accent);color:#fff}
 .btn.primary:hover{opacity:.85}
 .btn:disabled{opacity:.4;cursor:not-allowed}
 .spinner{display:inline-block;width:14px;height:14px;border:2px solid rgba(255,255,255,.3);border-top-color:#fff;border-radius:50%;animation:spin .6s linear infinite;vertical-align:middle;margin-right:6px}
@@ -38,6 +64,12 @@ body{background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSy
 /* ── Loading ── */
 .loading{text-align:center;padding:80px 20px;color:var(--text-muted);font-size:14px}
 .loading .spinner{width:20px;height:20px;border-width:2px;margin-bottom:12px;display:block;margin-left:auto;margin-right:auto}
+
+/* ── Plan Strip ── */
+.plan-strip{display:flex;gap:10px;margin-bottom:20px;background:var(--accent-glow);border-radius:14px;padding:14px 18px;border:1px solid var(--border-subtle)}
+.plan-item{flex:1;text-align:center}
+.plan-val{display:block;font-family:-apple-system,'SF Pro Display','Helvetica Neue',sans-serif;font-size:15px;font-weight:700;color:var(--text)}
+.plan-lbl{display:block;font-size:10px;color:var(--text-muted);margin-top:2px;text-transform:uppercase;letter-spacing:.5px}
 
 /* ── Hero Grid ── */
 .hero-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:14px;margin-bottom:24px}
@@ -71,7 +103,7 @@ body{background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSy
 .session-metric{text-align:center}
 .session-metric .val{font-family:-apple-system,'SF Pro Display','Helvetica Neue',sans-serif;font-size:18px;font-weight:700;color:var(--text)}
 .session-metric .lbl{font-size:10px;color:var(--text-muted);text-transform:uppercase;letter-spacing:.5px}
-.activity-summary-strip{display:flex;gap:12px;margin-bottom:14px;font-size:13px;color:var(--text-secondary)}
+.activity-summary-strip{display:flex;gap:12px;margin-bottom:14px;font-size:13px;color:var(--text-secondary);flex-wrap:wrap}
 .activity-summary-strip span{background:var(--bg-card);padding:6px 14px;border-radius:20px;box-shadow:var(--card-shadow);font-weight:600}
 
 /* ── Rest Day ── */
@@ -90,6 +122,12 @@ body{background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSy
 .load-stat .val{font-family:-apple-system,'SF Pro Display','Helvetica Neue',sans-serif;font-size:20px;font-weight:700;color:var(--text)}
 .load-stat .lbl{font-size:11px;color:var(--text-muted)}
 
+/* ── Plan Execution Card ── */
+.plan-exec-card{background:var(--bg-card);border-radius:16px;padding:20px 24px;box-shadow:var(--card-shadow);margin-bottom:12px;border-left:3px solid var(--accent)}
+.pe-row{display:flex;justify-content:space-between;padding:5px 0;font-size:13px}
+.pe-label{color:var(--text-muted);min-width:64px}
+.pe-val{color:var(--text);font-weight:500;text-align:right}
+
 /* ── AI Insight ── */
 .ai-section{background:var(--bg-card);border-radius:16px;padding:28px;box-shadow:var(--card-shadow);margin-bottom:8px;border-left:3px solid var(--accent)}
 .ai-conclusion{font-size:16px;color:var(--text);line-height:1.8;font-weight:500;padding:14px 18px;background:var(--accent-glow);border-radius:12px;margin-bottom:14px}
@@ -99,17 +137,14 @@ body{background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSy
 .ai-block li{font-size:13px;color:var(--text-secondary);padding:2px 0}
 .ai-model{font-size:10px;color:var(--text-muted);margin-top:12px;text-align:right}
 
-/* ── Empty State ── */
+/* ── Empty / Footer ── */
 .empty-state{text-align:center;padding:60px 20px}
 .empty-state .icon{font-size:48px;margin-bottom:16px}
 .empty-state h2{font-size:18px;color:var(--text);margin-bottom:8px}
 .empty-state p{font-size:13px;color:var(--text-muted);margin-bottom:24px;line-height:1.6}
-
-/* ── Footer ── */
 .footer{text-align:center;padding:40px 0 20px;font-size:11px;color:var(--text-muted);letter-spacing:1px;font-weight:500}
 .footer span{background:linear-gradient(135deg,var(--accent),#ef4444);-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text;font-weight:700}
 
-/* ── Responsive ── */
 @media(max-width:640px){
   .container{padding:16px 14px 60px}
   .hero-grid{grid-template-columns:repeat(3,1fr);gap:8px}
@@ -120,24 +155,28 @@ body{background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSy
   .session-card{flex-direction:column;align-items:flex-start;gap:12px}
   .session-metrics{width:100%;justify-content:space-between}
   .load-stats{flex-direction:column;gap:8px}
+  .sync-options{gap:6px}
 }
 </style>
 </head>
-<body>
+<body data-theme="dark">
 
 <div class="container">
 
-<!-- Header -->
+<!-- Header Row: Nav + Theme -->
 <div class="header">
-  <div style="display:flex;align-items:center;gap:20px">
-    <div class="header-brand">Rundown</div>
-    <a href="/reports" style="font-size:12px;font-weight:600;color:var(--text-muted);text-decoration:none;letter-spacing:.5px;transition:color .2s" onmouseover="this.style.color='var(--text-secondary)'" onmouseout="this.style.color='var(--text-muted)'">日报列表</a>
+  <div class="nav-tabs">
+    <a href="/sync" class="nav-tab">同步</a>
+    <a href="/reports" class="nav-tab active">日报</a>
+    <a href="/profile" class="nav-tab">我的</a>
   </div>
   <div class="header-actions">
-    <span class="header-sync-status" id="syncStatus"></span>
-    <input type="date" id="syncDate" style="padding:6px 10px;border-radius:20px;border:1px solid var(--border-subtle);background:var(--bg-card);color:var(--text);font-size:12px;outline:none;font-family:inherit" onfocus="this.style.borderColor='var(--accent)'" onblur="this.style.borderColor='var(--border-subtle)'">
-    <button class="btn primary" id="syncBtn" onclick="doSync()">🔄 同步</button>
-    <button class="btn" onclick="doLogout()">退出</button>
+    <div class="theme-bar">
+      <button class="theme-btn active" data-theme="dark" onclick="setTheme('dark')">暗黑</button>
+      <button class="theme-btn" data-theme="sport" onclick="setTheme('sport')">运动</button>
+      <button class="theme-btn" data-theme="fresh" onclick="setTheme('fresh')">清新</button>
+    </div>
+    <input type="date" id="viewDate" style="padding:5px 10px;border-radius:20px;border:1px solid var(--border-subtle);background:var(--bg-card);color:var(--text);font-size:12px;outline:none;font-family:inherit" onchange="onDateChange()" title="查看指定日期">
   </div>
 </div>
 
@@ -146,6 +185,17 @@ body{background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSy
 
 <!-- Dashboard -->
 <div id="dashboard" style="display:none">
+
+  <!-- Plan Status -->
+  <div class="plan-strip" id="planStrip" style="display:none">
+    <div class="plan-item"><span class="plan-val" id="planPhase">—</span><span class="plan-lbl">阶段</span></div>
+    <div class="plan-item"><span class="plan-val" id="planWeek">—</span><span class="plan-lbl">剩余周数</span></div>
+    <div class="plan-item"><span class="plan-val" id="planTarget">—</span><span class="plan-lbl">周目标 km</span></div>
+    <div class="plan-item"><span class="plan-val" id="planNote">—</span><span class="plan-lbl">大纲状态</span></div>
+  </div>
+
+  <!-- AI Insight (置顶) -->
+  <div id="aiArea"></div>
 
   <!-- Hero Grid -->
   <div class="hero-grid">
@@ -174,11 +224,11 @@ body{background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSy
     <div class="metric-item"><div class="metric-val stress" id="metStress">—</div><div class="metric-lbl">压力</div></div>
   </div>
 
-  <!-- Training Section -->
+  <!-- Training -->
   <div class="section-title">🏃 昨日训练</div>
   <div id="trainingArea"></div>
 
-  <!-- Load Section -->
+  <!-- Load -->
   <div class="section-title">📈 训练负荷</div>
   <div class="load-card">
     <div class="load-header">
@@ -192,19 +242,14 @@ body{background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSy
     </div>
   </div>
 
-  <!-- AI Insight Section -->
-  <div id="aiArea"></div>
-
-  <!-- Empty State -->
+  <!-- Empty -->
   <div class="empty-state" id="emptyState" style="display:none">
     <div class="icon">📡</div>
     <h2>暂无数据</h2>
-    <p>点击「同步」拉取运动数据，AI 教练将为你生成每日训练报告。</p>
-    <button class="btn primary" onclick="doSync()" style="font-size:14px;padding:10px 28px">🔄 开始同步</button>
+    <p>选择日期，点击「同步」生成日报。</p>
   </div>
 
-  <!-- Footer -->
-  <div class="footer">Built with <span>Rundown</span></div>
+  <div class="footer">Built with <span>neurun</span></div>
 </div>
 
 </div><!-- /.container -->
@@ -212,147 +257,154 @@ body{background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSy
 <script>
 function $(id){return document.getElementById(id)}
 
+// ── Theme ──
+var savedTheme = localStorage.getItem('neurun-theme')||'dark';
+document.body.setAttribute('data-theme', savedTheme);
+document.querySelectorAll('.theme-btn').forEach(function(b){
+  b.classList.toggle('active', b.dataset.theme===savedTheme);
+});
+
+function setTheme(t){
+  document.body.setAttribute('data-theme', t);
+  localStorage.setItem('neurun-theme', t);
+  document.querySelectorAll('.theme-btn').forEach(function(b){
+    b.classList.toggle('active', b.dataset.theme===t);
+  });
+}
+
+// ── Render ──
 function render(d){
   if(!d.has_data){
     $('dashboard').style.display='block';
     $('emptyState').style.display='block';
-    $('syncStatus').textContent='未同步';
     return;
   }
-
   $('dashboard').style.display='block';
   $('loading').style.display='none';
   $('emptyState').style.display='none';
 
-  var sl = d.last_night_sleep||{};
-  var rc = d.recovery||{};
-  var mo = d.this_morning||{};
-  var ya = d.yesterday_activities||{};
-  var ld = d.training_load||{};
-  var ai = d.ai_insight||{};
+  // Plan context
+  var pc=d.plan_context||{};
+  if(pc.exists){
+    $('planStrip').style.display='flex';
+    $('planPhase').textContent=pc.phase||'—';
+    $('planWeek').textContent=pc.weeks_to_race||'—';
+    $('planTarget').textContent=(pc.weekly_km_target||'—')+' km';
+    $('planNote').textContent='📋 大纲已生效';
+  }else{
+    $('planStrip').style.display='none';
+  }
 
-  // Hero
-  $('heroSleep').innerHTML = (sl.total_hours||'—')+'<span>h</span>';
-  $('heroSleepQuality').textContent = sl.quality||'—';
-  $('heroRecovery').innerHTML = (rc.overall_score||'—')+'<span>/100</span>';
-  $('heroRecoveryLevel').textContent = rc.level||'—';
-  $('heroReadiness').textContent = mo.training_readiness_score||'—';
-  $('heroReadinessLevel').textContent = mo.training_readiness_level||'—';
+  var sl=d.last_night_sleep||{}, rc=d.recovery||{}, mo=d.this_morning||{};
+  var ya=d.yesterday_activities||{}, ld=d.training_load||{}, ai=d.ai_insight||{};
 
-  // Metrics
-  $('metHrv').textContent = mo.hrv_ms||'—';
-  $('metRhr').textContent = mo.resting_hr||'—';
-  $('metBb').textContent = mo.body_battery_morning!=null?mo.body_battery_morning:'—';
-  $('metStress').textContent = mo.avg_stress||'—';
+  // ── AI Insight (置顶) ──
+  var aiHtml='';
+  if(ai.conclusion){
+    aiHtml+='<div class="section-title" style="margin-top:0">🤖 AI 教练洞察</div>';
+    var pe=ai.plan_execution||{};
+    if(pe.today_planned){
+      var mc=pe.today_match==='完全执行'?'var(--performance)':pe.today_match==='部分执行'?'var(--warning)':'var(--danger)';
+      aiHtml+='<div class="plan-exec-card">';
+      aiHtml+='<div class="pe-row"><span class="pe-label">大纲要求</span><span class="pe-val">'+pe.today_planned+'</span></div>';
+      aiHtml+='<div class="pe-row"><span class="pe-label">实际执行</span><span class="pe-val">'+pe.today_actual+'</span></div>';
+      aiHtml+='<div class="pe-row"><span class="pe-label">执行状态</span><span class="pe-val" style="color:'+mc+'">'+pe.today_match+'</span></div>';
+      if(pe.week_completion)aiHtml+='<div class="pe-row"><span class="pe-label">本周完成</span><span class="pe-val">'+pe.week_completion+'</span></div>';
+      if(pe.deviation_note)aiHtml+='<div class="pe-row"><span class="pe-label">偏离说明</span><span class="pe-val">'+pe.deviation_note+'</span></div>';
+      aiHtml+='</div>';
+    }
+    aiHtml+='<div class="ai-section">';
+    aiHtml+='<div class="ai-conclusion">'+ai.conclusion+'</div>';
+    (ai.observations||[]).forEach(function(o){aiHtml+='<div class="ai-block"><ul><li>'+o+'</li></ul></div>'});
+    if(ai.model)aiHtml+='<div class="ai-model">模型: '+ai.model+(ai.plan_adjusted?' | 大纲已调整':'')+'</div>';
+    aiHtml+='</div>';
+  }
+  $('aiArea').innerHTML=aiHtml;
+
+  // ── Hero ──
+  $('heroSleep').innerHTML=(sl.total_hours||'—')+'<span>h</span>';
+  $('heroSleepQuality').textContent=sl.quality||'—';
+  $('heroRecovery').innerHTML=(rc.overall_score||'—')+'<span>/100</span>';
+  $('heroRecoveryLevel').textContent=rc.level||'—';
+  $('heroReadiness').textContent=mo.training_readiness_score||'—';
+  $('heroReadinessLevel').textContent=mo.training_readiness_level||'—';
+
+  $('metHrv').textContent=mo.hrv_ms||'—';
+  $('metRhr').textContent=mo.resting_hr||'—';
+  $('metBb').textContent=mo.body_battery_morning!=null?mo.body_battery_morning:'—';
+  $('metStress').textContent=mo.avg_stress||'—';
 
   // Training
-  var trainHtml = '';
+  var t='';
   if(ya.is_rest_day){
-    trainHtml = '<div class="rest-card"><div class="rest-emoji">🧘</div><h3>休息日</h3>';
-    var steps = ya.daily_steps||0, dist = ya.daily_distance_km||0;
-    trainHtml += '<p class="rest-detail">'+(steps>5000?steps+' 步 · '+dist.toFixed(1)+' km':'身体在恢复中')+'</p></div>';
+    t='<div class="rest-card"><div class="rest-emoji">🧘</div><h3>休息日</h3>';
+    var steps=ya.daily_steps||0,dist=ya.daily_distance_km||0;
+    t+='<p class="rest-detail">'+(steps>5000?steps+' 步 · '+dist.toFixed(1)+' km':'身体在恢复中')+'</p></div>';
     if(steps>0){
-      trainHtml += '<div class="activity-summary-strip">';
-      trainHtml += '<span>👣 '+steps+' 步</span>';
-      if(dist>0) trainHtml += '<span>📏 '+dist.toFixed(1)+' km</span>';
-      if(ya.daily_active_cal) trainHtml += '<span>🔥 '+ya.daily_active_cal+' cal</span>';
-      trainHtml += '</div>';
+      t+='<div class="activity-summary-strip">';
+      t+='<span>👣 '+steps+' 步</span>';
+      if(dist>0)t+='<span>📏 '+dist.toFixed(1)+' km</span>';
+      if(ya.daily_active_cal)t+='<span>🔥 '+ya.daily_active_cal+' cal</span>';
+      t+='</div>';
     }
   }else{
     if(ya.total_duration_min||ya.total_distance_km){
-      trainHtml += '<div class="activity-summary-strip">';
-      trainHtml += '<span>⏱ '+(ya.total_duration_min||0)+' min</span>';
-      if(ya.total_distance_km) trainHtml += '<span>📏 '+ya.total_distance_km.toFixed(1)+' km</span>';
-      trainHtml += '<span>📊 负荷 '+(ya.total_training_load||0)+'</span>';
-      trainHtml += '</div>';
+      t+='<div class="activity-summary-strip">';
+      t+='<span>⏱ '+(ya.total_duration_min||0)+' min</span>';
+      if(ya.total_distance_km)t+='<span>📏 '+ya.total_distance_km.toFixed(1)+' km</span>';
+      t+='<span>📊 负荷 '+(ya.total_training_load||0)+'</span>';
+      t+='</div>';
     }
-    var sessions = ya.sessions||[];
-    if(sessions.length>0){
-      trainHtml += '<div class="session-cards">';
-      sessions.forEach(function(s){
-        var icon = s.type==='running'?'🏃':s.type==='cycling'?'🚴':s.type==='swimming'?'🏊':'💪';
-        var dkm = s.distance_km?s.distance_km+'km':'';
-        trainHtml += '<div class="session-card">';
-        trainHtml += '<div class="session-icon">'+icon+'</div>';
-        trainHtml += '<div class="session-info"><div class="session-name">'+s.name+'</div><div class="session-type">'+s.type+'</div></div>';
-        trainHtml += '<div class="session-metrics">';
-        trainHtml += '<div class="session-metric"><div class="val">'+s.duration_min+'</div><div class="lbl">min</div></div>';
-        if(dkm) trainHtml += '<div class="session-metric"><div class="val">'+dkm+'</div><div class="lbl">距离</div></div>';
-        trainHtml += '<div class="session-metric"><div class="val">'+(s.avg_hr||'—')+'</div><div class="lbl">HR</div></div>';
-        trainHtml += '<div class="session-metric"><div class="val">'+(s.training_load||0)+'</div><div class="lbl">负荷</div></div>';
-        trainHtml += '</div></div>';
-      });
-      trainHtml += '</div>';
-    }
+    (ya.sessions||[]).forEach(function(s){
+      var icon=s.type==='running'?'🏃':s.type==='cycling'?'🚴':s.type==='swimming'?'🏊':'💪';
+      var dkm=s.distance_km?s.distance_km+'km':'';
+      t+='<div class="session-cards"><div class="session-card">';
+      t+='<div class="session-icon">'+icon+'</div>';
+      t+='<div class="session-info"><div class="session-name">'+s.name+'</div><div class="session-type">'+s.type+'</div></div>';
+      t+='<div class="session-metrics">';
+      t+='<div class="session-metric"><div class="val">'+s.duration_min+'</div><div class="lbl">min</div></div>';
+      if(dkm)t+='<div class="session-metric"><div class="val">'+dkm+'</div><div class="lbl">距离</div></div>';
+      t+='<div class="session-metric"><div class="val">'+(s.avg_hr||'—')+'</div><div class="lbl">HR</div></div>';
+      t+='<div class="session-metric"><div class="val">'+(s.training_load||0)+'</div><div class="lbl">负荷</div></div>';
+      t+='</div></div></div>';
+    });
   }
-  $('trainingArea').innerHTML = trainHtml;
+  $('trainingArea').innerHTML=t;
 
   // Load
-  $('loadAcwr').textContent = ld.acwr||'—';
-  $('loadChronic').textContent = ld.chronic_load||'—';
-  $('loadAcute').textContent = ld.acute_load||'—';
-  $('loadStatus').textContent = ld.acwr_status||'—';
+  $('loadAcwr').textContent=ld.acwr||'—';
+  $('loadChronic').textContent=ld.chronic_load||'—';
+  $('loadAcute').textContent=ld.acute_load||'—';
+  $('loadStatus').textContent=ld.acwr_status||'—';
 
-  // AI
-  var aiHtml = '';
-  if(ai.conclusion){
-    aiHtml += '<div class="section-title">🤖 AI 教练洞察</div>';
-    aiHtml += '<div class="ai-section">';
-    aiHtml += '<div class="ai-conclusion">'+ai.conclusion+'</div>';
-    var obs = ai.observations||[];
-    if(obs.length>0){
-      aiHtml += '<div class="ai-block"><h4>观察</h4><ul>';
-      obs.forEach(function(o){aiHtml += '<li>'+o+'</li>'});
-      aiHtml += '</ul></div>';
-    }
-    if(ai.model) aiHtml += '<div class="ai-model">模型: '+ai.model+'</div>';
-    aiHtml += '</div>';
-  }
-  $('aiArea').innerHTML = aiHtml;
-
-  $('syncStatus').textContent = d.report_date?'已同步 '+d.report_date:'已同步';
 }
 
+// ── Load ──
 async function loadDashboard(){
   $('loading').style.display='block';
   $('dashboard').style.display='none';
   try{
-    var r = await fetch('/api/dashboard');
-    if(r.status===401){location.href='/setup';return}
+    var url='/api/dashboard';
+    var dp=new URLSearchParams(location.search).get('date');
+    if(dp)url+='?date='+dp;
+    var r=await fetch(url);
+    if(r.status===401){location.href='/';return}
     render(await r.json());
   }catch(e){
     $('loading').innerHTML='<p style="color:var(--danger)">加载失败: '+e.message+'</p>';
   }
 }
 
-async function doSync(){
-  var btn = $('syncBtn'), dateVal = $('syncDate').value;
-  btn.disabled=true;btn.innerHTML='<span class="spinner"></span>同步中';
-  try{
-    var body = dateVal ? JSON.stringify({date:dateVal}) : '{}';
-    var r = await fetch('/api/sync',{method:'POST',headers:{'Content-Type':'application/json'},body:body});
-    var d = await r.json();
-    if(d.status==='ok'){
-      // 跳转到指定日期的仪表盘
-      var targetDate = d.date||dateVal||'';
-      if(targetDate) location.href='/?date='+targetDate;
-      else await loadDashboard();
-    }else alert('同步失败: '+(d.message||'未知错误'));
-  }catch(e){alert('同步失败: '+e.message)}
-  btn.disabled=false;btn.textContent='🔄 同步';
+function onDateChange(){
+  var d=$('viewDate').value;
+  if(d)location.href='/?date='+d;
 }
 
-async function doLogout(){
-  await fetch('/api/logout',{method:'POST'});
-  location.href='/setup';
-}
-
-// Init date picker to today
-var todayStr = new Date().toISOString().slice(0,10);
-$('syncDate').value = todayStr;
-// Check URL for date param
-var urlParams = new URLSearchParams(location.search);
-if(urlParams.get('date')) $('syncDate').value = urlParams.get('date');
+// ── Init ──
+var today=new Date().toISOString().slice(0,10);
+$('viewDate').value=today;
+var dp=new URLSearchParams(location.search).get('date');
+if(dp)$('viewDate').value=dp;
 
 loadDashboard();
 </script>

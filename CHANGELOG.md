@@ -3,7 +3,7 @@
 ## [0.1.0] — 2026-06-25
 
 ### Added
-- **CLI**: `rundown init` — 引导式创建 `.env` 配置文件，支持自动同步
+- **CLI**: `neurun init` — 引导式创建 `.env` 配置文件，支持自动同步
 - **Core**: Garmin 数据同步、日报生成、记忆存储系统
 - **AI**: DeepSeek 教练洞察 (`--ai`)、规则引擎 fallback
 - **HTML**: 三主题静态日报（清新/运动/暗黑）、本地存储记住偏好
@@ -15,11 +15,11 @@
 - **Tests**: 46 tests covering config, memory, providers, render
 
 ### Changed
-- 配置加载：支持 `~/.rundown/.env` 全局配置，优先级：系统 env > 项目 .env > ~/.rundown/.env
-- `RUNDOWN_EMAIL` → `RUNDOWN_ACCOUNT`（兼容邮箱和手机号）
-- 默认数据库路径改为 `~/.rundown/data.db`
+- 配置加载：支持 `~/.neurun/.env` 全局配置，优先级：系统 env > 项目 .env > ~/.neurun/.env
+- `NEURUN_EMAIL` → `NEURUN_ACCOUNT`（兼容邮箱和手机号）
+- 默认数据库路径改为 `~/.neurun/data.db`
 - 日报逻辑：训练数据从"昨日"改为"今日"
-- 环境变量：`RUNDOWN_EMAIL/PASSWORD` 替代 `GARMIN_EMAIL/PASSWORD`（兼容旧名）
+- 环境变量：`NEURUN_EMAIL/PASSWORD` 替代 `GARMIN_EMAIL/PASSWORD`（兼容旧名）
 - 图片生成：从 Chrome 改为 Playwright（跨平台）
 - HTML 样式：从暗黑程序员风 → 三主题现代运动风
 

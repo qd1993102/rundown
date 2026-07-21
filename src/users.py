@@ -1,23 +1,33 @@
-"""用户管理模块 — 注册表、API Key、路径映射。
+"""用户管理模块 — 应用账号、API Key 与数据路径映射。
 
-Web 模式下每个用户通过 API Key 标识，数据按 Key 隔离。
-不依赖微信 openid — 服务端自闭环生成 Key，通过 Cookie 维持会话。
+Web 用户通过邀请码创建昵称/邮箱/密码账号。服务端仍用随机 API Key
+作为 Cookie 会话标识和数据目录键，运动平台凭证与应用账号分开管理。
 """
 
 from __future__ import annotations
 
+import hashlib
+import hmac
 import json
 import logging
 import secrets
-from datetime import date, datetime
-from dataclasses import dataclass, field
+import threading
+from dataclasses import dataclass
+from datetime import date
 from pathlib import Path
-from typing import Any
 
 logger = logging.getLogger(__name__)
 
-# API Key 前缀 + 随机 hex（32 字符 = 128 bit 熵）
 _KEY_PREFIX = "rd_"
+_PASSWORD_SCHEME = "scrypt"
+_SCRYPT_N = 2**14
+_SCRYPT_R = 8
+_SCRYPT_P = 1
+_SCRYPT_DKLEN = 32
+
+
+class UserExistsError(ValueError):
+    """注册邮箱已存在。"""
 
 
 def generate_api_key() -> str:
@@ -25,11 +35,60 @@ def generate_api_key() -> str:
     return _KEY_PREFIX + secrets.token_hex(16)
 
 
+def normalize_email(email: str) -> str:
+    """生成用于登录与唯一性比较的邮箱。"""
+    return email.strip().casefold()
+
+
+def hash_password(password: str) -> str:
+    """使用带随机盐的 scrypt 保存密码。"""
+    salt = secrets.token_bytes(16)
+    digest = hashlib.scrypt(
+        password.encode("utf-8"),
+        salt=salt,
+        n=_SCRYPT_N,
+        r=_SCRYPT_R,
+        p=_SCRYPT_P,
+        dklen=_SCRYPT_DKLEN,
+    )
+    return "$".join([
+        _PASSWORD_SCHEME,
+        str(_SCRYPT_N),
+        str(_SCRYPT_R),
+        str(_SCRYPT_P),
+        salt.hex(),
+        digest.hex(),
+    ])
+
+
+def verify_password(password: str, encoded: str) -> bool:
+    """校验 scrypt 密码哈希；格式错误返回 False。"""
+    try:
+        scheme, n, r, p, salt_hex, digest_hex = encoded.split("$", 5)
+        if scheme != _PASSWORD_SCHEME:
+            return False
+        expected = bytes.fromhex(digest_hex)
+        actual = hashlib.scrypt(
+            password.encode("utf-8"),
+            salt=bytes.fromhex(salt_hex),
+            n=int(n),
+            r=int(r),
+            p=int(p),
+            dklen=len(expected),
+        )
+        return hmac.compare_digest(actual, expected)
+    except (TypeError, ValueError):
+        return False
+
+
 @dataclass
 class UserRecord:
-    """用户注册记录。不存 Garmin 密码，只存 Token 状态。"""
+    """用户注册记录；只保存应用密码哈希和运动平台 Token 状态。"""
 
     api_key: str
+    nickname: str = ""
+    email: str = ""
+    password_hash: str = ""
     provider: str = "garmin"
     garmin_domain: str = "garmin.com"
     garmin_email: str = ""
@@ -37,9 +96,17 @@ class UserRecord:
     last_sync: str = ""
     token_status: str = "none"  # none | active | expired
 
-    def to_dict(self) -> dict:
+    @property
+    def has_account(self) -> bool:
+        """是否具备可通过邮箱密码重新登录的应用账号。"""
+        return bool(self.email and self.password_hash)
+
+    def to_dict(self) -> dict[str, str]:
         return {
             "api_key": self.api_key,
+            "nickname": self.nickname,
+            "email": self.email,
+            "password_hash": self.password_hash,
             "provider": self.provider,
             "garmin_domain": self.garmin_domain,
             "garmin_email": self.garmin_email,
@@ -50,16 +117,24 @@ class UserRecord:
 
     @classmethod
     def from_dict(cls, data: dict) -> "UserRecord":
-        return cls(**{k: data.get(k, "") for k in [
-            "api_key", "provider", "garmin_domain", "garmin_email",
-            "created", "last_sync", "token_status",
-        ]})
+        return cls(
+            api_key=str(data.get("api_key", "")),
+            nickname=str(data.get("nickname", "")),
+            email=str(data.get("email", "")),
+            password_hash=str(data.get("password_hash", "")),
+            provider=str(data.get("provider") or "garmin"),
+            garmin_domain=str(data.get("garmin_domain") or "garmin.com"),
+            garmin_email=str(data.get("garmin_email", "")),
+            created=str(data.get("created", "")),
+            last_sync=str(data.get("last_sync", "")),
+            token_status=str(data.get("token_status") or "none"),
+        )
 
 
 class UserManager:
-    """用户管理器 — 注册表读写、路径映射。
+    """用户管理器 — 注册表读写、应用登录与路径映射。
 
-    注册表存储在 data_dir/users.json，每用户一个 JSON 文件。
+    每个用户存储在 ``data_dir/users/<api_key>.json``。
     """
 
     def __init__(self, data_dir: str):
@@ -67,38 +142,59 @@ class UserManager:
         self._users_dir = self._data_dir / "users"
         self._users_dir.mkdir(parents=True, exist_ok=True)
         self._cache: dict[str, UserRecord] = {}
+        self._lock = threading.RLock()
 
-    # ── 注册表 CRUD ────────────────────────────
+    def register_account(self, nickname: str, email: str, password: str) -> UserRecord:
+        """创建可登录的应用账号。调用方须先完成邀请码校验。"""
+        normalized_email = normalize_email(email)
+        with self._lock:
+            if self.find_by_email(normalized_email) is not None:
+                raise UserExistsError("该邮箱已注册，请直接登录")
 
-    def register(self, garmin_email: str = "",
-                 garmin_domain: str = "garmin.com",
-                 provider: str = "garmin") -> UserRecord:
-        """注册新用户，返回含 api_key 的记录。"""
-        api_key = generate_api_key()
-        record = UserRecord(
-            api_key=api_key,
-            provider=provider,
-            garmin_domain=garmin_domain,
-            garmin_email=garmin_email,
-            created=str(date.today()),
-            token_status="none",
-        )
-        self._save(record)
-        self._cache[api_key] = record
-        logger.info("新用户注册: key=%s email=%s", api_key, garmin_email)
+            record = UserRecord(
+                api_key=generate_api_key(),
+                nickname=nickname.strip(),
+                email=normalized_email,
+                password_hash=hash_password(password),
+                created=str(date.today()),
+            )
+            self._save(record)
+            self._cache[record.api_key] = record
+        logger.info("新应用用户注册: key=%s", record.api_key)
         return record
+
+    def authenticate(self, email: str, password: str) -> UserRecord | None:
+        """按应用邮箱和密码登录。"""
+        record = self.find_by_email(email)
+        if record is None or not record.password_hash:
+            return None
+        return record if verify_password(password, record.password_hash) else None
+
+    def find_by_email(self, email: str) -> UserRecord | None:
+        """按规范化邮箱查找应用账号。"""
+        target = normalize_email(email)
+        if not target:
+            return None
+        for record in self.list_all():
+            if normalize_email(record.email) == target:
+                return record
+        return None
 
     def get(self, api_key: str) -> UserRecord | None:
         """通过 API Key 查找用户。"""
         if api_key in self._cache:
             return self._cache[api_key]
-
         path = self._user_path(api_key)
         if not path.exists():
             return None
-
-        data = json.loads(path.read_text(encoding="utf-8"))
-        record = UserRecord.from_dict(data)
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+            record = UserRecord.from_dict(data)
+        except (OSError, json.JSONDecodeError, TypeError):
+            logger.warning("无法读取用户文件: %s", path)
+            return None
+        if not record.has_account:
+            return None
         self._cache[api_key] = record
         return record
 
@@ -107,14 +203,20 @@ class UserManager:
         record = self.get(api_key)
         if record is None:
             return None
-
-        for k, v in kwargs.items():
-            if hasattr(record, k):
-                setattr(record, k, v)
-
+        for key, value in kwargs.items():
+            if hasattr(record, key):
+                setattr(record, key, value)
         self._save(record)
         self._cache[api_key] = record
         return record
+
+    def delete_account(self, api_key: str) -> None:
+        """删除刚创建但未能完成邀请码核销的账号。"""
+        self._cache.pop(api_key, None)
+        try:
+            self._user_path(api_key).unlink(missing_ok=True)
+        except OSError:
+            logger.exception("回滚未完成注册失败: key=%s", api_key)
 
     def list_all(self) -> list[UserRecord]:
         """列出所有注册用户。"""
@@ -122,12 +224,12 @@ class UserManager:
         for path in sorted(self._users_dir.glob("*.json")):
             try:
                 data = json.loads(path.read_text(encoding="utf-8"))
-                records.append(UserRecord.from_dict(data))
+                record = UserRecord.from_dict(data)
+                if record.has_account:
+                    records.append(record)
             except Exception:
                 logger.warning("跳过无效用户文件: %s", path)
         return records
-
-    # ── 路径映射 ───────────────────────────────
 
     def get_token_dir(self, api_key: str) -> str:
         return str(self._data_dir / api_key / "tokens")
@@ -144,15 +246,13 @@ class UserManager:
     def get_backup_path(self, api_key: str) -> str:
         return str(self._data_dir / "backup" / f"{api_key}.db")
 
-    # ── 内部方法 ───────────────────────────────
-
     def _user_path(self, api_key: str) -> Path:
         return self._users_dir / f"{api_key}.json"
 
     def _save(self, record: UserRecord) -> None:
         path = self._user_path(record.api_key)
         path.write_text(
-            json.dumps(record.to_dict(), indent=2, ensure_ascii=False),
+            json.dumps(record.to_dict(), indent=2, ensure_ascii=False) + "\n",
             encoding="utf-8",
         )
 

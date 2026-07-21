@@ -1,12 +1,12 @@
 # 记忆库使用指南
 
-欢迎来到 Rundown 记忆库。这里以人类可读、AI 可消费的格式存储你的运动知识。
+欢迎来到 neurun 记忆库。这里以人类可读、AI 可消费的格式存储你的运动知识。
 
 ## 目录结构
 
 ```
 memory/
-├── auto/           # 自动生成（由 rundown sync 写入，请勿手动编辑）
+├── auto/           # 自动生成（由 neurun sync 写入，请勿手动编辑）
 │   ├── daily/      # 每日综合报告 ⭐
 │   ├── summaries/  # 周/月度运动摘要
 │   ├── recovery/   # 周恢复摘要
@@ -51,18 +51,18 @@ memory/
 
 ```bash
 # 查看记忆列表
-rundown memory list --type daily_report
-rundown memory list --tag 5k --status active
+neurun memory list --type daily_report
+neurun memory list --tag 5k --status active
 
 # 查看单条记忆
-rundown memory show 2025-06-24
+neurun memory show 2025-06-24
 
 # 搜索记忆
-rundown memory list --search "间歇跑"
+neurun memory list --search "间歇跑"
 
 # 创建目标
-rundown memory goal create
+neurun memory goal create
 
 # 完整性检查
-rundown memory check
+neurun memory check
 ```

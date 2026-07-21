@@ -1,3 +1,3 @@
-"""Rundown — Your daily running rundown."""
+"""neurun — Your AI running coach."""
 
 __version__ = "0.1.0"

@@ -384,6 +384,8 @@ class MemoryWriter:
             ),
             # 恢复评分
             "recovery": self._calc_recovery_score(sleep, morning),
+            # 运动大纲上下文
+            "plan_context": self._load_plan_context(),
             # 7 日趋势
             "trends_7d": self._calc_trends(seven_day_metrics),
             # 异常检测
@@ -1476,6 +1478,34 @@ class MemoryWriter:
             return []
 
 
+    def _load_plan_context(self) -> dict[str, Any]:
+        """加载当前运动大纲的核心信息，嵌入日报 front matter。
+
+        如果大纲不存在，返回空 dict，AI 教练会在生成洞察时创建大纲。
+        """
+        try:
+            ms = getattr(self, '_memory_store', None)
+            if ms is None:
+                # MemoryStore 包装了 reader/writer，尝试获取 reader
+                ms = getattr(self, '_reader', None)
+            if ms:
+                plan = ms.get("active-plan")
+                if plan and plan.front_matter:
+                    fm = plan.front_matter
+                    return {
+                        "exists": True,
+                        "phase": fm.get("current_phase", ""),
+                        "weeks_to_race": fm.get("weeks_to_race", ""),
+                        "target_race": fm.get("target_race", ""),
+                        "target_time": fm.get("target_time", ""),
+                        "target_date": fm.get("target_date", ""),
+                        "weekly_km_target": fm.get("weekly_mileage_target", ""),
+                        "updated": fm.get("updated", ""),
+                    }
+        except Exception:
+            pass
+        return {"exists": False}
+
     @staticmethod
     def _infer_fitness_level(pbs: dict[str, Any], info: dict[str, Any]) -> str:
         """根据个人最佳成绩推断运动员水平。"""
@@ -1633,7 +1663,7 @@ class MemoryWriter:
         lines.extend([
             "",
             "---",
-            f"*本报告由 rundown daily 自动生成*",
+            f"*本报告由 neurun daily 自动生成*",
         ])
 
         return "\n".join(lines)
