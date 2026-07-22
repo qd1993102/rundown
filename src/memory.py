@@ -1832,9 +1832,13 @@ class MemoryStore:
         return self.reader.get_index(category)
 
     # 委托 Writer
-    def generate_daily_report(self, user_id: str,
-                               target_date: date | None = None) -> Memory:
-        return self.writer.generate_daily_report(user_id, target_date)
+    def generate_daily_report(
+        self,
+        user_id: str,
+        target_date: date | None = None,
+        ai_insight: dict[str, Any] | None = None,
+    ) -> Memory:
+        return self.writer.generate_daily_report(user_id, target_date, ai_insight)
 
     def generate_weekly_summary(self, user_id: str,
                                  target_date: date | None = None) -> Memory:

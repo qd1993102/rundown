@@ -23,7 +23,7 @@ from .auth import AuthManager, cleanup_expired_mfa_states, get_mfa_state
 from .coach import chat_stream
 from .config import Config, UserConfig
 from .invitations import InvitationError, InvitationStore
-from .main import _do_daily_sync
+from .main import _do_daily_sync, _do_data_sync
 from .memory import Memory, MemoryStore, build_memory_file
 from .storage import Storage
 from .users import UserExistsError, UserManager, UserRecord
@@ -48,7 +48,6 @@ class SyncRequest:
     sync_days: int
     full: bool
     force: bool
-    skip_sync: bool
 
 
 def _get_api_key(request: Request) -> str | None:
@@ -101,7 +100,6 @@ def _parse_sync_request(body: dict[str, Any], default_days: int) -> SyncRequest:
 
     mode = str(body.get("mode") or "legacy").strip().lower()
     force = bool(body.get("force"))
-    skip_sync = bool(body.get("skip_sync"))
 
     def parse_date(value: Any, field_name: str, *, fallback: date | None = None) -> date:
         raw = str(value or "").strip()
@@ -116,7 +114,7 @@ def _parse_sync_request(body: dict[str, Any], default_days: int) -> SyncRequest:
 
     if mode == "single":
         target = parse_date(body.get("date"), "date", fallback=date.today())
-        return SyncRequest("single", target, target, target, 0, False, force, False)
+        return SyncRequest("single", target, target, target, 0, False, force)
 
     if mode == "batch":
         start = parse_date(body.get("from_date"), "from_date")
@@ -126,7 +124,7 @@ def _parse_sync_request(body: dict[str, Any], default_days: int) -> SyncRequest:
         sync_days = (end - start).days
         if sync_days > 365 * 3:
             raise ValueError("批量同步范围不能超过 3 年")
-        return SyncRequest("batch", end, start, end, sync_days, False, force, False)
+        return SyncRequest("batch", end, start, end, sync_days, False, force)
 
     if mode != "legacy":
         raise ValueError("mode 必须是 single 或 batch")
@@ -140,27 +138,7 @@ def _parse_sync_request(body: dict[str, Any], default_days: int) -> SyncRequest:
     if sync_days < 0:
         raise ValueError("sync_days 必须是非负整数")
     start = target - timedelta(days=365 * 3 if full else sync_days)
-    return SyncRequest(
-        "legacy", target, start, target, sync_days, full, force, skip_sync
-    )
-
-
-def _generate_batch_reports(
-    memory_store: MemoryStore,
-    user_id: int,
-    start: date,
-    end: date,
-    existing_target: date,
-) -> int:
-    """为批量同步范围逐日生成报告，跳过已由主流程生成的结束日。"""
-    generated = 0
-    current = start
-    while current <= end:
-        if current != existing_target:
-            memory_store.generate_daily_report(user_id, current)
-        generated += 1
-        current += timedelta(days=1)
-    return generated
+    return SyncRequest("legacy", target, start, target, sync_days, full, force)
 
 
 def _migrate_legacy_coros_auth(user_manager, user, user_cfg: UserConfig) -> bool:
@@ -628,13 +606,13 @@ def register_web_routes(server, user_manager: UserManager, config: Config):
 
     @server.custom_route("/api/sync", methods=["POST"])
     async def api_sync(request: Request) -> Response:
-        """触发数据同步 + 生成日报（直接复用 CLI 的 _do_daily_sync）。
+        """只同步并持久化数据，不生成或覆盖日报。
 
         Request body (JSON):
             单日: {"mode": "single", "date": "YYYY-MM-DD", "force": false}
             批量: {"mode": "batch", "from_date": "YYYY-MM-DD",
                    "to_date": "YYYY-MM-DD", "force": false}
-            未提供 mode 时兼容旧版 date/sync_days/full/skip_sync 参数。
+            未提供 mode 时兼容旧版 date/sync_days/full 参数。
         """
         api_key = _get_api_key(request)
         user = user_manager.get(api_key) if api_key else None
@@ -666,22 +644,11 @@ def register_web_routes(server, user_manager: UserManager, config: Config):
             )
 
         try:
-            mem, _provider, storage, _ms, _uid = _do_daily_sync(
+            _provider, storage, _ms, _uid = _do_data_sync(
                 config=user_cfg, target=sync_request.target,
                 sync_days=sync_request.sync_days, full_sync=sync_request.full,
-                force_sync=sync_request.force, skip_sync=sync_request.skip_sync,
-                quiet=True,
+                force_sync=sync_request.force, quiet=True,
             )
-
-            reports_generated = 1
-            if sync_request.mode == "batch":
-                reports_generated = _generate_batch_reports(
-                    _ms,
-                    user_id=_uid,
-                    start=sync_request.start,
-                    end=sync_request.end,
-                    existing_target=sync_request.target,
-                )
 
             # 备份数据库
             storage.backup_to(user_manager.get_backup_path(api_key))
@@ -690,18 +657,15 @@ def register_web_routes(server, user_manager: UserManager, config: Config):
             return JSONResponse({
                 "status": "ok",
                 "message": (
-                    f"单日同步完成，已生成 {sync_request.target} 日报"
+                    f"单日同步完成（{sync_request.target}）"
                     if sync_request.mode == "single"
-                    else f"批量同步完成（{sync_request.start} ~ {sync_request.end}），"
-                         f"已生成 {reports_generated} 份逐日日报"
+                    else f"批量同步完成（{sync_request.start} ~ {sync_request.end}）"
                     if sync_request.mode == "batch"
-                    else f"同步完成，已生成 {sync_request.target} 日报"
+                    else f"同步完成（{sync_request.start} ~ {sync_request.end}）"
                 ),
                 "mode": sync_request.mode,
                 "from_date": str(sync_request.start),
                 "to_date": str(sync_request.end),
-                "date": str(sync_request.target),
-                "reports_generated": reports_generated,
             })
 
         except Exception as exc:
@@ -820,6 +784,43 @@ def register_web_routes(server, user_manager: UserManager, config: Config):
 
         summaries.sort(key=lambda x: x["date"], reverse=True)
         return JSONResponse(summaries)
+
+    @server.custom_route("/api/reports", methods=["POST"])
+    async def api_report_generate(request: Request) -> Response:
+        """基于本地 SQLite 显式生成指定日期日报。"""
+        api_key = _get_api_key(request)
+        user = user_manager.get(api_key) if api_key else None
+        if not user or user.token_status != "active":
+            return JSONResponse({"status": "error", "message": "请先绑定数据源"}, status_code=401)
+
+        try:
+            body = await request.json()
+            raw_date = str(body.get("date", "")).strip()
+            target = date.fromisoformat(raw_date)
+        except (AttributeError, TypeError, ValueError):
+            return JSONResponse(
+                {"status": "error", "message": "date 格式无效，应为 YYYY-MM-DD"},
+                status_code=400,
+            )
+
+        user_cfg = config.for_user(api_key)
+        user_manager.ensure_dirs(api_key)
+        try:
+            _do_daily_sync(
+                config=user_cfg,
+                target=target,
+                skip_sync=True,
+                quiet=True,
+            )
+        except Exception as exc:
+            logger.error("日报生成失败: %s", exc)
+            return JSONResponse({"status": "error", "message": str(exc)}, status_code=500)
+
+        return JSONResponse({
+            "status": "ok",
+            "message": f"{target} 日报已生成",
+            "date": str(target),
+        })
 
     @server.custom_route("/api/profile", methods=["GET"])
     async def api_profile_get(request: Request) -> Response:

@@ -1,6 +1,6 @@
 # 设计方案 — 13. Web Chat 部署方案（多用户）
 
-> 版本: v2.1 · 更新日期: 2026-07-21 · 状态: 已实现
+> 版本: v2.2 · 更新日期: 2026-07-22 · 状态: 已实现
 
 ---
 
@@ -92,8 +92,14 @@ sequenceDiagram
     User->>Web: 点击"开始同步"
     Web->>VPS: POST /api/sync
     VPS->>Garmin: 拉取活动 + 健康数据
-    VPS->>VPS: 写入 SQLite + 生成日报
-    VPS-->>Web: 同步完成，跳转聊天页
+    VPS->>VPS: 只写入 SQLite
+    VPS-->>Web: 同步完成
+    User->>Web: 选择日期并点击"生成日报"
+    Web->>VPS: POST /api/reports
+    VPS->>VPS: 从 SQLite 生成结构化日报
+    VPS->>DS: 使用 prompts/coach.md 生成 AI 洞察
+    VPS->>VPS: 将 AI 洞察写入 Front Matter 与正文
+    VPS-->>Web: 日报生成完成
 
     Note over User,DS: === 日常使用 ===
 
@@ -106,10 +112,9 @@ sequenceDiagram
     User->>Web: 点击"同步"
     Web->>VPS: POST /api/sync
     VPS->>Garmin: 拉取活动 + 健康数据
-    VPS->>VPS: 写入 SQLite + 生成日报
+    VPS->>VPS: 只写入 SQLite
     VPS-->>Web: 同步完成
-    Web->>VPS: GET /api/dashboard
-    VPS-->>Web: 更新后的仪表盘数据
+    User->>Web: 按需进入日报页显式生成日报
 ```
 
 ---
@@ -166,13 +171,15 @@ VPS 磁盘是持久化的，容器重启不丢。OSS 仅作为灾备，初期可
 |------|------|
 | `src/config.py` | + `non_interactive` + `UserConfig` 多用户路径 + 邀请码文件配置 |
 | `src/auth.py` | `start_login()` / `complete_mfa()` 两步拆分 |
-| `src/storage.py` | + `backup_to()` / `restore_from()` |
+| `src/storage.py` | + `backup_to()` / `restore_from()`；从用户 SQLite 解析唯一平台用户 ID |
 | `src/providers/garmin.py` | `non_interactive` 参数传递 |
-| `src/main.py` | + `cmd_serve` Web 服务入口 |
+| `src/main.py` | + `cmd_serve` Web 服务入口；拆分纯同步与日报生成核心流程 |
+| `src/memory.py` | 日报生成接口透传在线 AI 洞察，以同一洞察重新渲染正文 |
+| `src/web.py` | 分离 `POST /api/sync` 与 `POST /api/reports` 的职责 |
 
 ### 5.3 不改的文件
 
-`src/mcp_server.py`、`src/memory.py`、`src/coach.py`、`src/render.py`、`src/image.py`、`src/activity.py`
+`src/mcp_server.py`、`src/coach.py`、`src/render.py`、`src/image.py`、`src/activity.py`
 
 ---
 
@@ -253,7 +260,14 @@ async def api_sync(request): ...
     # 单一 Coros 用户升级时，可安全迁移旧版全局 token；多用户时禁止猜测归属
     # mode=single: date → 精确单日，内部 sync_days=0
     # mode=batch: from_date/to_date → 包含首尾日期的精确范围
-    # 未提供 mode 时兼容旧版 date/sync_days/full/skip_sync
+    # 只同步和持久化数据，不生成或覆盖日报
+    # 未提供 mode 时兼容旧版 date/sync_days/full
+
+@server.custom_route("/api/reports", methods=["POST"])
+async def api_report_generate(request): ...
+    # 用户显式选择 date，只读取本地 SQLite，不触发平台同步
+    # 结构化日报生成后，用 prompts/coach.md 生成在线 AI 洞察
+    # AI 成功时重新渲染正文；未配置或调用失败时保留本地规则兜底
 
 @server.custom_route("/api/status", methods=["GET"])
 async def api_status(request): ...
@@ -309,17 +323,20 @@ web/templates/chat.html    (~300行)
 
 同步管理页 `web/templates/sync.html` 提供两个明确入口：
 
-| 模式 | 请求字段 | 后端标准化 | 报告日期 |
-|------|----------|------------|----------|
-| 单日同步 | `mode=single`, `date` | `start=end=date`, `sync_days=0` | `date` |
-| 批量同步 | `mode=batch`, `from_date`, `to_date` | `sync_days=(to-from).days`，范围包含首尾，并逐日调用 `MemoryStore.generate_daily_report` | 范围内每一天 |
+| 模式 | 请求字段 | 后端标准化 | 日报副作用 |
+|------|----------|------------|------------|
+| 单日同步 | `mode=single`, `date` | `start=end=date`, `sync_days=0` | 无 |
+| 批量同步 | `mode=batch`, `from_date`, `to_date` | `sync_days=(to-from).days`，范围包含首尾 | 无 |
 
 日期缺失、格式错误、开始日期晚于结束日期或范围超过 3 年时，API 返回 HTTP 400 和
 可操作的 JSON 错误信息。两种模式都允许 `force=true` 强制覆盖相应范围的数据。
-批量模式的主流程先为 `to_date` 生成报告并调用在线 AI 教练，再由
-`_generate_batch_reports()` 补建其余历史日期；历史报告只使用 `MemoryWriter` 的本地
-规则洞察，避免 N 天范围产生 N 次外部 AI 调用。响应以 `reports_generated` 返回实际
-逐日报告数量，`/api/reports` 因而能展示整个批量范围。
+同步完成后只返回标准化的数据范围，不调用 `MemoryStore.generate_daily_report()`，也不调用在线 AI。
+
+日报页通过 `POST /api/reports` 提供独立的用户触发入口。后端先调用
+`MemoryStore.generate_daily_report()` 汇总本地 SQLite，再将其 Front Matter 交给
+`coach.get_coach_insight()`；该调用的 system prompt 必须来自 `prompts/coach.md`。
+AI 调用成功后以返回洞察重新生成日报，确保 YAML Front Matter、Markdown 正文和 Web 仪表盘一致；
+未配置 `DEEPSEEK_API_KEY` 或在线调用失败时，初次生成的本地规则洞察保留为可用降级结果。
 
 风格参考你现有的 `render.py` 设计品味——简洁、大气、运动感。
 

@@ -136,7 +136,7 @@ body{background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSy
 <div class="empty-state" id="emptyState" style="display:none">
   <div class="icon">📭</div>
   <h2>暂无日报</h2>
-  <p>点击<a href="/" style="color:var(--accent)">仪表盘</a>同步数据，生成第一篇日报。</p>
+  <p>先到<a href="/sync" style="color:var(--accent)">同步页</a>拉取数据，再在上方选择日期生成日报。</p>
 </div>
 
 <div class="footer">Built with <span>neurun</span></div>
@@ -211,7 +211,7 @@ async function genReport(){
   btn.disabled=true;btn.innerHTML='<span class="spinner-sm"></span>生成中';
   msg.textContent='';
   try{
-    var r=await fetch('/api/sync',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({date:d,skip_sync:true})});
+    var r=await fetch('/api/reports',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({date:d})});
     var j=await r.json();
     if(j.status==='ok'){
       msg.innerHTML='<span style="color:var(--performance)">✅ 已生成 <a href="/?date='+j.date+'" style="color:var(--recovery)">查看 →</a></span>';

@@ -106,7 +106,7 @@ body{background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSy
 <!-- Single-day Sync -->
 <div class="card">
   <h2>📅 单日同步 <span class="mode-badge">SINGLE</span></h2>
-  <div class="card-subtitle">只拉取指定日期的数据，并生成该日的日报。</div>
+  <div class="card-subtitle">只拉取并保存指定日期的数据，不生成日报。</div>
 
   <div class="form-row">
     <div class="form-group grow">
@@ -127,7 +127,7 @@ body{background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSy
 <!-- Batch Sync -->
 <div class="card">
   <h2>📚 批量同步 <span class="mode-badge">BATCH</span></h2>
-  <div class="card-subtitle">按明确的开始和结束日期批量补齐数据，并生成结束日期的日报。</div>
+  <div class="card-subtitle">按明确的开始和结束日期批量补齐数据，不生成日报。</div>
 
   <div class="form-row">
     <div class="form-group grow">
@@ -161,7 +161,7 @@ body{background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSy
 
 <!-- Sync History -->
 <div class="card">
-  <h2>📋 同步记录</h2>
+  <h2>📰 最近日报</h2>
   <div id="historyList" style="color:var(--text-muted);font-size:13px">加载中...</div>
 </div>
 
@@ -204,7 +204,7 @@ async function loadHistory(){
     var r=await fetch('/api/reports');
     var reports=await r.json();
     var el=document.getElementById('historyList');
-    if(!reports.length){el.innerHTML='<div style="text-align:center;padding:16px 0">暂无同步记录</div>';return}
+    if(!reports.length){el.innerHTML='<div style="text-align:center;padding:16px 0">暂无日报</div>';return}
     var h='';
     reports.forEach(function(r){
       var d=new Date(r.date+'T00:00:00'),wd='';
@@ -233,7 +233,7 @@ async function submitSync(btn,body){
     var d=await r.json();
     var el=document.getElementById('syncResult');
     if(d.status==='ok'){
-      el.innerHTML='<div class="result-msg">✅ 同步完成<br><a href="/?date='+d.date+'">查看 '+d.date+' 日报 →</a></div>';
+      el.innerHTML='<div class="result-msg">✅ '+d.message+'<br><a href="/reports">前往日报页自主生成 →</a></div>';
       loadStatus();
     }else if(r.status===401){
       el.innerHTML='<div class="result-msg error">❌ '+(d.message||'登录已失效')+'<br><a href="/setup">重新绑定 →</a></div>';

@@ -3,6 +3,8 @@
 import logging
 from datetime import date
 
+import pytest
+
 
 def test_progress_reporter_gets_warning_compatibility(caplog):
     """旧版 garmy ProgressReporter 缺少 warning 时不应覆盖原始同步异常。"""
@@ -63,3 +65,42 @@ def test_non_garmin_resync_updates_existing_activity_duration(tmp_path):
     )).scalar_one()
     session.close()
     assert duration == 3600
+
+
+def test_get_local_user_id_reads_unique_id_without_remote_provider(tmp_path):
+    from sqlalchemy import text
+
+    from src.config import Config
+    from src.storage import Storage
+
+    storage = Storage(Config(db_path=str(tmp_path / "data.db")))
+    session = storage.db.get_session()
+    session.execute(text("""
+        INSERT INTO activities (user_id, activity_id, activity_date)
+        VALUES (412749563, 'local-1', '2026-07-19')
+    """))
+    session.commit()
+    session.close()
+
+    assert storage.get_local_user_id() == 412749563
+
+
+def test_get_local_user_id_rejects_mixed_user_database(tmp_path):
+    from sqlalchemy import text
+
+    from src.config import Config
+    from src.storage import Storage
+
+    storage = Storage(Config(db_path=str(tmp_path / "data.db")))
+    session = storage.db.get_session()
+    session.execute(text("""
+        INSERT INTO activities (user_id, activity_id, activity_date)
+        VALUES
+            (1, 'local-1', '2026-07-19'),
+            (2, 'local-2', '2026-07-19')
+    """))
+    session.commit()
+    session.close()
+
+    with pytest.raises(RuntimeError, match="多个平台用户 ID"):
+        storage.get_local_user_id()

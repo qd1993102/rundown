@@ -148,8 +148,11 @@ docker compose exec neurun neurun invite create --output json
 
 `/sync` 将同步分为两个独立入口：
 
-- **单日同步**：选择一个日期，只拉取该日数据并生成该日日报。
-- **批量同步**：选择开始和结束日期（包含首尾两天），批量补齐数据并为范围内每一天生成日报。
+- **单日同步**：选择一个日期，只拉取并保存该日数据。
+- **批量同步**：选择开始和结束日期（包含首尾两天），批量补齐并保存范围内数据。
+
+同步不会生成或覆盖日报。用户需要前往 `/reports` 选择日期并点击“生成日报”，
+该操作只读取已同步到本地 SQLite 的数据，不会再次访问运动平台。
 
 两种模式均支持“强制覆盖已有数据”。对应的机器可读请求为：
 
@@ -161,10 +164,20 @@ docker compose exec neurun neurun invite create --output json
 {"mode":"batch","from_date":"2026-07-01","to_date":"2026-07-19","force":false}
 ```
 
-`POST /api/sync` 成功响应包含 `mode`、`from_date`、`to_date`、报告 `date` 和
-`reports_generated`。批量模式只对结束日期调用在线 AI 教练，历史日期使用本地规则生成
-结构化洞察，避免一次补数据触发大量外部 AI 请求；
-未提供 `mode` 时继续兼容原来的 `date`、`sync_days`、`full`、`skip_sync` 请求。
+`POST /api/sync` 成功响应包含 `mode`、`from_date`、`to_date`，不包含日报生成结果。
+未提供 `mode` 时继续兼容原来的 `date`、`sync_days`、`full` 请求格式。
+
+显式生成日报使用：
+
+显式生成接口为 `POST /api/reports`，请求体：
+
+```json
+{"date":"2026-07-19"}
+```
+
+日报先基于本地数据生成结构化指标，再通过 `prompts/coach.md` 驱动在线 AI 教练生成洞察，
+并将洞察写入 Front Matter 和 Markdown 正文。未配置 `DEEPSEEK_API_KEY` 或在线调用失败时，
+保留本地规则洞察作为降级结果。
 
 ---
 

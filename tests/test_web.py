@@ -1,10 +1,63 @@
-"""测试 Web 多用户同步的兼容迁移。"""
+"""测试 Web 多用户同步与日报生成。"""
 
+import asyncio
+import json
 from datetime import date
 from types import SimpleNamespace
 from unittest import mock
 
 import pytest
+from starlette.requests import Request
+
+from src.config import Config
+from src.users import UserManager
+from src.web import register_web_routes
+
+
+class _FakeServer:
+    def __init__(self):
+        self.routes = {}
+
+    def custom_route(self, path, methods):
+        def decorator(func):
+            for method in methods:
+                self.routes[(path, method)] = func
+            return func
+        return decorator
+
+
+def _request(path, body, api_key):
+    raw = json.dumps(body).encode()
+    delivered = False
+
+    async def receive():
+        nonlocal delivered
+        if delivered:
+            return {"type": "http.disconnect"}
+        delivered = True
+        return {"type": "http.request", "body": raw, "more_body": False}
+
+    return Request({
+        "type": "http",
+        "method": "POST",
+        "scheme": "http",
+        "path": path,
+        "raw_path": path.encode(),
+        "query_string": b"",
+        "headers": [
+            (b"content-type", b"application/json"),
+            (b"cookie", f"neurun_key={api_key}".encode()),
+        ],
+        "client": ("127.0.0.1", 12345),
+        "server": ("testserver", 80),
+    }, receive)
+
+
+def _active_user(tmp_path):
+    manager = UserManager(str(tmp_path))
+    user = manager.register_account("跑者", "runner@example.com", "safe-password")
+    manager.update(user.api_key, token_status="active")
+    return manager, user
 
 
 def test_legacy_coros_token_migrates_only_for_single_active_user(tmp_path):
@@ -82,46 +135,93 @@ def test_parse_batch_sync_request_rejects_reversed_range():
         }, default_days=30)
 
 
-def test_parse_sync_request_keeps_legacy_payload_compatible():
+def test_parse_sync_request_keeps_legacy_sync_payload_compatible():
     from src.web import _parse_sync_request
 
     parsed = _parse_sync_request({
         "date": "2026-07-19",
         "sync_days": 30,
-        "skip_sync": True,
     }, default_days=7)
 
     assert parsed.mode == "legacy"
     assert parsed.target == date(2026, 7, 19)
     assert parsed.sync_days == 30
-    assert parsed.skip_sync is True
+    assert not hasattr(parsed, "skip_sync")
 
 
-def test_generate_batch_reports_backfills_each_day_except_existing_target():
-    from src.web import _generate_batch_reports
+def test_sync_route_only_persists_data_without_generating_reports(tmp_path, monkeypatch):
+    import src.web as web
 
-    class FakeMemoryStore:
-        def __init__(self):
-            self.generated = []
+    manager, user = _active_user(tmp_path)
+    server = _FakeServer()
+    config = Config(data_dir=str(tmp_path))
+    calls = []
 
-        def generate_daily_report(self, user_id, target_date):
-            self.generated.append((user_id, target_date))
-            return SimpleNamespace(id=str(target_date))
+    class FakeStorage:
+        def backup_to(self, path):
+            calls.append(("backup", path))
 
-    store = FakeMemoryStore()
-    count = _generate_batch_reports(
-        store,
-        user_id=123,
-        start=date(2026, 7, 17),
-        end=date(2026, 7, 19),
-        existing_target=date(2026, 7, 19),
-    )
+    def fake_sync(**kwargs):
+        calls.append(("sync", kwargs))
+        return SimpleNamespace(), FakeStorage(), SimpleNamespace(), 123
 
-    assert count == 3
-    assert store.generated == [
-        (123, date(2026, 7, 17)),
-        (123, date(2026, 7, 18)),
-    ]
+    monkeypatch.setattr(web, "_do_data_sync", fake_sync)
+    register_web_routes(server, manager, config)
+
+    response = asyncio.run(server.routes[("/api/sync", "POST")](_request(
+        "/api/sync",
+        {"mode": "batch", "from_date": "2026-07-17", "to_date": "2026-07-19"},
+        user.api_key,
+    )))
+    payload = json.loads(response.body)
+
+    assert response.status_code == 200
+    assert payload == {
+        "status": "ok",
+        "message": "批量同步完成（2026-07-17 ~ 2026-07-19）",
+        "mode": "batch",
+        "from_date": "2026-07-17",
+        "to_date": "2026-07-19",
+    }
+    assert calls[0][0] == "sync"
+
+
+def test_report_route_explicitly_generates_without_sync(tmp_path, monkeypatch):
+    import src.web as web
+
+    manager, user = _active_user(tmp_path)
+    server = _FakeServer()
+    config = Config(data_dir=str(tmp_path))
+    calls = []
+
+    def fake_daily(**kwargs):
+        calls.append(kwargs)
+        return (
+            SimpleNamespace(id="2026-07-19"),
+            SimpleNamespace(),
+            SimpleNamespace(),
+            SimpleNamespace(),
+            123,
+        )
+
+    monkeypatch.setattr(web, "_do_daily_sync", fake_daily)
+    register_web_routes(server, manager, config)
+
+    response = asyncio.run(server.routes[("/api/reports", "POST")](_request(
+        "/api/reports", {"date": "2026-07-19"}, user.api_key,
+    )))
+    payload = json.loads(response.body)
+
+    assert response.status_code == 200
+    assert payload == {
+        "status": "ok",
+        "message": "2026-07-19 日报已生成",
+        "date": "2026-07-19",
+    }
+    assert len(calls) == 1
+    assert calls[0]["target"] == date(2026, 7, 19)
+    assert calls[0]["skip_sync"] is True
+    assert calls[0]["quiet"] is True
 
 
 def test_detects_coros_expired_token_error():

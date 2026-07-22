@@ -195,6 +195,33 @@ class Storage:
         except Exception:
             return []
 
+    def get_local_user_id(self) -> int | None:
+        """从当前用户 SQLite 中读取唯一的平台用户 ID，不访问远端平台。"""
+        from sqlalchemy import text
+
+        session = self.db.get_session()
+        try:
+            rows = session.execute(text("""
+                SELECT DISTINCT user_id FROM (
+                    SELECT user_id FROM activities
+                    UNION ALL
+                    SELECT user_id FROM daily_health_metrics
+                    UNION ALL
+                    SELECT user_id FROM sync_status
+                    UNION ALL
+                    SELECT user_id FROM timeseries
+                )
+                ORDER BY user_id
+            """)).scalars().all()
+        finally:
+            session.close()
+
+        if not rows:
+            return None
+        if len(rows) > 1:
+            raise RuntimeError("用户数据库包含多个平台用户 ID，无法确定日报归属")
+        return int(rows[0])
+
     def reset_pending_metrics(self, user_id: int, start: date, end: date,
     force: bool = False) -> int:
         """清理区间内同步记录，强制下次 sync 重新拉取。

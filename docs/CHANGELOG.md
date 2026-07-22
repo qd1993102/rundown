@@ -4,6 +4,13 @@ neurun 项目变更日志，按日期倒序。
 
 ---
 
+## 2026-07-22
+
+### Changed
+- **Web 同步与日报生成解耦**: `POST /api/sync` 现在只拉取并持久化单日或批量数据，不再自动创建或覆盖日报；日报页通过独立的 `POST /api/reports` 由用户选择日期显式生成。显式生成只读取用户 SQLite，并在 `prompts/coach.md` 产出的在线 AI 洞察成功后重新渲染正文，确保 Front Matter、Markdown 与 Web 展示一致；在线 AI 不可用时保留本地规则兜底。
+- **影响范围**: src/main.py, src/web.py, src/storage.py, src/memory.py, web/templates/sync.html, web/templates/reports.html, web/templates/chat.html, tests/test_main.py, tests/test_web.py, tests/test_storage.py
+- **关联文档**: [模块设计](design/04-modules.md), [Web 部署设计](design/13-sae-deployment.md), [开发过程](process/2026-07-22-web-sync-report-separation.md), [README](../README.md)
+
 ## 2026-07-21
 
 ### Added

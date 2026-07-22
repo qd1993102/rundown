@@ -363,16 +363,10 @@ def _sync_provider(provider, storage, user_id: int, start: date, end: date,
     console.print(f"[green]✅ {provider_name} 同步完成[/]")
 
 
-def _do_daily_sync(config, target: date | None = None,
-                   skip_sync: bool = False, full_sync: bool = False,
-                   force_sync: bool = False, sync_days: int | None = None,
-                   quiet: bool = False):
-    """核心同步 + 日报生成逻辑，CLI 与 Web 共用。
-
-    Returns:
-        (memory, provider, storage, user_id) — 供调用方自行渲染/输出。
-        失败时抛出异常。
-    """
+def _do_data_sync(config, target: date | None = None,
+                  full_sync: bool = False, force_sync: bool = False,
+                  sync_days: int | None = None, quiet: bool = False):
+    """核心数据同步逻辑；只写入 SQLite，不生成日报。"""
     _, provider, storage, memory_store, user_id = _setup(config=config)
 
     target = target or date.today()
@@ -381,64 +375,101 @@ def _do_daily_sync(config, target: date | None = None,
         if not quiet:
             console.print(msg)
 
-    # ── Step 1: 同步 ──
-    if not skip_sync:
-        if full_sync:
-            from_day = target - timedelta(days=365 * 3)
-            to_day = target
-        elif sync_days is not None:
-            from_day = target - timedelta(days=sync_days)
+    if full_sync:
+        from_day = target - timedelta(days=365 * 3)
+        to_day = target
+    elif sync_days is not None:
+        from_day = target - timedelta(days=sync_days)
+        to_day = target
+    else:
+        missing_dates = []
+        for i in range(3):
+            d = target - timedelta(days=i)
+            if not storage.has_local_data(user_id, d):
+                missing_dates.append(d)
+        if missing_dates:
+            from_day = missing_dates[-1]
             to_day = target
         else:
-            missing_dates = []
-            for i in range(3):
-                d = target - timedelta(days=i)
-                if not storage.has_local_data(user_id, d):
-                    missing_dates.append(d)
-            if missing_dates:
-                from_day = missing_dates[-1]
-                to_day = target
-            else:
-                from_day = None
-                to_day = None
+            from_day = None
+            to_day = None
 
-        if from_day and to_day:
-            _log(f"[dim]🔄 数据同步: {from_day} ~ {to_day}[/]")
+    if from_day and to_day:
+        _log(f"[dim]🔄 数据同步: {from_day} ~ {to_day}[/]")
+        if force_sync:
+            storage.reset_pending_metrics(user_id, from_day, to_day, force=True)
+
+        if config.provider_type == "garmin":
+            provider.authenticate()
+            # Web 多用户模式：每用户隔离 token_dir，需注入已认证 APIClient
+            if hasattr(provider, 'auth') and hasattr(provider.auth, '_client'):
+                from garmy import APIClient
+                storage.set_api_client(APIClient(auth_client=provider.auth._client))
+            if not force_sync:
+                storage.reset_pending_metrics(user_id, from_day, to_day)
+            storage.sync_range(user_id, from_day, to_day)
+            _sync_garmin_activities(provider, storage, user_id, from_day, to_day)
+        elif config.provider_type in ("coros", "huawei"):
+            if not provider.authenticate():
+                raise RuntimeError(f"{config.provider_type} 认证失败，请重新绑定账号")
+            user_id = provider.user_id
             if force_sync:
                 storage.reset_pending_metrics(user_id, from_day, to_day, force=True)
+            _sync_provider(provider, storage, user_id, from_day, to_day,
+                           config.provider_type)
+    else:
+        _log("[dim]📦 本地数据完整，跳过同步[/]")
 
-            if config.provider_type == "garmin":
-                provider.authenticate()
-                # Web 多用户模式：每用户隔离 token_dir，需注入已认证 APIClient
-                if hasattr(provider, 'auth') and hasattr(provider.auth, '_client'):
-                    from garmy import APIClient
-                    storage.set_api_client(APIClient(auth_client=provider.auth._client))
-                if not force_sync:
-                    storage.reset_pending_metrics(user_id, from_day, to_day)
-                storage.sync_range(user_id, from_day, to_day)
-                _sync_garmin_activities(provider, storage, user_id, from_day, to_day)
-            elif config.provider_type in ("coros", "huawei"):
-                if not provider.authenticate():
-                    raise RuntimeError(f"{config.provider_type} 认证失败，请重新绑定账号")
-                user_id = provider.user_id
-                if force_sync:
-                    storage.reset_pending_metrics(user_id, from_day, to_day, force=True)
-                _sync_provider(provider, storage, user_id, from_day, to_day,
-                               config.provider_type)
-        else:
-            _log("[dim]📦 本地数据完整，跳过同步[/]")
+    return provider, storage, memory_store, user_id
 
-    # ── Step 2: 生成日报 ──
+
+def _local_report_context(config):
+    """创建仅访问本地 SQLite 的日报上下文。"""
+    storage = Storage(config)
+    user_id = storage.get_local_user_id()
+    if user_id is None:
+        raise RuntimeError("本地没有已同步数据，请先同步后再生成日报")
+    memory_store = MemoryStore(
+        config.memory_dir,
+        db_getter=lambda: storage.db,
+    )
+    return None, storage, memory_store, user_id
+
+
+def _do_daily_sync(config, target: date | None = None,
+                   skip_sync: bool = False, full_sync: bool = False,
+                   force_sync: bool = False, sync_days: int | None = None,
+                   quiet: bool = False):
+    """按需同步后生成日报；``skip_sync`` 时严格只读取本地 SQLite。"""
+    target = target or date.today()
+
+    if skip_sync:
+        provider, storage, memory_store, user_id = _local_report_context(config)
+    else:
+        provider, storage, memory_store, user_id = _do_data_sync(
+            config=config,
+            target=target,
+            full_sync=full_sync,
+            force_sync=force_sync,
+            sync_days=sync_days,
+            quiet=quiet,
+        )
+
+    def _log(msg: str) -> None:
+        if not quiet:
+            console.print(msg)
+
     _log("[yellow]📰 生成日报...[/]")
     mem = memory_store.generate_daily_report(user_id, target)
     if mem is None:
         raise RuntimeError(f"无法生成 {target} 的日报")
 
-    # ── Step 3: AI 洞察 ──
     ai_result = _get_ai_insight(mem.front_matter, target, memory_store=memory_store)
     if ai_result:
-        mem.front_matter['ai_insight'] = ai_result
-        mem.save()
+        # 使用 coach.md 产出的同一份洞察重新渲染，保持 Front Matter 与正文一致。
+        mem = memory_store.generate_daily_report(
+            user_id, target, ai_insight=ai_result,
+        )
 
     return mem, provider, storage, memory_store, user_id
 
