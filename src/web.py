@@ -278,6 +278,16 @@ def register_web_routes(server, user_manager: UserManager, config: Config):
 
     invitations = InvitationStore(config.invite_codes_path)
 
+    # ═══ 基础设施路由 ═══
+
+    @server.custom_route("/healthz", methods=["GET", "HEAD"])
+    async def healthz(request: Request) -> Response:
+        """负载均衡存活检查：不依赖会话、用户数据或外部服务。"""
+        headers = {"Cache-Control": "no-store"}
+        if request.method == "HEAD":
+            return Response(status_code=200, headers=headers)
+        return JSONResponse({"status": "ok"}, headers=headers)
+
     # ═══ 页面路由 ═══
 
     @server.custom_route("/", methods=["GET"])

@@ -26,7 +26,7 @@ class _FakeServer:
         return decorator
 
 
-def _request(path, body, api_key):
+def _request(path, body, api_key, method="POST"):
     raw = json.dumps(body).encode()
     delivered = False
 
@@ -39,7 +39,7 @@ def _request(path, body, api_key):
 
     return Request({
         "type": "http",
-        "method": "POST",
+        "method": method,
         "scheme": "http",
         "path": path,
         "raw_path": path.encode(),
@@ -58,6 +58,28 @@ def _active_user(tmp_path):
     user = manager.register_account("跑者", "runner@example.com", "safe-password")
     manager.update(user.api_key, token_status="active")
     return manager, user
+
+
+def test_healthz_is_public_and_supports_get_and_head(tmp_path):
+    manager = mock.Mock()
+    server = _FakeServer()
+    config = Config(data_dir=str(tmp_path))
+    register_web_routes(server, manager, config)
+
+    get_response = asyncio.run(server.routes[("/healthz", "GET")](_request(
+        "/healthz", {}, "", method="GET",
+    )))
+    head_response = asyncio.run(server.routes[("/healthz", "HEAD")](_request(
+        "/healthz", {}, "", method="HEAD",
+    )))
+
+    assert get_response.status_code == 200
+    assert json.loads(get_response.body) == {"status": "ok"}
+    assert get_response.headers["cache-control"] == "no-store"
+    assert head_response.status_code == 200
+    assert head_response.body == b""
+    assert head_response.headers["cache-control"] == "no-store"
+    manager.get.assert_not_called()
 
 
 def test_legacy_coros_token_migrates_only_for_single_active_user(tmp_path):

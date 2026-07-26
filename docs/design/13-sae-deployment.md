@@ -1,6 +1,6 @@
 # 设计方案 — 13. Web Chat 部署方案（多用户）
 
-> 版本: v2.2 · 更新日期: 2026-07-22 · 状态: 已实现
+> 版本: v2.3 · 更新日期: 2026-07-26 · 状态: 已实现
 
 ---
 
@@ -25,6 +25,7 @@ graph TB
     subgraph VPS["轻量应用服务器 ¥68/月 (2C2G 40GB)"]
         subgraph WEB["Web 服务 (Python uvicorn :8080)"]
             PAGES["页面路由<br/>/login /register<br/>/setup / chat"]
+            HEALTH["基础设施路由<br/>GET/HEAD /healthz"]
             API["API 路由<br/>邀请码验证 + 注册/登录<br/>数据源绑定 + 同步/对话"]
             SSE["SSE /api/chat/stream<br/>流式 AI 回复"]
 
@@ -214,6 +215,12 @@ class UserManager:
 复用你现有的 `render.py` 风格——手写 HTML + 内嵌 CSS，不引入前端框架。
 
 ```python
+# 基础设施路由（无会话、用户数据或外部服务依赖）
+@server.custom_route("/healthz", methods=["GET", "HEAD"])
+async def healthz(request): ...
+    # GET → 200 {"status": "ok"}
+    # HEAD → 200，无响应体
+
 # 页面路由（服务端渲染 HTML）
 @server.custom_route("/", methods=["GET"])
 async def index(request): ...
@@ -278,6 +285,10 @@ async def api_logout(request): ...
 
 **为什么不用 Flask/FastAPI？** FastMCP 内置的 uvicorn + Starlette 完全够用，
 `custom_route` 注册路由。零额外依赖。
+
+`/healthz` 是进程存活检查，不是业务就绪检查：它不得读取 Cookie、用户注册表、SQLite，
+也不得调用 Garmin、Coros、Huawei 或 DeepSeek。负载均衡只用它判断 Web 进程能否响应 HTTP；
+业务依赖故障应由各 API 自身的错误和监控暴露。
 
 ### 6.3 `src/auth.py` — MFA 两步
 
@@ -382,6 +393,34 @@ docker compose exec neurun neurun invite create --output json
 # }
 ```
 
+### ECS + CLB 原生部署
+
+CLB 通过 ECS 私网地址访问后端，因此 Web 服务必须监听所有网卡，而不是仅监听回环地址：
+
+```ini
+Environment=MCP_HOST=0.0.0.0
+Environment=MCP_PORT=8080
+```
+
+部署后先分别验证回环地址和 ECS 私网地址；两者都必须返回 200：
+
+```bash
+curl -fsS http://127.0.0.1:8080/healthz
+curl -fsS http://<ECS_PRIVATE_IP>:8080/healthz
+```
+
+CLB 后端服务器端口配置为 `8080`，HTTP 健康检查使用：
+
+| 配置项 | 值 |
+|--------|----|
+| 方法 | `GET`（也兼容 `HEAD`） |
+| 路径 | `/healthz` |
+| 正常状态码 | `2xx` |
+| 域名 | 留空 |
+
+若私网地址请求出现 `Connection refused`，说明连接尚未进入 HTTP 路由，应检查
+`MCP_HOST`、systemd 实际环境、8080 监听地址和主机防火墙，而不是放宽登录鉴权。
+
 ---
 
 ## 9. 成本
@@ -413,7 +452,8 @@ docker compose exec neurun neurun invite create --output json
 ```bash
 # 本地
 docker compose up -d
-curl -I http://localhost:8080/  # → 302 /login
+curl -fsS http://localhost:8080/healthz  # → {"status":"ok"}
+curl -I http://localhost:8080/healthz    # → HTTP 200
 # 浏览器完成邀请码注册、数据源绑定与对话
 
 # 多用户

@@ -4,6 +4,13 @@ neurun 项目变更日志，按日期倒序。
 
 ---
 
+## 2026-07-26
+
+### Fixed
+- **CLB 专用存活检查端点**: 新增无鉴权的 `GET|HEAD /healthz`，固定返回 HTTP 200，且不读取 Cookie、用户数据或外部平台，避免负载均衡健康检查耦合登录业务；部署文档同时明确 ECS 后端必须以 `MCP_HOST=0.0.0.0` 监听私网网卡。
+- **影响范围**: src/web.py, tests/test_web.py, README.md, docs/design/01-project-goals.md, docs/design/13-sae-deployment.md
+- **关联文档**: [Bug 记录](bugfixes/2026-07-26-clb-health-check.md), [项目目标](design/01-project-goals.md), [Web 部署设计](design/13-sae-deployment.md), [README](../README.md)
+
 ## 2026-07-22
 
 ### Changed

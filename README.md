@@ -140,9 +140,22 @@ docker compose exec neurun neurun invite create --output json
 
 相关 Web API：
 
+- `GET|HEAD /healthz`：无鉴权的 Web 进程存活检查，不读取用户数据或访问外部平台；
 - `POST /api/invitations/validate`：验证邀请码，不预占名额；
 - `POST /api/register`：提交 `invite_code`、`nickname`、`email`、`password`；
 - `POST /api/login`：提交应用账号 `email`、`password`。
+
+ECS 通过 CLB 暴露 Web 服务时，进程必须使用 `MCP_HOST=0.0.0.0` 和
+`MCP_PORT=8080` 监听私网网卡，CLB 后端端口设为 `8080`，健康检查方法设为
+`GET`、路径设为 `/healthz`、正常状态码设为 `2xx`。部署后可验证：
+
+```bash
+curl -fsS http://127.0.0.1:8080/healthz
+curl -fsS http://<ECS_PRIVATE_IP>:8080/healthz
+```
+
+若第二条返回 `Connection refused`，请求尚未进入 neurun 路由，应先检查 systemd
+中的 `MCP_HOST` 和实际监听地址，而不是调整登录接口权限。
 
 ### Web 同步页面
 
