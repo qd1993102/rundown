@@ -13,6 +13,8 @@ import re
 import tempfile
 from pathlib import Path
 
+from .local_files import atomic_write_private, restrict_private_file
+
 logger = logging.getLogger(__name__)
 
 
@@ -37,7 +39,7 @@ def render_image_playwright(
 
     html = html_file.read_text(encoding="utf-8")
     html = re.sub(r'<body data-theme="[^"]*"', f'<body data-theme="{theme}"', html)
-    html_file.write_text(html, encoding="utf-8")
+    atomic_write_private(html_file, html, private_parent=False)
 
     logger.info("🎭 Playwright (theme=%s, %dx%d@%dx)...", theme, width, int(width * 1.6), scale)
 
@@ -50,6 +52,8 @@ def render_image_playwright(
         page.goto(f"file://{html_file}", wait_until="networkidle")
         page.screenshot(path=str(out_file), full_page=True)
         browser.close()
+
+    restrict_private_file(out_file)
 
     logger.info("✅ PNG: %s (%d KB)", out_file, out_file.stat().st_size // 1024)
     return str(out_file)
@@ -72,7 +76,7 @@ def render_image_chrome(
 
     html = html_file.read_text(encoding="utf-8")
     html = re.sub(r'<body data-theme="[^"]*"', f'<body data-theme="{theme}"', html)
-    html_file.write_text(html, encoding="utf-8")
+    atomic_write_private(html_file, html, private_parent=False)
 
     chrome_paths = [
         "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
@@ -105,6 +109,8 @@ def render_image_chrome(
 
     if not out_file.exists():
         raise RuntimeError(f"Chrome 截图失败: {result.stderr[:300]}")
+
+    restrict_private_file(out_file)
 
     logger.info("✅ PNG: %s (%d KB)", out_file, out_file.stat().st_size // 1024)
     return str(out_file)

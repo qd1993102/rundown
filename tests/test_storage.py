@@ -1,6 +1,7 @@
 """测试 storage.py — garmy 存储兼容层。"""
 
 import logging
+import stat
 from datetime import date
 
 import pytest
@@ -104,3 +105,38 @@ def test_get_local_user_id_rejects_mixed_user_database(tmp_path):
 
     with pytest.raises(RuntimeError, match="多个平台用户 ID"):
         storage.get_local_user_id()
+
+
+def test_storage_database_and_backup_are_private(tmp_path):
+    from src.config import Config
+    from src.storage import Storage
+
+    db_path = tmp_path / "rd_test" / "data.db"
+    backup_path = tmp_path / "backup" / "rd_test.db"
+    storage = Storage(Config(db_path=str(db_path)))
+
+    _ = storage.db
+    storage.backup_to(backup_path)
+
+    assert stat.S_IMODE(db_path.parent.stat().st_mode) == 0o700
+    assert stat.S_IMODE(db_path.stat().st_mode) == 0o600
+    assert stat.S_IMODE(backup_path.parent.stat().st_mode) == 0o700
+    assert stat.S_IMODE(backup_path.stat().st_mode) == 0o600
+
+
+def test_storage_exports_are_private_files_without_changing_selected_directory(tmp_path):
+    from src.config import Config
+    from src.storage import Storage
+
+    output_dir = tmp_path / "shared-output"
+    output_dir.mkdir(mode=0o755)
+    storage = Storage(Config(db_path=str(tmp_path / "data" / "data.db")))
+    csv_path = output_dir / "activities.csv"
+    json_path = output_dir / "activities.json"
+
+    storage.export_csv([{"activity_id": "1"}], str(csv_path))
+    storage.export_json([{"activity_id": "1"}], str(json_path))
+
+    assert stat.S_IMODE(output_dir.stat().st_mode) == 0o755
+    assert stat.S_IMODE(csv_path.stat().st_mode) == 0o600
+    assert stat.S_IMODE(json_path.stat().st_mode) == 0o600

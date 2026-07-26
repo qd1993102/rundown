@@ -1,6 +1,6 @@
 # 设计方案 — 13. Web Chat 部署方案（多用户）
 
-> 版本: v2.3 · 更新日期: 2026-07-26 · 状态: 已实现
+> 版本: v2.4 · 更新日期: 2026-07-26 · 状态: 已实现
 
 ---
 
@@ -133,6 +133,9 @@ sequenceDiagram
 │   │   ├── oauth1_token.json
 │   │   ├── oauth2_token.json
 │   │   └── coros-auth.json       # Coros 用户绑定 token（0600）
+│   ├── huawei-tokens/
+│   │   ├── group-pals-token      # Huawei 每用户 CrewPals 凭证（0600）
+│   │   └── huawei-oauth.json     # Huawei AT（0600）
 │   ├── memory/
 │   │   ├── auto/daily/...
 │   │   ├── profile/...
@@ -148,6 +151,8 @@ sequenceDiagram
 ```
 
 VPS 磁盘是持久化的，容器重启不丢。OSS 仅作为灾备，初期可跳过。
+`data/` 下的目录统一为 `0700`，敏感文件统一为 `0600`，Web 服务、邀请码 CLI 和
+部署脚本必须使用同一个低权限运行用户；不得用 root 在另一工作目录生成第二套数据。
 
 ---
 

@@ -35,9 +35,28 @@ from .storage import Storage
 from .memory import MemoryStore, MemoryType, MemoryStatus
 from .render import render_daily_html
 from .image import render_daily_image
+from .local_files import (
+    LocalPersistenceError,
+    atomic_write_private,
+    ensure_private_dir,
+    restrict_private_file,
+)
 
 logger = logging.getLogger(__name__)
 console = Console()
+
+
+class ProviderAuthenticationError(RuntimeError):
+    """当前用户的数据源 Token 无法恢复或验证。"""
+
+    def __init__(self, provider_type: str):
+        self.provider_type = provider_type
+        display_name = {
+            "garmin": "Garmin",
+            "coros": "Coros",
+            "huawei": "Huawei",
+        }.get(provider_type, provider_type)
+        super().__init__(f"{display_name} 认证失败，请重新绑定账号")
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -56,6 +75,22 @@ def _setup(config=None):
     from .providers import get_provider
 
     provider = get_provider(config)
+    try:
+        authenticated = provider.authenticate()
+    except LocalPersistenceError:
+        raise
+    except Exception as exc:
+        raise ProviderAuthenticationError(config.provider_type) from exc
+    if not authenticated:
+        raise ProviderAuthenticationError(config.provider_type)
+
+    try:
+        user_id = int(provider.user_id)
+    except Exception as exc:
+        raise ProviderAuthenticationError(config.provider_type) from exc
+    if user_id <= 0:
+        raise ProviderAuthenticationError(config.provider_type)
+
     storage = Storage(config)
 
     # Memory store（Garmin 需要 api_client_getter 补全距离）
@@ -71,7 +106,7 @@ def _setup(config=None):
         api_client_getter=_make_api_client,
     )
 
-    return config, provider, storage, memory_store, provider.user_id
+    return config, provider, storage, memory_store, user_id
 
 
 def _get_user_id(auth: AuthManager) -> int:
@@ -150,7 +185,6 @@ def cmd_sync(args: argparse.Namespace) -> None:
     if config.provider_type == "garmin":
         # Garmin: 使用 garmy SyncManager（健康数据）+ 直同步活动
         try:
-            provider.authenticate()
             result = storage.sync_range(user_id, start, end, args.metrics)
             console.print(f"[green]✅ 同步完成[/]")
             if result:
@@ -165,9 +199,6 @@ def cmd_sync(args: argparse.Namespace) -> None:
     elif config.provider_type in ("coros", "huawei"):
         # Coros/Huawei: Provider 标准化后直接写入 SQLite
         try:
-            if not provider.authenticate():
-                raise RuntimeError(f"{config.provider_type} 认证失败，请重新绑定账号")
-            user_id = provider.user_id
             _sync_provider(provider, storage, user_id, start, end, config.provider_type)
         except Exception as exc:
             console.print(f"[red]❌ 同步失败: {exc}[/]")
@@ -400,7 +431,6 @@ def _do_data_sync(config, target: date | None = None,
             storage.reset_pending_metrics(user_id, from_day, to_day, force=True)
 
         if config.provider_type == "garmin":
-            provider.authenticate()
             # Web 多用户模式：每用户隔离 token_dir，需注入已认证 APIClient
             if hasattr(provider, 'auth') and hasattr(provider.auth, '_client'):
                 from garmy import APIClient
@@ -410,9 +440,6 @@ def _do_data_sync(config, target: date | None = None,
             storage.sync_range(user_id, from_day, to_day)
             _sync_garmin_activities(provider, storage, user_id, from_day, to_day)
         elif config.provider_type in ("coros", "huawei"):
-            if not provider.authenticate():
-                raise RuntimeError(f"{config.provider_type} 认证失败，请重新绑定账号")
-            user_id = provider.user_id
             if force_sync:
                 storage.reset_pending_metrics(user_id, from_day, to_day, force=True)
             _sync_provider(provider, storage, user_id, from_day, to_day,
@@ -510,15 +537,17 @@ def cmd_daily(args: argparse.Namespace) -> None:
 
     # ── 渲染 HTML + PNG ──
     output_dir = Path("output")
-    output_dir.mkdir(parents=True, exist_ok=True)
+    ensure_private_dir(output_dir)
 
     html_path = str(output_dir / f"{target}.html")
     render_daily_html(mem, html_path)
+    restrict_private_file(html_path)
     console.print(f"  🌐 HTML: {html_path}")
 
     png_path = str(output_dir / f"{target}.png")
     try:
         render_daily_image(mem, output_path=png_path, theme=theme)
+        restrict_private_file(png_path)
         console.print(f"  🖼️  PNG: {png_path}")
     except Exception as exc:
         console.print(f"  [yellow]⚠️  PNG 生成失败: {exc}[/]")
@@ -856,20 +885,19 @@ NEURUN_LOG_LEVEL=INFO
             console.print("[yellow]已取消[/]")
             return
 
-    env_path.write_text(env_content)
+    atomic_write_private(env_path, env_content, private_parent=False)
     console.print(f"\n[green]✅ 配置已写入: {env_path}[/]")
     if provider == "huawei":
         token_path = Path(huawei_token_dir).expanduser()
-        token_path.mkdir(mode=0o700, parents=True, exist_ok=True)
-        token_path.chmod(0o700)
+        ensure_private_dir(token_path)
         console.print(f"[green]✅ Huawei Token 目录已准备: {token_path}[/]")
 
     # 询问全局配置
     make_global = _ask("同时写入全局配置 ~/.neurun/.env？(y/n)", "y")
     if make_global.lower() == "y":
         global_dir = Path.home() / ".neurun"
-        global_dir.mkdir(parents=True, exist_ok=True)
-        (global_dir / ".env").write_text(env_content)
+        ensure_private_dir(global_dir)
+        atomic_write_private(global_dir / ".env", env_content)
         console.print(f"[green]✅ 全局配置已写入: {global_dir / '.env'}[/]")
 
     # 询问首次同步
@@ -977,8 +1005,7 @@ def cmd_setup(args: argparse.Namespace) -> None:
             profile_body += f"- **{dist}**: {data['time']}\n"
 
     profile_path = Path(config.memory_dir) / "profile" / "fitness-assessment.md"
-    profile_path.parent.mkdir(parents=True, exist_ok=True)
-    profile_path.write_text(build_memory_file(profile_fm, profile_body), encoding="utf-8")
+    atomic_write_private(profile_path, build_memory_file(profile_fm, profile_body))
     console.print(f"  ✅ 竞技档案: {profile_path}")
 
     # Goal
@@ -1012,8 +1039,7 @@ def cmd_setup(args: argparse.Namespace) -> None:
 创建于 {date.today()}，定期更新。
 """
         goal_path = Path(config.memory_dir) / "goals" / "active" / f"{goal_id}.md"
-        goal_path.parent.mkdir(parents=True, exist_ok=True)
-        goal_path.write_text(build_memory_file(goal_fm, goal_body), encoding="utf-8")
+        atomic_write_private(goal_path, build_memory_file(goal_fm, goal_body))
         console.print(f"  ✅ 训练目标: {goal_path}")
 
     # Preferences
@@ -1049,8 +1075,7 @@ def cmd_setup(args: argparse.Namespace) -> None:
 {injury_history or '无'}
 """
     pref_path = Path(config.memory_dir) / "coaching" / "preferences.md"
-    pref_path.parent.mkdir(parents=True, exist_ok=True)
-    pref_path.write_text(build_memory_file(pref_fm, pref_body), encoding="utf-8")
+    atomic_write_private(pref_path, build_memory_file(pref_fm, pref_body))
     console.print(f"  ✅ 训练偏好: {pref_path}")
 
     console.print("\n[green]✅ Setup 完成！运行 neurun daily 即可自动同步数据并查看日报。[/]")

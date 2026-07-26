@@ -14,6 +14,12 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
+from .local_files import (
+    LocalPersistenceError,
+    atomic_write_private,
+    read_private_text,
+)
+
 logger = logging.getLogger(__name__)
 
 
@@ -185,6 +191,7 @@ class UserConfig:
     password: str = ""
     _domain: str = ""  # 用户选择的 Garmin 区域，覆盖 parent.domain
     provider: str = ""  # 用户绑定的数据源，覆盖服务级 NEURUN_PROVIDER
+    _group_pals_token: str = ""  # Huawei Web 绑定期间的用户级凭证
 
     @property
     def token_dir(self) -> str:
@@ -212,7 +219,33 @@ class UserConfig:
 
     @property
     def group_pals_token(self) -> str:
+        if self._group_pals_token:
+            return self._group_pals_token
+        credential_path = Path(self.huawei_token_dir) / "group-pals-token"
+        if credential_path.exists():
+            try:
+                token = read_private_text(credential_path).strip()
+            except (OSError, LocalPersistenceError) as exc:
+                raise ConfigError(
+                    f"无法读取 Huawei 用户凭证 {credential_path}: {exc}"
+                ) from exc
+            if not token:
+                raise ConfigError(f"Huawei 用户凭证为空: {credential_path}")
+            return token
         return self.parent.group_pals_token
+
+    def set_group_pals_token(self, token: str, *, persist: bool = True) -> None:
+        """设置 Huawei 用户级 CrewPals 凭证，并按需私密持久化。"""
+        normalized = token.strip()
+        if not normalized:
+            raise ConfigError("GROUP_PALS_TOKEN 不能为空")
+        self._group_pals_token = normalized
+        if persist:
+            credential_path = Path(self.huawei_token_dir) / "group-pals-token"
+            try:
+                atomic_write_private(credential_path, normalized + "\n")
+            except LocalPersistenceError as exc:
+                raise ConfigError(str(exc)) from exc
 
     @property
     def huawei_token_dir(self) -> str:

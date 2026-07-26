@@ -11,6 +11,8 @@ from datetime import date, timedelta
 from pathlib import Path
 from typing import Any
 
+from .local_files import atomic_write_private, ensure_private_dir, restrict_private_file
+
 logger = logging.getLogger(__name__)
 
 
@@ -282,8 +284,9 @@ def create_server(
 
         from .image import render_daily_image
         out = f"output/{d}.png"
-        Path(out).parent.mkdir(parents=True, exist_ok=True)
+        ensure_private_dir(Path(out).parent)
         png_path = render_daily_image(mem, output_path=out, theme=theme)
+        restrict_private_file(png_path)
         return f"✅ PNG 已生成: {png_path} (theme={theme})"
 
     @mcp.tool()
@@ -372,8 +375,7 @@ def create_server(
 
         body = "\n".join(body_parts)
         path = Path(config.memory_dir) / "profile" / "fitness-assessment.md"
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(build_memory_file(fm, body), encoding="utf-8")
+        atomic_write_private(path, build_memory_file(fm, body))
         logger.info("Profile updated via MCP")
         return f"✅ 个人资料已更新。身高 {info['height_cm']}cm 体重 {info['weight_kg']}kg，最佳: {list(pbs.keys())}"
 
@@ -422,8 +424,7 @@ def create_server(
 """
 
         path = Path(config.memory_dir) / "goals" / "active" / f"{goal_id}.md"
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(build_memory_file(fm, body), encoding="utf-8")
+        atomic_write_private(path, build_memory_file(fm, body))
         logger.info("Goal created via MCP: %s", goal_id)
         return f"✅ 目标已创建: {name} — {distance} {target_time} (截止 {target_date})"
 
@@ -470,7 +471,7 @@ def create_server(
 
         from .render import render_daily_html
         output_dir = Path("output")
-        output_dir.mkdir(parents=True, exist_ok=True)
+        ensure_private_dir(output_dir)
         output_path = str(output_dir / f"{d}.html")
         render_daily_html(mem, output_path)
         return f"✅ HTML 日报已生成: {output_path}"

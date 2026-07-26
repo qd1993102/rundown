@@ -19,6 +19,8 @@ from typing import Any, Callable
 
 import yaml
 
+from .local_files import atomic_write_private
+
 logger = logging.getLogger(__name__)
 
 
@@ -124,9 +126,8 @@ class Memory:
 
     def save(self) -> None:
         """保存记忆到文件。"""
-        self.path.parent.mkdir(parents=True, exist_ok=True)
         content = build_memory_file(self.front_matter, self.body)
-        self.path.write_text(content, encoding="utf-8")
+        atomic_write_private(self.path, content)
 
     @property
     def status(self) -> MemoryStatus | None:
@@ -618,7 +619,7 @@ class MemoryWriter:
 
         index_path = cat_dir / "index.md"
         content = build_memory_file(fm, body)
-        index_path.write_text(content, encoding="utf-8")
+        atomic_write_private(index_path, content)
         logger.info("📑 索引已重建: %s (%d 条)", index_path, len(entries))
 
     # ── 辅助: 数据查询 (带容错) ────────────────

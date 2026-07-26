@@ -1,5 +1,6 @@
 """测试 render.py — HTML 生成和三主题切换。"""
 
+import stat
 import tempfile
 from datetime import date
 from pathlib import Path
@@ -135,6 +136,7 @@ class TestFullRender:
             assert "2026-06-25" in html
             assert "sport" in html  # default theme
             assert "setTheme" in html  # theme switcher JS
+            assert stat.S_IMODE(Path(f.name).stat().st_mode) == 0o600
 
     def test_dark_theme_selection(self):
         mem = Memory(

@@ -7,6 +7,12 @@ neurun 项目变更日志，按日期倒序。
 ## 2026-07-26
 
 ### Fixed
+- **三平台同步认证顺序与 Huawei 用户凭据**: Garmin、Coros、Huawei 统一先恢复并验证凭据，再读取正整数平台用户 ID 和打开 SQLite；认证失效统一返回 401、标记连接 `expired`，不会继续本地写入。Huawei Web 绑定仅在认证成功后把 CrewPals token 保存到当前用户目录。
+- **影响范围**: src/main.py, src/web.py, src/config.py, tests/test_main.py, tests/test_web.py, tests/test_config.py, tests/test_registration.py
+- **关联文档**: [Bug 记录](bugfixes/2026-07-26-provider-auth-before-user-id.md), [多平台设计](design/12-multi-platform.md), [数据流](design/05-data-flow.md), [开发过程](process/2026-07-26-auth-and-private-persistence-audit.md), [README](../README.md)
+- **本地敏感数据权限与原子写入**: Web 数据目录统一为 `0700`，账号、邀请码、平台凭据、SQLite、备份、记忆、配置和导出文件统一为 `0600`；文本改用同目录原子替换，目录不可写时返回实际路径及 `chown` 建议，ECS 文档明确管理命令使用 systemd 服务用户执行。
+- **影响范围**: src/local_files.py, src/users.py, src/invitations.py, src/storage.py, src/memory.py, src/providers/coros.py, src/providers/huawei.py, src/main.py, src/web.py, src/mcp_server.py, src/coach.py, src/render.py, src/image.py, src/exporter.py
+- **关联文档**: [Bug 记录](bugfixes/2026-07-26-private-local-persistence.md), [模块设计](design/04-modules.md), [Web 部署设计](design/13-sae-deployment.md), [开发过程](process/2026-07-26-auth-and-private-persistence-audit.md), [README](../README.md)
 - **CLB 专用存活检查端点**: 新增无鉴权的 `GET|HEAD /healthz`，固定返回 HTTP 200，且不读取 Cookie、用户数据或外部平台，避免负载均衡健康检查耦合登录业务；部署文档同时明确 ECS 后端必须以 `MCP_HOST=0.0.0.0` 监听私网网卡。
 - **影响范围**: src/web.py, tests/test_web.py, README.md, docs/design/01-project-goals.md, docs/design/13-sae-deployment.md
 - **关联文档**: [Bug 记录](bugfixes/2026-07-26-clb-health-check.md), [项目目标](design/01-project-goals.md), [Web 部署设计](design/13-sae-deployment.md), [README](../README.md)

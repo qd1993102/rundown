@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import csv
+import io
 import json
 import logging
 from datetime import date, timedelta
@@ -16,6 +17,7 @@ from typing import Any
 from garmy.localdb import HealthDB, SyncManager
 
 from .config import Config
+from .local_files import atomic_write_private, ensure_private_dir, restrict_private_file
 
 logger = logging.getLogger(__name__)
 
@@ -44,7 +46,7 @@ class Storage:
     def __init__(self, config: Config):
         self._config = config
         self._db_path = Path(config.db_path)
-        self._db_path.parent.mkdir(parents=True, exist_ok=True)
+        ensure_private_dir(self._db_path.parent)
         self._db: HealthDB | None = None
         self._sync_manager: SyncManager | None = None
         self._initialized = False
@@ -55,6 +57,7 @@ class Storage:
         """获取 HealthDB 实例（懒初始化）。"""
         if self._db is None:
             self._db = HealthDB(str(self._db_path))
+            restrict_private_file(self._db_path)
             logger.info("HealthDB 已连接: %s", self._db_path)
         return self._db
 
@@ -110,7 +113,7 @@ class Storage:
         import sqlite3
 
         bp = Path(backup_path)
-        bp.parent.mkdir(parents=True, exist_ok=True)
+        ensure_private_dir(bp.parent)
 
         # 确保数据库已创建
         _ = self.db
@@ -123,6 +126,7 @@ class Storage:
         finally:
             src.close()
             dst.close()
+        restrict_private_file(bp)
 
     def restore_from(self, backup_path: str | Path) -> bool:
         """从备份路径恢复数据库。备份不存在时返回 False。"""
@@ -133,8 +137,9 @@ class Storage:
             logger.info("备份不存在，跳过恢复: %s", bp)
             return False
 
-        self._db_path.parent.mkdir(parents=True, exist_ok=True)
+        ensure_private_dir(self._db_path.parent)
         shutil.copy2(str(bp), str(self._db_path))
+        restrict_private_file(self._db_path)
         # 重置懒加载的实例
         self._db = None
         logger.info("数据库已从备份恢复: %s -> %s", bp, self._db_path)
@@ -469,12 +474,11 @@ class Storage:
             columns = list(data[0].keys())
 
         path = Path(output_path)
-        path.parent.mkdir(parents=True, exist_ok=True)
-
-        with open(path, "w", newline="", encoding="utf-8") as f:
-            writer = csv.DictWriter(f, fieldnames=columns, extrasaction="ignore")
-            writer.writeheader()
-            writer.writerows(data)
+        buffer = io.StringIO(newline="")
+        writer = csv.DictWriter(buffer, fieldnames=columns, extrasaction="ignore")
+        writer.writeheader()
+        writer.writerows(data)
+        atomic_write_private(path, buffer.getvalue(), private_parent=False)
 
         logger.info("已导出 %d 行到 %s", len(data), output_path)
 
@@ -483,9 +487,10 @@ class Storage:
     ) -> None:
         """导出数据为 JSON 文件。"""
         path = Path(output_path)
-        path.parent.mkdir(parents=True, exist_ok=True)
-
-        with open(path, "w", encoding="utf-8") as f:
-            json.dump(data, f, ensure_ascii=False, indent=2, default=str)
+        atomic_write_private(
+            path,
+            json.dumps(data, ensure_ascii=False, indent=2, default=str),
+            private_parent=False,
+        )
 
         logger.info("已导出 %d 行到 %s", len(data), output_path)

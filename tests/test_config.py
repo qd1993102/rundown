@@ -100,6 +100,20 @@ class TestProviderConfig:
         user_config.provider = "coros"
         assert user_config.provider_type == "coros"
 
+    def test_huawei_web_user_credential_persists_privately(self, tmp_path):
+        import stat
+
+        config = Config(data_dir=str(tmp_path))
+        user_config = config.for_user("rd_huawei")
+
+        user_config.set_group_pals_token("private-group-token")
+
+        restored = config.for_user("rd_huawei")
+        credential_path = tmp_path / "rd_huawei" / "huawei-tokens" / "group-pals-token"
+        assert restored.group_pals_token == "private-group-token"
+        assert stat.S_IMODE(credential_path.parent.stat().st_mode) == 0o700
+        assert stat.S_IMODE(credential_path.stat().st_mode) == 0o600
+
 
 class TestInviteCodeConfig:
     def test_invite_codes_default_to_web_data_dir(self, tmp_path):

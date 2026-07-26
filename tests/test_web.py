@@ -253,3 +253,33 @@ def test_detects_coros_expired_token_error():
         RuntimeError("Access token is invalid (result=1019)")
     ) is True
     assert _is_coros_auth_error(RuntimeError("temporary network error")) is False
+
+
+@pytest.mark.parametrize("provider", ["garmin", "coros", "huawei"])
+def test_sync_auth_failure_expires_bound_provider(tmp_path, monkeypatch, provider):
+    import src.web as web
+    from src.main import ProviderAuthenticationError
+
+    manager, user = _active_user(tmp_path)
+    manager.update(
+        user.api_key,
+        provider=provider,
+        garmin_email="runner@example.com",
+        token_status="active",
+    )
+    server = _FakeServer()
+    config = Config(data_dir=str(tmp_path))
+    monkeypatch.setattr(
+        web,
+        "_do_data_sync",
+        mock.Mock(side_effect=ProviderAuthenticationError(provider)),
+    )
+    register_web_routes(server, manager, config)
+
+    response = asyncio.run(server.routes[("/api/sync", "POST")](_request(
+        "/api/sync", {"mode": "single", "date": "2026-07-26"}, user.api_key,
+    )))
+
+    assert response.status_code == 401
+    assert "重新绑定" in json.loads(response.body)["message"]
+    assert manager.get(user.api_key).token_status == "expired"

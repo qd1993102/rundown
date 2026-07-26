@@ -1,6 +1,6 @@
 # 设计方案 — 12. 多平台数据源架构
 
-> 属于 [设计方案索引](../design.md) · 版本 v3.0 · 2026-06-24
+> 属于 [设计方案索引](../design.md) · 版本 v3.1 · 2026-07-26
 
 ---
 
@@ -155,6 +155,24 @@ Token store 生命周期规则：
 - 用户隔离必须覆盖 token、SQLite、memory 和 output，不能只通过 token 文件名区分用户。
 - 显式设置 `NEURUN_HOME` 时不加载全局 `~/.neurun/.env`，避免不同用户的账号和密码互相补入。
 
+Web 多用户模式下，用户在绑定 Huawei 时输入的 `GROUP_PALS_TOKEN` 不写入用户注册
+JSON，而是原子写入该用户的 `huawei-tokens/group-pals-token`，目录权限为 `0700`、
+文件权限为 `0600`。后续请求和进程重启从该文件恢复，服务级 `GROUP_PALS_TOKEN`
+只作为单用户 CLI 或旧部署的兼容回退，不能覆盖已经存在的用户级凭证。
+
+### 12.4.1 三平台认证初始化契约
+
+所有 Provider 必须遵循相同顺序：
+
+1. 从当前用户专属目录恢复 Token；
+2. 调用 `provider.authenticate()` 验证或刷新认证；
+3. 仅在认证成功后读取 `provider.user_id`；
+4. 使用该 `user_id` 初始化同步、SQLite 查询和写入；
+5. 认证失败时停止同步，将 Web 用户连接状态标记为 `expired`，并返回 HTTP 401 的重新绑定提示。
+
+禁止把 `user_id=0`、服务级凭证或尚未初始化的认证客户端作为同步降级值。Garmin 的
+`AuthClient`、Coros 的 `StoredAuth` 和 Huawei 的本地 AT 都必须先通过各自认证检查。
+
 ### 12.5 Huawei 数据 API 接入细节
 
 通过 Huawei 云端接口的真实参数校验确认：
@@ -194,6 +212,8 @@ Huawei API 返回字段存在嵌套差异，Provider 对 ID、名称、类型、
 已知限制：
 - Web 同步必须将 `UserRecord.provider` 注入 `UserConfig.provider`，用户级 provider
   优先于服务级 `NEURUN_PROVIDER`，避免 Coros 用户误入 Garmin 同步链路
+- Coros 虽然会在构造时恢复 `StoredAuth`，仍必须先执行统一的 `authenticate()` 契约，
+  不得在 Token 缺失时以 `user_id=0` 继续初始化本地同步
 - `/activity/query` 日期参数必须 `YYYYMMDD` 格式
 - Coros token 失效或活动接口返回非 `0000` 时同步必须失败并提示重新绑定，禁止把
   空活动列表误报为同步成功；`result=1019` 会把 `UserRecord.token_status` 更新为

@@ -7,11 +7,16 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import os
-import stat
 from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any
+
+from ..local_files import (
+    LocalPersistenceError,
+    atomic_write_private,
+    ensure_private_dir,
+    read_private_text,
+)
 
 from .base import (
     ActivityData, DailyHealth,
@@ -151,13 +156,14 @@ class CorosAuth(AuthProvider):
             return False
         try:
             from coros_mcp.models import StoredAuth
-            raw = self._token_path.read_text(encoding="utf-8")
+            raw = read_private_text(self._token_path)
             if hasattr(StoredAuth, "model_validate_json"):
                 self._auth = StoredAuth.model_validate_json(raw)
             else:  # pragma: no cover - pydantic v1 compatibility
                 self._auth = StoredAuth.parse_raw(raw)
-            os.chmod(self._token_path, stat.S_IRUSR | stat.S_IWUSR)
             return True
+        except LocalPersistenceError:
+            raise
         except Exception as exc:
             self._auth = None
             logger.warning("Coros token 恢复失败，请重新绑定账号: %s", exc)
@@ -167,14 +173,12 @@ class CorosAuth(AuthProvider):
         """以 0700 目录、0600 文件权限保存当前用户的 Coros token。"""
         if self._token_path is None or self._auth is None:
             return
-        self._token_path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
-        os.chmod(self._token_path.parent, stat.S_IRWXU)
+        ensure_private_dir(self._token_path.parent)
         if hasattr(self._auth, "model_dump_json"):
             raw = self._auth.model_dump_json()
         else:  # pragma: no cover - pydantic v1 compatibility
             raw = self._auth.json()
-        self._token_path.write_text(raw, encoding="utf-8")
-        os.chmod(self._token_path, stat.S_IRUSR | stat.S_IWUSR)
+        atomic_write_private(self._token_path, raw)
 
     def migrate_legacy_token(self) -> bool:
         """将 coros-mcp 旧版全局 token 迁移到当前用户目录。"""
@@ -190,6 +194,8 @@ class CorosAuth(AuthProvider):
             self._save()
             logger.info("Coros: 已将旧版全局 token 迁移到用户目录")
             return True
+        except LocalPersistenceError:
+            raise
         except Exception as exc:
             self._auth = None
             logger.warning("Coros 旧版 token 迁移失败: %s", exc)
@@ -204,6 +210,8 @@ class CorosAuth(AuthProvider):
             self._save()
             logger.info("Coros: 登录成功 (user_id=%s)", self._auth.user_id)
             return True
+        except LocalPersistenceError:
+            raise
         except Exception as e:
             logger.error("Coros 登录失败: %s", e)
             return False

@@ -5,7 +5,6 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
-import os
 import time
 from datetime import date, datetime, time as datetime_time, timezone
 from pathlib import Path
@@ -13,6 +12,12 @@ from typing import Any
 
 import httpx
 
+from ..local_files import (
+    atomic_write_private,
+    ensure_private_dir,
+    read_private_text,
+    restrict_private_file,
+)
 from .base import ActivityData, ActivityProvider, AuthProvider, DailyHealth, DataProvider, HealthProvider
 
 logger = logging.getLogger(__name__)
@@ -101,13 +106,12 @@ class HuaweiAuth(AuthProvider):
         返回 token 文件是否已存在。空 token 文件没有有效语义，因此不会预创建。
         """
         token_dir = self.token_path.parent
-        token_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
-        os.chmod(token_dir, 0o700)
+        ensure_private_dir(token_dir)
         if not self.token_path.exists():
             return False
-        os.chmod(self.token_path, 0o600)
+        restrict_private_file(self.token_path)
         try:
-            token = json.loads(self.token_path.read_text(encoding="utf-8"))
+            token = json.loads(read_private_text(self.token_path))
         except (OSError, ValueError) as exc:
             raise ValueError(f"Huawei token 文件无效: {self.token_path}") from exc
         if not isinstance(token, dict) or not token.get("access_token"):
@@ -115,9 +119,12 @@ class HuaweiAuth(AuthProvider):
         return True
 
     def _load(self) -> None:
+        if not self.token_path.exists():
+            self.token = None
+            return
         try:
-            self.token = json.loads(self.token_path.read_text(encoding="utf-8"))
-        except (OSError, ValueError):
+            self.token = json.loads(read_private_text(self.token_path))
+        except ValueError:
             self.token = None
 
     def _save(self, token: dict[str, Any]) -> None:
@@ -125,8 +132,10 @@ class HuaweiAuth(AuthProvider):
         if not token.get("expires_at") and not token.get("expired_at"):
             token["expires_at"] = int(time.time()) + int(token.get("expires_in", 3600))
         self.ensure_token_store()
-        self.token_path.write_text(json.dumps(token, ensure_ascii=False, indent=2), encoding="utf-8")
-        os.chmod(self.token_path, 0o600)
+        atomic_write_private(
+            self.token_path,
+            json.dumps(token, ensure_ascii=False, indent=2),
+        )
         self.token = token
 
     def _fetch_access_token(self) -> bool:

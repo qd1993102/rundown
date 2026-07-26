@@ -23,7 +23,8 @@ from .auth import AuthManager, cleanup_expired_mfa_states, get_mfa_state
 from .coach import chat_stream
 from .config import Config, UserConfig
 from .invitations import InvitationError, InvitationStore
-from .main import _do_daily_sync, _do_data_sync
+from .local_files import atomic_write_private, ensure_private_dir
+from .main import ProviderAuthenticationError, _do_daily_sync, _do_data_sync
 from .memory import Memory, MemoryStore, build_memory_file
 from .storage import Storage
 from .users import UserExistsError, UserManager, UserRecord
@@ -166,6 +167,25 @@ def _is_coros_auth_error(exc: Exception) -> bool:
     """识别 Coros API 的 token 失效响应。"""
     message = str(exc).lower()
     return "result=1019" in message or "access token is invalid" in message
+
+
+def _is_provider_auth_error(exc: Exception, provider_type: str) -> bool:
+    """统一识别三平台认证失效，避免把重新绑定场景返回为 500。"""
+    if isinstance(exc, ProviderAuthenticationError):
+        return True
+    if provider_type == "coros" and _is_coros_auth_error(exc):
+        return True
+    response = getattr(exc, "response", None)
+    if getattr(response, "status_code", None) == 401:
+        return True
+    message = str(exc).lower()
+    return any(marker in message for marker in (
+        "not authenticated",
+        "please login first",
+        "unauthorized",
+        "token expired",
+        "token is invalid",
+    ))
 
 
 def _user_context(memory_store: MemoryStore, storage: Storage) -> str:
@@ -484,16 +504,14 @@ def register_web_routes(server, user_manager: UserManager, config: Config):
             user_cfg = config.for_user(api_key)
             user_manager.ensure_dirs(api_key)
 
-            # 设置 Huawei 专属配置
-            user_cfg.group_pals_token = group_token  # type: ignore[attr-defined]
-            # 确保 token 目录存在
-            token_dir = Path(user_cfg.huawei_token_dir)
-            token_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
-
             try:
                 from .providers.huawei import HuaweiProvider
+                # 先仅注入本次认证；认证成功后再持久化用户级 CrewPals 凭证。
+                user_cfg.set_group_pals_token(group_token, persist=False)
                 hw = HuaweiProvider(user_cfg)
-                hw.authenticate()
+                if not hw.authenticate():
+                    raise ProviderAuthenticationError("huawei")
+                user_cfg.set_group_pals_token(group_token)
                 user_manager.update(api_key, provider="huawei", token_status="active")
                 return JSONResponse({"status": "ok"})
             except Exception as exc:
@@ -680,10 +698,13 @@ def register_web_routes(server, user_manager: UserManager, config: Config):
 
         except Exception as exc:
             logger.error("同步失败: %s", exc)
-            if user.provider == "coros" and _is_coros_auth_error(exc):
+            if _is_provider_auth_error(exc, user.provider):
                 user_manager.update(api_key, token_status="expired")
                 return JSONResponse(
-                    {"status": "error", "message": "Coros 登录已失效，请重新绑定账号"},
+                    {
+                        "status": "error",
+                        "message": str(ProviderAuthenticationError(user.provider)),
+                    },
                     status_code=401,
                 )
             return JSONResponse({"status": "error", "message": str(exc)}, status_code=500)
@@ -943,8 +964,10 @@ def register_web_routes(server, user_manager: UserManager, config: Config):
                 body_lines.append(f"- **{dist}**: {data['time']}")
 
         profile_path = Path(user_cfg.memory_dir) / "profile" / "fitness-assessment.md"
-        profile_path.parent.mkdir(parents=True, exist_ok=True)
-        profile_path.write_text(build_memory_file(fm, "\n".join(body_lines)), encoding="utf-8")
+        atomic_write_private(
+            profile_path,
+            build_memory_file(fm, "\n".join(body_lines)),
+        )
 
         return JSONResponse({"status": "ok"})
 
@@ -1000,8 +1023,7 @@ def register_web_routes(server, user_manager: UserManager, config: Config):
 创建于 {date.today()}，定期更新。
 """
         goal_path = Path(user_cfg.memory_dir) / "goals" / "active" / f"{goal_id}.md"
-        goal_path.parent.mkdir(parents=True, exist_ok=True)
-        goal_path.write_text(build_memory_file(fm, goal_body), encoding="utf-8")
+        atomic_write_private(goal_path, build_memory_file(fm, goal_body))
 
         return JSONResponse({"status": "ok", "id": goal_id})
 
@@ -1088,7 +1110,7 @@ def register_web_routes(server, user_manager: UserManager, config: Config):
             existing.save()
 
         archive_dir = Path(user_cfg.memory_dir) / "goals" / "archived"
-        archive_dir.mkdir(parents=True, exist_ok=True)
+        ensure_private_dir(archive_dir)
         goal_path.rename(archive_dir / f"{goal_id}.md")
 
         return JSONResponse({"status": "ok"})
@@ -1149,8 +1171,7 @@ def register_web_routes(server, user_manager: UserManager, config: Config):
 {injury or '无'}
 """
         pref_path = Path(user_cfg.memory_dir) / "coaching" / "preferences.md"
-        pref_path.parent.mkdir(parents=True, exist_ok=True)
-        pref_path.write_text(build_memory_file(fm, pref_body), encoding="utf-8")
+        atomic_write_private(pref_path, build_memory_file(fm, pref_body))
 
         return JSONResponse({"status": "ok"})
 

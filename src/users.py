@@ -16,6 +16,8 @@ from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
 
+from .local_files import atomic_write_private, ensure_private_dir
+
 logger = logging.getLogger(__name__)
 
 _KEY_PREFIX = "rd_"
@@ -140,7 +142,8 @@ class UserManager:
     def __init__(self, data_dir: str):
         self._data_dir = Path(data_dir)
         self._users_dir = self._data_dir / "users"
-        self._users_dir.mkdir(parents=True, exist_ok=True)
+        ensure_private_dir(self._data_dir)
+        ensure_private_dir(self._users_dir)
         self._cache: dict[str, UserRecord] = {}
         self._lock = threading.RLock()
 
@@ -251,14 +254,14 @@ class UserManager:
 
     def _save(self, record: UserRecord) -> None:
         path = self._user_path(record.api_key)
-        path.write_text(
+        atomic_write_private(
+            path,
             json.dumps(record.to_dict(), indent=2, ensure_ascii=False) + "\n",
-            encoding="utf-8",
         )
 
     def ensure_dirs(self, api_key: str) -> None:
         """确保用户数据目录存在。"""
-        Path(self.get_token_dir(api_key)).mkdir(parents=True, exist_ok=True)
-        Path(self.get_memory_dir(api_key)).mkdir(parents=True, exist_ok=True)
-        Path(self.get_backup_dir(api_key)).mkdir(parents=True, exist_ok=True)
-        Path(self.get_db_path(api_key)).parent.mkdir(parents=True, exist_ok=True)
+        ensure_private_dir(Path(self.get_db_path(api_key)).parent)
+        ensure_private_dir(self.get_token_dir(api_key))
+        ensure_private_dir(self.get_memory_dir(api_key))
+        ensure_private_dir(self.get_backup_dir(api_key))

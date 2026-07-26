@@ -3,13 +3,14 @@
 from __future__ import annotations
 
 import json
-import os
 import secrets
 import threading
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+
+from .local_files import LocalPersistenceError, atomic_write_private
 
 
 class InvitationError(ValueError):
@@ -208,18 +209,10 @@ class InvitationStore:
         )
 
     def _write(self, data: dict[str, Any]) -> None:
-        self._path.parent.mkdir(parents=True, exist_ok=True)
-        temp_path = self._path.with_suffix(self._path.suffix + ".tmp")
         try:
-            temp_path.write_text(
+            atomic_write_private(
+                self._path,
                 json.dumps(data, indent=2, ensure_ascii=False) + "\n",
-                encoding="utf-8",
             )
-            os.chmod(temp_path, 0o600)
-            os.replace(temp_path, self._path)
-        except OSError as exc:
-            try:
-                temp_path.unlink(missing_ok=True)
-            except OSError:
-                pass
+        except LocalPersistenceError as exc:
             raise InvitationError(f"无法更新邀请码文件 {self._path}: {exc}") from exc

@@ -135,6 +135,24 @@ Docker 部署可在服务启动后生成首个邀请码：
 docker compose exec neurun neurun invite create --output json
 ```
 
+systemd/ECS 部署必须使用与 Web 服务相同的低权限用户写入持久化目录，不能直接以
+root 运行邀请码或同步命令。例如服务用户为 `neurun` 时：
+
+```bash
+sudo -u neurun env \
+  NEURUN_DATA_DIR=/var/lib/neurun \
+  NEURUN_INVITE_CODES_FILE=/var/lib/neurun/invite-codes.json \
+  /opt/neurun-venv/bin/neurun invite create --count 5 --output json
+```
+
+若曾经用 `sudo neurun ...` 生成过 `/var/lib/neurun` 下的数据，先修复归属再重启服务：
+
+```bash
+sudo chown -R neurun:neurun /var/lib/neurun
+sudo chmod 700 /var/lib/neurun
+sudo systemctl restart neurun.service
+```
+
 对应 MCP 管理工具默认关闭，仅当本地 MCP 设置 `NEURUN_ENABLE_ADMIN_TOOLS=true` 时注册；
 公网 `serve` 模式始终拒绝启用，MCP 也不提供完整邀请码读取。
 
@@ -178,6 +196,9 @@ curl -fsS http://<ECS_PRIVATE_IP>:8080/healthz
 ```
 
 `POST /api/sync` 成功响应包含 `mode`、`from_date`、`to_date`，不包含日报生成结果。
+同步开始时 Garmin、Coros、Huawei 都会先恢复并验证当前用户凭据，再读取平台
+`user_id` 和打开 SQLite；认证失败会返回 HTTP 401、将连接标记为 `expired` 并提示重新绑定，
+不会用 `user_id=0` 或未认证客户端继续写本地数据。
 未提供 `mode` 时继续兼容原来的 `date`、`sync_days`、`full` 请求格式。
 
 显式生成日报使用：
@@ -358,6 +379,10 @@ GROUP_PALS_TOKEN=your-token
 HUAWEI_TOKEN_DIR=./data/user-a/huawei-tokens
 ```
 
+Web 绑定成功后，CrewPals token 会保存到
+`data/<api_key>/huawei-tokens/group-pals-token`；只有 Huawei 认证成功才写入，后续同步
+从该用户目录恢复，不依赖 systemd 的服务级 `GROUP_PALS_TOKEN`。
+
 然后运行：
 
 ```bash
@@ -380,6 +405,10 @@ neurun 通过 CrewPals 预发布 HTTPS 接口获取 Huawei AT，并将返回值�
 `neurun init` 会为当前配置选择并以 `0700` 创建独立 Token 目录；`neurun auth`
 也会自动补建目录、检查已有 JSON，并将 token 文件权限收紧为 `0600`。系统不会创建
 空的 `huawei-oauth.json`，该文件只在取得或导入有效 token 后生成。
+
+Web 持久化根目录及用户、Token、memory、backup 子目录统一收紧为 `0700`；账号、邀请码、
+平台凭据、SQLite、备份、Markdown 记忆和导出文件统一为 `0600`。若服务用户没有目录
+写权限，错误会显示实际路径并提示修复 `chown`，不会改写到 `/root` 或其他备用目录。
 
 也兼容外部系统导出的 Huawei token 结构：
 

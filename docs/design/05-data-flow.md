@@ -1,6 +1,6 @@
 # 设计方案 — 5. 数据流
 
-> 属于 [设计方案索引](../design.md) · 版本 v3.0 · 2026-06-24
+> 属于 [设计方案索引](../design.md) · 版本 v3.1 · 2026-07-26
 
 ---
 
@@ -144,8 +144,13 @@ sequenceDiagram
     API->>Users: 校验 Cookie 对应用户
     API->>Provider: Garmin/Coros/Huawei 认证
     Provider-->>API: Token / MFA 状态
+    API->>Provider: 按用户目录持久化 Token/连接凭证
     API->>Users: 更新 provider 与 token_status
 ```
 
 注册认证和运动平台认证是两层独立边界：`/api/setup` 不得为无会话请求自动创建用户；
 应用退出只删除 Cookie，不清理运动平台 Token。再次登录后仍使用原 API Key 和用户数据目录。
+
+同步请求重新创建 Provider 时，必须先从用户目录恢复并执行 `authenticate()`，再读取平台
+`user_id`。任何平台认证失败都在本地 SQLite 写入之前终止，并把连接状态更新为
+`expired`；禁止用 `user_id=0` 或服务级默认凭证继续同步。

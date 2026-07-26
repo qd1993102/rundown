@@ -503,8 +503,9 @@ def _exec_save_training_plan(memory_store: Any, content: str) -> str:
     if plan_path is None:
         return "错误：无法确定大纲存储路径"
 
-    plan_path.parent.mkdir(parents=True, exist_ok=True)
-    plan_path.write_text(build_memory_file(fm, content), encoding="utf-8")
+    from .local_files import atomic_write_private
+
+    atomic_write_private(plan_path, build_memory_file(fm, content))
     return "大纲已保存"
 
 

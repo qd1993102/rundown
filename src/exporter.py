@@ -8,7 +8,6 @@
 
 from __future__ import annotations
 
-import csv
 import json
 import logging
 from datetime import date
@@ -17,6 +16,7 @@ from typing import Any
 
 from .storage import Storage
 from .memory import MemoryType, MemoryStore
+from .local_files import atomic_write_private
 
 logger = logging.getLogger(__name__)
 
@@ -107,10 +107,10 @@ class Exporter:
         ]
 
         path = Path(output_path)
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(
+        atomic_write_private(
+            path,
             json.dumps(data, ensure_ascii=False, indent=2, default=str),
-            encoding="utf-8",
+            private_parent=False,
         )
         logger.info("已导出 %d 条记忆到 %s", len(data), output_path)
         return len(data)

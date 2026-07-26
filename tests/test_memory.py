@@ -1,6 +1,8 @@
 """测试 memory.py — 日报生成、数据汇总、AI 洞察。"""
 
+import stat
 from datetime import date
+from pathlib import Path
 from src.memory import (
     Memory, MemoryType, MemoryStatus,
     parse_front_matter, build_memory_file,
@@ -143,6 +145,25 @@ class TestMemoryTypes:
         assert MemoryType.DAILY_REPORT.value == "daily_report"
         assert MemoryType.GOAL.value == "goal"
         assert MemoryStatus.ACTIVE.value == "active"
+
+    def test_save_uses_private_atomic_file(self, tmp_path):
+        path = tmp_path / "memory" / "daily" / "2026-07-26.md"
+        memory = Memory(
+            id="2026-07-26",
+            type=MemoryType.DAILY_REPORT,
+            path=path,
+            front_matter={"type": "daily_report", "date": "2026-07-26"},
+            body="# 日报",
+        )
+
+        memory.save()
+        path.chmod(0o400)
+        memory.body = "# 更新日报"
+        memory.save()
+
+        assert "更新日报" in path.read_text(encoding="utf-8")
+        assert stat.S_IMODE(path.parent.stat().st_mode) == 0o700
+        assert stat.S_IMODE(path.stat().st_mode) == 0o600
 
 
 class TestValidator:

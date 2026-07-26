@@ -1,6 +1,6 @@
 # 设计方案 — 4. 模块设计
 
-> 属于 [设计方案索引](../design.md) · 版本 v3.0 · 2026-06-24
+> 属于 [设计方案索引](../design.md) · 版本 v3.1 · 2026-07-26
 
 ---
 
@@ -236,6 +236,7 @@ tags: [5k, speed, spring-season]
 
 **职责拆分**：
 
+- `local_files.py`：统一私有目录、文件权限和同目录原子替换，向上返回带路径及 `chown` 建议的错误；
 - `InvitationStore`：读取管理员维护的 JSON，校验和核销单次邀请码；
 - `UserManager`：创建昵称、规范化邮箱、`scrypt` 密码哈希与随机 `rd_` API Key，提供邮箱密码校验；
 - `web.py`：注册 `/login`、`/register` 及对应 JSON API，并在数据源绑定前执行应用会话门禁。
@@ -249,6 +250,12 @@ Platform Account 的账号字段单独存储，两者不得互相覆盖。
 密码格式为 `scrypt$n$r$p$salt$digest`，每次注册生成 16 字节随机盐，比较使用
 `hmac.compare_digest`。服务端不保存注册密码明文，也不把密码或邀请码写入日志。
 密码长度保持 8–128 个字符，不要求大小写、数字或特殊符号组合。
+
+Web 数据目录使用私有权限边界：`data_dir`、`users/`、每用户目录、Token、memory 与
+backup 目录统一为 `0700`；用户 JSON、邀请码、平台凭证、SQLite、备份和记忆文件统一
+为 `0600`。敏感 JSON/文本采用“同目录临时文件 + `os.replace`”原子写入，使服务用户
+在父目录可写时能够安全替换早期由 root 创建的普通文件；目录本身不可写时返回包含
+实际路径和 `chown` 提示的错误，不静默回退到其他目录。
 
 邀请码 JSON schema：
 

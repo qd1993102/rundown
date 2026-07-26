@@ -12,6 +12,7 @@ from datetime import date, datetime
 from pathlib import Path
 from typing import Any
 
+from .local_files import atomic_write_private, restrict_private_file
 from .memory import Memory, parse_front_matter
 
 
@@ -519,8 +520,7 @@ def render_daily_html(memory: Memory, output_path: str | None = None) -> str:
 
     if output_path:
         path = Path(output_path)
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(full_html, encoding="utf-8")
+        atomic_write_private(path, full_html, private_parent=False)
         import logging
         logging.getLogger(__name__).info("📄 HTML 日报已生成: %s", output_path)
 
@@ -649,6 +649,8 @@ def render_image(
                 f"Chrome 截图未生成。stderr: {result.stderr[:300]}"
             )
 
+        restrict_private_file(screenshot)
+
         logger.info("✅ 截图已生成: %s (%d bytes)", screenshot, screenshot.stat().st_size)
 
         # 自动裁剪底部和两侧留白
@@ -701,6 +703,7 @@ def render_image(
                             min(w, content_right + padding_h), min(h, content_bottom + padding_v))
                 cropped = img.crop(crop_box)
                 cropped.save(screenshot, "PNG")
+                restrict_private_file(screenshot)
                 logger.info("✂️  自动裁剪: %dx%d → %dx%d", w, h, cropped.width, cropped.height)
             else:
                 logger.info("✂️  无需裁剪 (内容已填满)")

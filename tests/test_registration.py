@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import stat
 import sys
 from types import SimpleNamespace
 
@@ -52,6 +53,7 @@ def test_invitation_store_admin_create_list_show_and_revoke(tmp_path):
     assert created[0].code.startswith("neurun_")
     assert created[0].code != created[1].code
     assert path.stat().st_mode & 0o777 == 0o600
+    assert stat.S_IMODE(tmp_path.stat().st_mode) == 0o700
 
     listed = store.list_all()
     assert [item.id for item in listed] == [item.id for item in created]
@@ -97,13 +99,31 @@ def test_user_manager_registers_hashed_account_and_authenticates(tmp_path):
     manager = UserManager(str(tmp_path))
     user = manager.register_account(" 跑者 ", "Runner@Example.COM ", "safe-password")
 
-    stored = json.loads((tmp_path / "users" / f"{user.api_key}.json").read_text(encoding="utf-8"))
+    user_path = tmp_path / "users" / f"{user.api_key}.json"
+    stored = json.loads(user_path.read_text(encoding="utf-8"))
     assert user.nickname == "跑者"
     assert user.email == "runner@example.com"
     assert stored["password_hash"] != "safe-password"
     assert verify_password("safe-password", stored["password_hash"]) is True
     assert manager.authenticate("RUNNER@example.com", "safe-password") == user
     assert manager.authenticate("runner@example.com", "wrong-password") is None
+    assert stat.S_IMODE(tmp_path.stat().st_mode) == 0o700
+    assert stat.S_IMODE((tmp_path / "users").stat().st_mode) == 0o700
+    assert stat.S_IMODE(user_path.stat().st_mode) == 0o600
+
+    user_path.chmod(0o400)
+    manager.update(user.api_key, nickname="新昵称")
+    assert json.loads(user_path.read_text(encoding="utf-8"))["nickname"] == "新昵称"
+    assert stat.S_IMODE(user_path.stat().st_mode) == 0o600
+
+    manager.ensure_dirs(user.api_key)
+    for directory in (
+        tmp_path / user.api_key,
+        tmp_path / user.api_key / "tokens",
+        tmp_path / user.api_key / "memory",
+        tmp_path / "backup",
+    ):
+        assert stat.S_IMODE(directory.stat().st_mode) == 0o700
 
     with pytest.raises(UserExistsError, match="已注册"):
         manager.register_account("另一个昵称", "runner@example.com", "another-password")
@@ -279,6 +299,72 @@ def test_setup_api_requires_application_session(tmp_path):
     )))
     assert response.status_code == 401
     assert "请先登录" in _json(response)["message"]
+
+
+def test_huawei_setup_persists_user_credential_after_authentication(tmp_path, monkeypatch):
+    invite_path = tmp_path / "invite-codes.json"
+    _write_invites(invite_path)
+    config = Config(data_dir=str(tmp_path), invite_codes_file=str(invite_path))
+    manager = UserManager(str(tmp_path))
+    user = manager.register_account("跑者", "runner@example.com", "safe-password")
+    server = _FakeServer()
+    register_web_routes(server, manager, config)
+
+    class FakeHuaweiProvider:
+        def __init__(self, user_config):
+            assert user_config.group_pals_token == "group-user-token"
+
+        def authenticate(self):
+            return True
+
+    monkeypatch.setattr("src.providers.huawei.HuaweiProvider", FakeHuaweiProvider)
+
+    response = asyncio.run(server.routes[("/api/setup", "POST")](_request(
+        "/api/setup",
+        {"provider": "huawei", "group_pals_token": "group-user-token"},
+        cookie=f"neurun_key={user.api_key}",
+    )))
+
+    assert response.status_code == 200
+    assert manager.get(user.api_key).provider == "huawei"
+    assert manager.get(user.api_key).token_status == "active"
+    token_path = tmp_path / user.api_key / "huawei-tokens" / "group-pals-token"
+    assert token_path.read_text(encoding="utf-8").strip() == "group-user-token"
+    assert stat.S_IMODE(token_path.parent.stat().st_mode) == 0o700
+    assert stat.S_IMODE(token_path.stat().st_mode) == 0o600
+
+
+def test_huawei_setup_does_not_persist_credential_when_authentication_fails(
+    tmp_path, monkeypatch,
+):
+    invite_path = tmp_path / "invite-codes.json"
+    _write_invites(invite_path)
+    config = Config(data_dir=str(tmp_path), invite_codes_file=str(invite_path))
+    manager = UserManager(str(tmp_path))
+    user = manager.register_account("跑者", "runner@example.com", "safe-password")
+    server = _FakeServer()
+    register_web_routes(server, manager, config)
+
+    class FakeHuaweiProvider:
+        def __init__(self, user_config):
+            pass
+
+        def authenticate(self):
+            return False
+
+    monkeypatch.setattr("src.providers.huawei.HuaweiProvider", FakeHuaweiProvider)
+
+    response = asyncio.run(server.routes[("/api/setup", "POST")](_request(
+        "/api/setup",
+        {"provider": "huawei", "group_pals_token": "invalid-token"},
+        cookie=f"neurun_key={user.api_key}",
+    )))
+
+    assert response.status_code == 400
+    assert manager.get(user.api_key).token_status == "none"
+    assert manager.get(user.api_key).provider == "garmin"
+    token_path = tmp_path / user.api_key / "huawei-tokens" / "group-pals-token"
+    assert not token_path.exists()
 
 
 def test_invite_cli_generates_json_without_provider_credentials(tmp_path, monkeypatch, capsys):
