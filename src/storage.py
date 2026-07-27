@@ -260,6 +260,7 @@ class Storage:
         today = today or date.today()
         status_by_date: dict[str, list[dict[str, Any]]] = {}
         activity_counts: dict[str, int] = {}
+        running_counts: dict[str, int] = {}
         health_dates: set[str] = set()
 
         if user_id is not None:
@@ -275,13 +276,30 @@ class Storage:
                     key = str(row["sync_date"])
                     status_by_date.setdefault(key, []).append(dict(row))
 
-                for row in db.execute("""
-                    SELECT activity_date, COUNT(*) AS count
+                activity_columns = {
+                    str(row["name"])
+                    for row in db.execute("PRAGMA table_info(activities)")
+                }
+                activity_type_expr = (
+                    "LOWER(COALESCE(activity_type, ''))"
+                    if "activity_type" in activity_columns
+                    else "''"
+                )
+                for row in db.execute(f"""
+                    SELECT activity_date, COUNT(*) AS count,
+                        SUM(CASE WHEN
+                            {activity_type_expr} LIKE '%running%'
+                            OR {activity_type_expr} IN ('run', 'trail_run')
+                            OR LOWER(COALESCE(activity_name, '')) LIKE '%run%'
+                            OR COALESCE(activity_name, '') LIKE '%跑步%'
+                            THEN 1 ELSE 0 END) AS running_count
                     FROM activities
                     WHERE user_id = ? AND activity_date >= ? AND activity_date <= ?
                     GROUP BY activity_date
                 """, (user_id, str(start), str(end))):
-                    activity_counts[str(row["activity_date"])] = int(row["count"])
+                    key = str(row["activity_date"])
+                    activity_counts[key] = int(row["count"])
+                    running_counts[key] = int(row["running_count"] or 0)
 
                 for row in db.execute("""
                     SELECT metric_date
@@ -313,9 +331,12 @@ class Storage:
             ]
             metric_statuses = {str(row["status"]).lower() for row in metric_rows}
             has_local_data = key in activity_counts or key in health_dates
+            has_running = running_counts.get(key, 0) > 0
 
             if current > today:
                 day_status = "future"
+            elif has_running:
+                day_status = "synced"
             elif marker and str(marker["status"]).lower() == "pending":
                 day_status = "syncing"
             elif marker and str(marker["status"]).lower() == "failed":
@@ -341,6 +362,7 @@ class Storage:
                 "date": key,
                 "status": day_status,
                 "activity_count": activity_counts.get(key, 0),
+                "running_count": running_counts.get(key, 0),
                 "has_health": key in health_dates,
                 "synced_at": synced_at,
             })

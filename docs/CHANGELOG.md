@@ -4,6 +4,13 @@ neurun 项目变更日志，按日期倒序。
 
 ---
 
+## 2026-07-27
+
+### Fixed
+- **同步日历跑步完成判定与今日样式**: 当天存在跑步记录时优先显示为“已同步”，不再被 Garmin 遗留的活动待处理状态或健康指标失败降级为“部分完成”；三平台新同步活动持久化标准化 `activity_type`，旧数据兼容按活动名称识别。今日标识从日期下划线改为不占用格内空间的外轮廓，并补充 `aria-current="date"`。
+- **影响范围**: src/main.py, src/storage.py, web/templates/sync.html, tests/test_storage.py, tests/test_web.py
+- **关联文档**: [Bug 记录](bugfixes/2026-07-27-sync-calendar-running-priority.md), [模块设计](design/04-modules.md), [数据流](design/05-data-flow.md), [Web 部署设计](design/13-sae-deployment.md), [开发过程](process/2026-07-26-sync-calendar.md), [README](../README.md)
+
 ## 2026-07-26
 
 ### Added

@@ -221,6 +221,24 @@ def cmd_auth(args: argparse.Namespace) -> None:
         console.print(f"[red]❌ 认证失败: {exc}[/]")
 
 
+def _ensure_activity_columns(storage: Storage) -> None:
+    """补齐 neurun 在 garmy activities 表上扩展的字段。"""
+    from sqlalchemy import text
+
+    for column_sql in (
+        "ALTER TABLE activities ADD COLUMN distance_meters FLOAT",
+        "ALTER TABLE activities ADD COLUMN activity_type VARCHAR",
+    ):
+        session = storage.db.get_session()
+        try:
+            session.execute(text(column_sql))
+            session.commit()
+        except Exception:
+            session.rollback()
+        finally:
+            session.close()
+
+
 def _sync_garmin_activities(provider, storage, user_id: int, start: date, end: date) -> None:
     """Garmin 活动直同步：绕过 garmy ActivitiesIterator 的状态 bug。
 
@@ -230,14 +248,7 @@ def _sync_garmin_activities(provider, storage, user_id: int, start: date, end: d
     """
     from sqlalchemy import text
 
-    # 确保 distance_meters 列存在（garmy 默认 schema 无此列）
-    session = storage.db.get_session()
-    try:
-        session.execute(text("ALTER TABLE activities ADD COLUMN distance_meters FLOAT"))
-        session.commit()
-    except Exception:
-        pass
-    session.close()
+    _ensure_activity_columns(storage)
 
     console.print("[dim]📥 补全 Garmin 活动数据...[/]")
     activities = provider.activities.fetch_activities(start, end)
@@ -246,7 +257,10 @@ def _sync_garmin_activities(provider, storage, user_id: int, start: date, end: d
     updated_act = 0
     for a in activities:
         row = session.execute(
-            text("SELECT distance_meters FROM activities WHERE activity_id = :aid"),
+            text("""
+                SELECT distance_meters, activity_type
+                FROM activities WHERE activity_id = :aid
+            """),
             {"aid": a.activity_id}
         ).fetchone()
         adate = a.start_time[:10] if a.start_time and len(str(a.start_time)) >= 10 else str(start)[:10]
@@ -255,27 +269,38 @@ def _sync_garmin_activities(provider, storage, user_id: int, start: date, end: d
             session.execute(text("""
                 INSERT INTO activities (user_id, activity_id, activity_date,
                     activity_name, duration_seconds, avg_heart_rate,
-                    training_load, start_time, distance_meters, created_at)
-                VALUES (:uid, :aid, :ad, :an, :dur, :hr, :tl, :st, :dist, datetime('now'))
+                    training_load, start_time, distance_meters, activity_type,
+                    created_at)
+                VALUES (:uid, :aid, :ad, :an, :dur, :hr, :tl, :st, :dist,
+                    :atype, datetime('now'))
             """), {
                 "uid": user_id, "aid": a.activity_id,
                 "ad": adate,
                 "an": a.activity_name, "dur": a.duration_seconds,
                 "hr": a.avg_heart_rate, "tl": a.training_load,
                 "st": a.start_time, "dist": a.distance_meters,
+                "atype": a.activity_type,
             })
             stored_act += 1
-        elif not row[0] and a.distance_meters:
-            # 已有记录但距离为空/0：UPDATE 补全距离
+        elif (not row[0] and a.distance_meters) or row[1] != a.activity_type:
+            # 已有记录：补全距离和标准运动类型。
             session.execute(text("""
-                UPDATE activities SET distance_meters = :dist
+                UPDATE activities
+                SET distance_meters = CASE
+                        WHEN :dist > 0 THEN :dist ELSE distance_meters
+                    END,
+                    activity_type = :atype
                 WHERE activity_id = :aid
-            """), {"dist": a.distance_meters, "aid": a.activity_id})
+            """), {
+                "dist": a.distance_meters,
+                "atype": a.activity_type,
+                "aid": a.activity_id,
+            })
             updated_act += 1
     session.commit()
     session.close()
     if stored_act > 0 or updated_act > 0:
-        console.print(f"  ✅ Garmin 活动: {stored_act} 条新增, {updated_act} 条距离补全 (共 {len(activities)} 条)")
+        console.print(f"  ✅ Garmin 活动: {stored_act} 条新增, {updated_act} 条字段补全 (共 {len(activities)} 条)")
     else:
         console.print(f"  📦 Garmin 活动: 已是最新 (共 {len(activities)} 条)")
 
@@ -285,14 +310,7 @@ def _sync_provider(provider, storage, user_id: int, start: date, end: date,
     """将非 Garmin Provider 的标准化数据写入 SQLite。"""
     from sqlalchemy import text
 
-    # Ensure distance_meters column exists
-    session = storage.db.get_session()
-    try:
-        session.execute(text("ALTER TABLE activities ADD COLUMN distance_meters FLOAT"))
-        session.commit()
-    except Exception:
-        pass
-    session.close()
+    _ensure_activity_columns(storage)
 
     console.print("[dim]📥 拉取活动数据...[/]")
     activities = provider.activities.fetch_activities(start, end)
@@ -301,7 +319,10 @@ def _sync_provider(provider, storage, user_id: int, start: date, end: date,
     updated_act = 0
     for a in activities:
         existing = session.execute(
-            text("SELECT duration_seconds FROM activities WHERE activity_id = :aid"),
+            text("""
+                SELECT duration_seconds, activity_type
+                FROM activities WHERE activity_id = :aid
+            """),
             {"aid": a.activity_id}
         ).fetchone()
         if not existing:
@@ -314,27 +335,34 @@ def _sync_provider(provider, storage, user_id: int, start: date, end: date,
             session.execute(text("""
                 INSERT INTO activities (user_id, activity_id, activity_date,
                     activity_name, duration_seconds, avg_heart_rate,
-                    training_load, start_time, distance_meters, created_at)
-                VALUES (:uid, :aid, :ad, :an, :dur, :hr, :tl, :st, :dist, datetime('now'))
+                    training_load, start_time, distance_meters, activity_type,
+                    created_at)
+                VALUES (:uid, :aid, :ad, :an, :dur, :hr, :tl, :st, :dist,
+                    :atype, datetime('now'))
             """), {
                 "uid": user_id, "aid": a.activity_id,
                 "ad": activity_date,
                 "an": a.activity_name, "dur": a.duration_seconds,
                 "hr": a.avg_heart_rate, "tl": a.training_load,
                 "st": a.start_time, "dist": a.distance_meters,
+                "atype": a.activity_type,
             })
             stored_act += 1
-        elif existing[0] != a.duration_seconds:
+        elif existing[0] != a.duration_seconds or existing[1] != a.activity_type:
             session.execute(text("""
                 UPDATE activities
-                SET duration_seconds = :dur
+                SET duration_seconds = :dur, activity_type = :atype
                 WHERE activity_id = :aid
-            """), {"dur": a.duration_seconds, "aid": a.activity_id})
+            """), {
+                "dur": a.duration_seconds,
+                "atype": a.activity_type,
+                "aid": a.activity_id,
+            })
             updated_act += 1
     session.commit()
     session.close()
     console.print(
-        f"  ✅ 活动: {stored_act} 条新增, {updated_act} 条时长更新 "
+        f"  ✅ 活动: {stored_act} 条新增, {updated_act} 条字段更新 "
         f"(共 {len(activities)} 条)"
     )
 

@@ -61,11 +61,13 @@ def test_non_garmin_resync_updates_existing_activity_duration(tmp_path):
     _sync_provider(Provider(), storage, 1, target, target, "coros")
 
     session = storage.db.get_session()
-    duration = session.execute(text(
-        "SELECT duration_seconds FROM activities WHERE activity_id = 'coros-1'"
-    )).scalar_one()
+    row = session.execute(text(
+        "SELECT duration_seconds, activity_type FROM activities "
+        "WHERE activity_id = 'coros-1'"
+    )).one()
     session.close()
-    assert duration == 3600
+    assert row.duration_seconds == 3600
+    assert row.activity_type == "running"
 
 
 def test_get_local_user_id_reads_unique_id_without_remote_provider(tmp_path):
@@ -167,9 +169,17 @@ def test_sync_calendar_tracks_empty_days_and_aggregates_legacy_data(tmp_path):
 
     storage = Storage(Config(db_path=str(tmp_path / "data" / "data.db")))
     session = storage.db.get_session()
+    session.execute(text("ALTER TABLE activities ADD COLUMN activity_type VARCHAR"))
     session.execute(text("""
         INSERT INTO activities (user_id, activity_id, activity_date)
         VALUES (7, 'legacy-activity', '2026-07-20')
+    """))
+    session.execute(text("""
+        INSERT INTO activities
+            (user_id, activity_id, activity_date, activity_name, activity_type)
+        VALUES
+            (7, 'name-running', '2026-07-18', 'Morning Run', NULL),
+            (7, 'type-running', '2026-07-17', '晨练', 'running_indoor')
     """))
     session.execute(text("""
         INSERT INTO sync_status
@@ -183,6 +193,9 @@ def test_sync_calendar_tracks_empty_days_and_aggregates_legacy_data(tmp_path):
         7, date(2026, 7, 21), date(2026, 7, 22), "completed",
     )
     storage.mark_sync_calendar_range(
+        7, date(2026, 7, 17), date(2026, 7, 18), "failed",
+    )
+    storage.mark_sync_calendar_range(
         7, date(2026, 7, 23), date(2026, 7, 23), "failed",
         error_message="provider timeout",
     )
@@ -191,11 +204,15 @@ def test_sync_calendar_tracks_empty_days_and_aggregates_legacy_data(tmp_path):
     )
 
     result = storage.get_sync_calendar(
-        7, date(2026, 7, 19), date(2026, 7, 27),
+        7, date(2026, 7, 17), date(2026, 7, 27),
         today=date(2026, 7, 26),
     )
     days = {item["date"]: item for item in result["days"]}
 
+    assert days["2026-07-17"]["status"] == "synced"
+    assert days["2026-07-17"]["running_count"] == 1
+    assert days["2026-07-18"]["status"] == "synced"
+    assert days["2026-07-18"]["running_count"] == 1
     assert days["2026-07-19"]["status"] == "partial"
     assert days["2026-07-20"]["status"] == "partial"
     assert days["2026-07-20"]["activity_count"] == 1
@@ -206,4 +223,4 @@ def test_sync_calendar_tracks_empty_days_and_aggregates_legacy_data(tmp_path):
     assert days["2026-07-25"]["status"] == "unsynced"
     assert days["2026-07-27"]["status"] == "future"
     assert result["summary"]["latest_synced_date"] == "2026-07-22"
-    assert result["summary"]["synced"] == 2
+    assert result["summary"]["synced"] == 4

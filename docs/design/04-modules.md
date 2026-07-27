@@ -167,6 +167,10 @@ activities:        运动活动记录（类型、时长、心率、训练效果�
 sync_status:       同步状态追踪（user_id, date, metric_type, status）
 ```
 
+`activities` 补充 `activity_type` 列，持久化统一 Provider 的标准化运动类型（如
+`running`、`running_indoor`、`cycling`）。升级前记录该列为空时，同步日历允许以
+`activity_name` 中的“跑步”或 `run` 作为跑步记录兼容判断。
+
 #### 4.4.3 补充查询接口
 
 在 garmy LocalDB 之上封装常用查询:
@@ -182,10 +186,16 @@ sync_status:       同步状态追踪（user_id, date, metric_type, status）
 同步日历复用 `sync_status` 表，使用保留的 `metric_type=neurun_provider_sync` 标识一次
 Provider 范围同步对某一天的整体覆盖。它不替代 garmy 的各指标状态；查询时按以下优先级聚合：
 
-1. neurun 范围标记为 `pending`、`failed` 或 `completed`；
-2. 旧的 garmy 指标级状态；
-3. 已存在的活动或日健康数据；
-4. 无任何记录时为 `unsynced`，晚于今天时为 `future`。
+1. 晚于今天时固定为 `future`；
+2. 当天存在至少一条跑步记录时固定为 `synced`；
+3. neurun 范围标记为 `pending`、`failed` 或 `completed`；
+4. 旧的 garmy 指标级状态；
+5. 已存在的其他活动或日健康数据；
+6. 无任何记录时为 `unsynced`。
+
+跑步记录优先级高于整体标记和健康指标状态，因为日历的核心目标是回答“跑步运动记录
+是否已同步”。API 同时返回 `activity_count` 和 `running_count`，前端可展示跑步数量，
+而健康指标失败仍可在后续详情能力中单独表达，不得覆盖跑步记录已存在这一事实。
 
 对旧数据库，只有本地数据但没有范围完成标记的日期显示为 `partial`，不得把休息日自动
 推断为未同步；从本版本开始，成功同步的空数据日也会通过范围标记显示为 `synced`。

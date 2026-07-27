@@ -281,6 +281,10 @@ def test_sync_template_contains_accessible_calendar_contract():
     assert 'aria-label="上个月"' in html
     assert 'aria-label="下个月"' in html
     assert "loadSyncCalendar" in html
+    assert "button.setAttribute('aria-current','date')" in html
+    assert ".calendar-day.today{outline:" in html
+    assert ".calendar-day.today .calendar-day-number{text-decoration" not in html
+    assert "var text='已同步 '" in html
 
 
 def test_report_route_explicitly_generates_without_sync(tmp_path, monkeypatch):

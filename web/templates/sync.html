@@ -95,7 +95,7 @@ body{background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSy
 .calendar-day:hover:not(:disabled){transform:translateY(-1px);border-color:var(--accent)}
 .calendar-day:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
 .calendar-day.selected{border-color:var(--accent);box-shadow:0 0 0 2px var(--accent-glow)}
-.calendar-day.today .calendar-day-number{text-decoration:underline;text-decoration-thickness:2px;text-underline-offset:3px}
+.calendar-day.today{outline:2px solid var(--text-secondary);outline-offset:1px}
 .calendar-day-number{font-size:13px;font-weight:700;line-height:1}
 .calendar-day-detail{font-size:8px;line-height:1;color:currentColor;opacity:.78;white-space:nowrap}
 .calendar-day.status-synced{background:var(--performance-glow);color:var(--performance);border-color:color-mix(in srgb,var(--performance) 34%,transparent)}
@@ -297,12 +297,14 @@ function renderSyncCalendar(payload){
     var button=document.createElement('button');
     var label=calendarLabels[day.status]||day.status;
     var details=[];
-    if(day.activity_count){details.push(day.activity_count+' 条运动')}
+    if(day.running_count){details.push(day.running_count+' 条跑步')}
+    else if(day.activity_count){details.push(day.activity_count+' 条运动')}
     if(day.has_health){details.push('有健康数据')}
     button.type='button';
     button.className='calendar-day status-'+day.status+(day.date===today?' today':'');
     button.dataset.date=day.date;
     button.disabled=day.status==='future';
+    if(day.date===today){button.setAttribute('aria-current','date')}
     button.setAttribute('aria-label',(dayDate.getMonth()+1)+'月'+dayDate.getDate()+'日，'+label+(details.length?'，'+details.join('，'):''));
     button.title=label+(details.length?' · '+details.join(' · '):'');
     if(!button.disabled){button.addEventListener('click',function(){selectCalendarDate(day.date)})}
@@ -313,13 +315,13 @@ function renderSyncCalendar(payload){
     button.appendChild(number);
     var detail=document.createElement('span');
     detail.className='calendar-day-detail';
-    detail.textContent=day.activity_count?day.activity_count+' 次':label;
+    detail.textContent=day.running_count?day.running_count+' 次跑':(day.activity_count?day.activity_count+' 次':label);
     button.appendChild(detail);
     grid.appendChild(button);
   });
 
   var s=payload.summary||{},eligible=(s.total_days||0)-(s.future||0);
-  var text='完整同步 '+(s.synced||0)+' / '+eligible+' 天';
+  var text='已同步 '+(s.synced||0)+' / '+eligible+' 天';
   if(s.partial){text+=' · '+s.partial+' 天部分完成'}
   if(s.failed){text+=' · '+s.failed+' 天失败'}
   if(s.latest_synced_date){text+=' · 已同步至 '+s.latest_synced_date}

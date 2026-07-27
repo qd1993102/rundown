@@ -347,17 +347,20 @@ web/templates/chat.html    (~300行)
 同步表单上方提供月份日历。页面通过只读接口
 `GET /api/sync/calendar?month=YYYY-MM` 获取该月首日至末日的逐日聚合状态：
 
-- `synced`：neurun 逐日范围标记完成，且没有残留失败/待处理指标；
+- `synced`：当天存在跑步记录，或 neurun 逐日范围标记完成且没有残留失败/待处理指标；
 - `partial`：存在本地数据或部分完成指标，但缺少完整完成标记；
 - `failed`：范围标记或指标状态失败；
 - `syncing`：范围同步正在执行；
 - `unsynced`：今天或历史日期没有任何同步证据；
 - `future`：未来日期，不允许点击同步。
 
-响应同时包含 `activity_count`、`has_health`、`synced_at` 和月份摘要。日历采用七列 CSS
+响应同时包含 `activity_count`、`running_count`、`has_health`、`synced_at` 和月份摘要。日历采用七列 CSS
 Grid，日期按钮保持在文档流中；窄屏减小 gap 和卡片内边距，不产生横向滚动。状态不仅
 依赖颜色，还必须有文本图例、状态标题或 `aria-label`。点击非未来日期只负责回填单日
 同步日期，不自动发起网络写操作；同步成功后重新加载当前月份。
+
+当天日期不使用向下延伸的文字下划线，避免与第二行“部分完成”等状态文案重叠；使用
+日期格外轮廓并设置 `aria-current="date"` 表达今天，轮廓不得挤占格内文本空间。
 
 日期缺失、格式错误、开始日期晚于结束日期或范围超过 3 年时，API 返回 HTTP 400 和
 可操作的 JSON 错误信息。两种模式都允许 `force=true` 强制覆盖相应范围的数据。
