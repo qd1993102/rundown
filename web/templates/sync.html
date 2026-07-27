@@ -95,7 +95,7 @@ body{background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSy
 .calendar-day:hover:not(:disabled){transform:translateY(-1px);border-color:var(--accent)}
 .calendar-day:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
 .calendar-day.selected{border-color:var(--accent);box-shadow:0 0 0 2px var(--accent-glow)}
-.calendar-day.today{outline:2px solid var(--text-secondary);outline-offset:1px}
+.calendar-day.today{outline:2px solid color-mix(in srgb,var(--accent) 72%,white);outline-offset:1px;box-shadow:0 0 0 4px var(--accent-glow)}
 .calendar-day-number{font-size:13px;font-weight:700;line-height:1}
 .calendar-day-detail{font-size:8px;line-height:1;color:currentColor;opacity:.78;white-space:nowrap}
 .calendar-day.status-synced{background:var(--performance-glow);color:var(--performance);border-color:color-mix(in srgb,var(--performance) 34%,transparent)}

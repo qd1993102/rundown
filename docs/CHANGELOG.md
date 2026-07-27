@@ -6,6 +6,11 @@ neurun 项目变更日志，按日期倒序。
 
 ## 2026-07-27
 
+### Changed
+- **今日日期主题色光环**: 同步日历的今日标识由深灰外框调整为当前主题的浅色强调环与柔和光晕，保留不占用格内文字空间和 `aria-current="date"` 的可访问性契约。
+- **影响范围**: web/templates/sync.html, tests/test_web.py
+- **关联文档**: [Bug 记录](bugfixes/2026-07-27-sync-calendar-running-priority.md), [Web 部署设计](design/13-sae-deployment.md), [README](../README.md)
+
 ### Fixed
 - **同步日历跑步完成判定与今日样式**: 当天存在跑步记录时优先显示为“已同步”，不再被 Garmin 遗留的活动待处理状态或健康指标失败降级为“部分完成”；三平台新同步活动持久化标准化 `activity_type`，旧数据兼容按活动名称识别。今日标识从日期下划线改为不占用格内空间的外轮廓，并补充 `aria-current="date"`。
 - **影响范围**: src/main.py, src/storage.py, web/templates/sync.html, tests/test_storage.py, tests/test_web.py
