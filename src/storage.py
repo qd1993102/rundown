@@ -21,6 +21,8 @@ from .local_files import atomic_write_private, ensure_private_dir, restrict_priv
 
 logger = logging.getLogger(__name__)
 
+_CALENDAR_METRIC_TYPE = "neurun_provider_sync"
+
 
 def _ensure_progress_reporter_compat(progress_reporter: Any) -> None:
     """补齐旧版 garmy ``ProgressReporter.warning`` 缺失的兼容接口。
@@ -200,6 +202,159 @@ class Storage:
         except Exception:
             return []
 
+    def mark_sync_calendar_range(
+        self,
+        user_id: int,
+        start: date,
+        end: date,
+        status: str,
+        error_message: str | None = None,
+    ) -> None:
+        """记录 Provider 范围同步对每一天的整体处理状态。"""
+        import sqlite3
+
+        if start > end:
+            raise ValueError("同步日历开始日期不能晚于结束日期")
+        if status not in {"pending", "completed", "failed"}:
+            raise ValueError(f"不支持的同步日历状态: {status}")
+
+        _ = self.db
+        rows = []
+        current = start
+        while current <= end:
+            rows.append((
+                user_id,
+                str(current),
+                _CALENDAR_METRIC_TYPE,
+                status,
+                (error_message or "")[:500] or None,
+            ))
+            current += timedelta(days=1)
+
+        with sqlite3.connect(str(self._db_path)) as db:
+            db.executemany("""
+                INSERT INTO sync_status
+                    (user_id, sync_date, metric_type, status, synced_at,
+                     error_message, created_at)
+                VALUES (?, ?, ?, ?, datetime('now'), ?, datetime('now'))
+                ON CONFLICT(user_id, sync_date, metric_type) DO UPDATE SET
+                    status = excluded.status,
+                    synced_at = datetime('now'),
+                    error_message = excluded.error_message
+            """, rows)
+
+    def get_sync_calendar(
+        self,
+        user_id: int | None,
+        start: date,
+        end: date,
+        *,
+        today: date | None = None,
+    ) -> dict[str, Any]:
+        """聚合范围同步、指标状态与本地数据，生成逐日同步日历。"""
+        import sqlite3
+
+        if start > end:
+            raise ValueError("同步日历开始日期不能晚于结束日期")
+
+        today = today or date.today()
+        status_by_date: dict[str, list[dict[str, Any]]] = {}
+        activity_counts: dict[str, int] = {}
+        health_dates: set[str] = set()
+
+        if user_id is not None:
+            _ = self.db
+            with sqlite3.connect(str(self._db_path)) as db:
+                db.row_factory = sqlite3.Row
+                for row in db.execute("""
+                    SELECT sync_date, metric_type, status, synced_at
+                    FROM sync_status
+                    WHERE user_id = ? AND sync_date >= ? AND sync_date <= ?
+                    ORDER BY sync_date, metric_type
+                """, (user_id, str(start), str(end))):
+                    key = str(row["sync_date"])
+                    status_by_date.setdefault(key, []).append(dict(row))
+
+                for row in db.execute("""
+                    SELECT activity_date, COUNT(*) AS count
+                    FROM activities
+                    WHERE user_id = ? AND activity_date >= ? AND activity_date <= ?
+                    GROUP BY activity_date
+                """, (user_id, str(start), str(end))):
+                    activity_counts[str(row["activity_date"])] = int(row["count"])
+
+                for row in db.execute("""
+                    SELECT metric_date
+                    FROM daily_health_metrics
+                    WHERE user_id = ? AND metric_date >= ? AND metric_date <= ?
+                """, (user_id, str(start), str(end))):
+                    health_dates.add(str(row["metric_date"]))
+
+        days: list[dict[str, Any]] = []
+        counts = {
+            "synced": 0,
+            "partial": 0,
+            "failed": 0,
+            "syncing": 0,
+            "unsynced": 0,
+            "future": 0,
+        }
+        latest_synced_date: str | None = None
+        current = start
+        while current <= end:
+            key = str(current)
+            rows = status_by_date.get(key, [])
+            marker = next(
+                (row for row in rows if row["metric_type"] == _CALENDAR_METRIC_TYPE),
+                None,
+            )
+            metric_rows = [
+                row for row in rows if row["metric_type"] != _CALENDAR_METRIC_TYPE
+            ]
+            metric_statuses = {str(row["status"]).lower() for row in metric_rows}
+            has_local_data = key in activity_counts or key in health_dates
+
+            if current > today:
+                day_status = "future"
+            elif marker and str(marker["status"]).lower() == "pending":
+                day_status = "syncing"
+            elif marker and str(marker["status"]).lower() == "failed":
+                day_status = "failed"
+            elif marker and str(marker["status"]).lower() == "completed":
+                if metric_statuses.intersection({"failed", "pending"}):
+                    day_status = "partial"
+                else:
+                    day_status = "synced"
+            elif "failed" in metric_statuses:
+                day_status = "failed"
+            elif has_local_data or metric_statuses:
+                day_status = "partial"
+            else:
+                day_status = "unsynced"
+
+            synced_values = [str(row["synced_at"]) for row in rows if row["synced_at"]]
+            synced_at = max(synced_values) if synced_values else None
+            counts[day_status] += 1
+            if day_status == "synced":
+                latest_synced_date = key
+            days.append({
+                "date": key,
+                "status": day_status,
+                "activity_count": activity_counts.get(key, 0),
+                "has_health": key in health_dates,
+                "synced_at": synced_at,
+            })
+            current += timedelta(days=1)
+
+        return {
+            "days": days,
+            "summary": {
+                **counts,
+                "total_days": len(days),
+                "latest_synced_date": latest_synced_date,
+            },
+        }
+
     def get_local_user_id(self) -> int | None:
         """从当前用户 SQLite 中读取唯一的平台用户 ID，不访问远端平台。"""
         from sqlalchemy import text
@@ -212,7 +367,7 @@ class Storage:
                     UNION ALL
                     SELECT user_id FROM daily_health_metrics
                     UNION ALL
-                    SELECT user_id FROM sync_status
+                    SELECT user_id FROM sync_status WHERE status = 'completed'
                     UNION ALL
                     SELECT user_id FROM timeseries
                 )

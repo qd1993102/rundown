@@ -1,6 +1,6 @@
 # 设计方案 — 4. 模块设计
 
-> 属于 [设计方案索引](../design.md) · 版本 v3.1 · 2026-07-26
+> 属于 [设计方案索引](../design.md) · 版本 v3.2 · 2026-07-26
 
 ---
 
@@ -175,7 +175,20 @@ sync_status:       同步状态追踪（user_id, date, metric_type, status）
 - `get_activities_by_type(activity_type)` — 按类型统计
 - `get_weekly_summary(date)` — 周训练汇总
 - `get_health_trend(metric, days)` — 健康指标趋势
+- `mark_sync_calendar_range(user_id, start, end, status)` — 在 `sync_status` 中维护 neurun 自有的逐日范围标记
+- `get_sync_calendar(user_id, start, end)` — 聚合范围标记、garmy 指标状态及本地活动/健康数据，返回逐日同步日历
 - `export_csv(table, path)` — 导出 CSV
+
+同步日历复用 `sync_status` 表，使用保留的 `metric_type=neurun_provider_sync` 标识一次
+Provider 范围同步对某一天的整体覆盖。它不替代 garmy 的各指标状态；查询时按以下优先级聚合：
+
+1. neurun 范围标记为 `pending`、`failed` 或 `completed`；
+2. 旧的 garmy 指标级状态；
+3. 已存在的活动或日健康数据；
+4. 无任何记录时为 `unsynced`，晚于今天时为 `future`。
+
+对旧数据库，只有本地数据但没有范围完成标记的日期显示为 `partial`，不得把休息日自动
+推断为未同步；从本版本开始，成功同步的空数据日也会通过范围标记显示为 `synced`。
 
 ---
 

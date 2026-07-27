@@ -107,6 +107,23 @@ def test_get_local_user_id_rejects_mixed_user_database(tmp_path):
         storage.get_local_user_id()
 
 
+def test_get_local_user_id_ignores_failed_calendar_only_sync(tmp_path):
+    from src.config import Config
+    from src.storage import Storage
+
+    storage = Storage(Config(db_path=str(tmp_path / "data.db")))
+    storage.mark_sync_calendar_range(
+        7, date(2026, 7, 26), date(2026, 7, 26), "failed",
+    )
+
+    assert storage.get_local_user_id() is None
+
+    storage.mark_sync_calendar_range(
+        7, date(2026, 7, 26), date(2026, 7, 26), "completed",
+    )
+    assert storage.get_local_user_id() == 7
+
+
 def test_storage_database_and_backup_are_private(tmp_path):
     from src.config import Config
     from src.storage import Storage
@@ -140,3 +157,53 @@ def test_storage_exports_are_private_files_without_changing_selected_directory(t
     assert stat.S_IMODE(output_dir.stat().st_mode) == 0o755
     assert stat.S_IMODE(csv_path.stat().st_mode) == 0o600
     assert stat.S_IMODE(json_path.stat().st_mode) == 0o600
+
+
+def test_sync_calendar_tracks_empty_days_and_aggregates_legacy_data(tmp_path):
+    from sqlalchemy import text
+
+    from src.config import Config
+    from src.storage import Storage
+
+    storage = Storage(Config(db_path=str(tmp_path / "data" / "data.db")))
+    session = storage.db.get_session()
+    session.execute(text("""
+        INSERT INTO activities (user_id, activity_id, activity_date)
+        VALUES (7, 'legacy-activity', '2026-07-20')
+    """))
+    session.execute(text("""
+        INSERT INTO sync_status
+            (user_id, sync_date, metric_type, status, synced_at)
+        VALUES (7, '2026-07-19', 'activities', 'completed', datetime('now'))
+    """))
+    session.commit()
+    session.close()
+
+    storage.mark_sync_calendar_range(
+        7, date(2026, 7, 21), date(2026, 7, 22), "completed",
+    )
+    storage.mark_sync_calendar_range(
+        7, date(2026, 7, 23), date(2026, 7, 23), "failed",
+        error_message="provider timeout",
+    )
+    storage.mark_sync_calendar_range(
+        7, date(2026, 7, 24), date(2026, 7, 24), "pending",
+    )
+
+    result = storage.get_sync_calendar(
+        7, date(2026, 7, 19), date(2026, 7, 27),
+        today=date(2026, 7, 26),
+    )
+    days = {item["date"]: item for item in result["days"]}
+
+    assert days["2026-07-19"]["status"] == "partial"
+    assert days["2026-07-20"]["status"] == "partial"
+    assert days["2026-07-20"]["activity_count"] == 1
+    assert days["2026-07-21"]["status"] == "synced"
+    assert days["2026-07-22"]["status"] == "synced"
+    assert days["2026-07-23"]["status"] == "failed"
+    assert days["2026-07-24"]["status"] == "syncing"
+    assert days["2026-07-25"]["status"] == "unsynced"
+    assert days["2026-07-27"]["status"] == "future"
+    assert result["summary"]["latest_synced_date"] == "2026-07-22"
+    assert result["summary"]["synced"] == 2

@@ -26,7 +26,7 @@ class _FakeServer:
         return decorator
 
 
-def _request(path, body, api_key, method="POST"):
+def _request(path, body, api_key, method="POST", query=""):
     raw = json.dumps(body).encode()
     delivered = False
 
@@ -43,7 +43,7 @@ def _request(path, body, api_key, method="POST"):
         "scheme": "http",
         "path": path,
         "raw_path": path.encode(),
-        "query_string": b"",
+        "query_string": query.encode(),
         "headers": [
             (b"content-type", b"application/json"),
             (b"cookie", f"neurun_key={api_key}".encode()),
@@ -206,6 +206,81 @@ def test_sync_route_only_persists_data_without_generating_reports(tmp_path, monk
         "to_date": "2026-07-19",
     }
     assert calls[0][0] == "sync"
+
+
+def test_sync_calendar_route_returns_local_month_status(tmp_path, monkeypatch):
+    import src.web as web
+
+    manager, user = _active_user(tmp_path)
+    server = _FakeServer()
+    config = Config(data_dir=str(tmp_path))
+    calls = []
+
+    class FakeStorage:
+        def __init__(self, user_config):
+            calls.append(("init", user_config.api_key))
+
+        def get_local_user_id(self):
+            return 88
+
+        def get_sync_calendar(self, user_id, start, end):
+            calls.append(("calendar", user_id, start, end))
+            return {
+                "days": [{"date": "2026-07-01", "status": "synced"}],
+                "summary": {"synced": 1, "latest_synced_date": "2026-07-01"},
+            }
+
+    monkeypatch.setattr(web, "Storage", FakeStorage)
+    register_web_routes(server, manager, config)
+
+    response = asyncio.run(server.routes[("/api/sync/calendar", "GET")](_request(
+        "/api/sync/calendar", {}, user.api_key, method="GET", query="month=2026-07",
+    )))
+    payload = json.loads(response.body)
+
+    assert response.status_code == 200
+    assert response.headers["cache-control"] == "no-store"
+    assert payload["month"] == "2026-07"
+    assert payload["days"][0]["status"] == "synced"
+    assert calls[-1] == (
+        "calendar", 88, date(2026, 7, 1), date(2026, 7, 31),
+    )
+
+
+def test_calendar_month_range_handles_december_boundary():
+    from src.web import _calendar_month_range
+
+    month, start, end = _calendar_month_range("2026-12")
+
+    assert month == "2026-12"
+    assert start == date(2026, 12, 1)
+    assert end == date(2026, 12, 31)
+
+
+@pytest.mark.parametrize("month", ["2026-7", "2026-13", "not-a-month"])
+def test_sync_calendar_route_rejects_invalid_month(tmp_path, month):
+    manager, user = _active_user(tmp_path)
+    server = _FakeServer()
+    register_web_routes(server, manager, Config(data_dir=str(tmp_path)))
+
+    response = asyncio.run(server.routes[("/api/sync/calendar", "GET")](_request(
+        "/api/sync/calendar", {}, user.api_key, method="GET", query=f"month={month}",
+    )))
+
+    assert response.status_code == 400
+    assert "YYYY-MM" in json.loads(response.body)["message"]
+
+
+def test_sync_template_contains_accessible_calendar_contract():
+    from pathlib import Path
+
+    html = Path("web/templates/sync.html").read_text(encoding="utf-8")
+
+    assert 'id="syncCalendar"' in html
+    assert 'id="calendarSummary"' in html
+    assert 'aria-label="上个月"' in html
+    assert 'aria-label="下个月"' in html
+    assert "loadSyncCalendar" in html
 
 
 def test_report_route_explicitly_generates_without_sync(tmp_path, monkeypatch):

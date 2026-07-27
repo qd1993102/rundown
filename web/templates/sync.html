@@ -79,8 +79,51 @@ body{background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSy
 .result-msg.error{color:var(--danger)}
 .history-row{display:flex;align-items:center;gap:12px;padding:10px 14px;border-radius:10px;transition:background .15s}
 .history-row:hover{background:var(--bg-subtle)}
+
+/* Sync calendar */
+.calendar-card{padding:24px}
+.calendar-header{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:4px}
+.calendar-title{font-size:17px;font-weight:750;letter-spacing:.2px}
+.calendar-nav{display:flex;align-items:center;gap:6px}
+.calendar-nav-btn{display:inline-grid;place-items:center;width:36px;height:36px;border:1px solid var(--border-subtle);border-radius:50%;background:var(--bg-subtle);color:var(--text-secondary);font-size:18px;cursor:pointer;transition:border-color .2s,color .2s,background .2s}
+.calendar-nav-btn:hover:not(:disabled){border-color:var(--accent);color:var(--accent)}
+.calendar-nav-btn:disabled{opacity:.35;cursor:not-allowed}
+.calendar-summary{min-height:20px;margin-bottom:16px;color:var(--text-secondary);font-size:12px}
+.calendar-weekdays,.calendar-grid{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:6px}
+.calendar-weekdays{margin-bottom:6px;color:var(--text-muted);font-size:10px;font-weight:700;text-align:center}
+.calendar-day{position:relative;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;min-width:0;aspect-ratio:1;border:1px solid transparent;border-radius:12px;background:var(--bg-subtle);color:var(--text-secondary);font:inherit;cursor:pointer;transition:transform .15s,border-color .15s,background .15s}
+.calendar-day:hover:not(:disabled){transform:translateY(-1px);border-color:var(--accent)}
+.calendar-day:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.calendar-day.selected{border-color:var(--accent);box-shadow:0 0 0 2px var(--accent-glow)}
+.calendar-day.today .calendar-day-number{text-decoration:underline;text-decoration-thickness:2px;text-underline-offset:3px}
+.calendar-day-number{font-size:13px;font-weight:700;line-height:1}
+.calendar-day-detail{font-size:8px;line-height:1;color:currentColor;opacity:.78;white-space:nowrap}
+.calendar-day.status-synced{background:var(--performance-glow);color:var(--performance);border-color:color-mix(in srgb,var(--performance) 34%,transparent)}
+.calendar-day.status-partial{background:var(--accent-glow);color:var(--accent);border-color:color-mix(in srgb,var(--accent) 30%,transparent)}
+.calendar-day.status-failed{background:color-mix(in srgb,var(--danger) 10%,transparent);color:var(--danger);border-color:color-mix(in srgb,var(--danger) 35%,transparent)}
+.calendar-day.status-syncing{background:color-mix(in srgb,var(--warning) 12%,transparent);color:var(--warning);border-color:color-mix(in srgb,var(--warning) 35%,transparent)}
+.calendar-day.status-unsynced{color:var(--text-muted)}
+.calendar-day.status-future{background:transparent;color:var(--text-muted);opacity:.35;cursor:not-allowed}
+.calendar-empty{aspect-ratio:1}
+.calendar-legend{display:flex;flex-wrap:wrap;gap:8px 14px;margin-top:16px;color:var(--text-muted);font-size:10px}
+.calendar-legend-item{display:inline-flex;align-items:center;gap:5px}
+.calendar-legend-dot{width:7px;height:7px;border-radius:50%;background:var(--text-muted)}
+.calendar-legend-dot.synced{background:var(--performance)}
+.calendar-legend-dot.partial{background:var(--accent)}
+.calendar-legend-dot.failed{background:var(--danger)}
+.calendar-legend-dot.syncing{background:var(--warning)}
+.calendar-loading,.calendar-error{grid-column:1/-1;padding:28px 0;text-align:center;color:var(--text-muted);font-size:12px}
+.calendar-error{color:var(--danger)}
 .footer{text-align:center;padding:40px 0 20px;font-size:11px;color:var(--text-muted)}
 .footer span{background:linear-gradient(135deg,var(--accent),#ef4444);-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text;font-weight:700}
+@media(max-width:480px){
+  .container{padding-inline:12px}
+  .calendar-card{padding:18px 14px}
+  .calendar-weekdays,.calendar-grid{gap:4px}
+  .calendar-day{border-radius:9px}
+  .calendar-day-number{font-size:12px}
+  .calendar-day-detail{font-size:7px}
+}
 </style>
 </head>
 <body data-theme="dark">
@@ -102,6 +145,33 @@ body{background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSy
     </div>
   </div>
 </div>
+
+<!-- Sync Calendar -->
+<section class="card calendar-card" aria-labelledby="calendarMonthLabel">
+  <div class="calendar-header">
+    <div>
+      <div class="calendar-title" id="calendarMonthLabel">同步日历</div>
+    </div>
+    <div class="calendar-nav">
+      <button class="calendar-nav-btn" id="calendarPrev" type="button" aria-label="上个月" onclick="moveCalendarMonth(-1)">‹</button>
+      <button class="calendar-nav-btn" id="calendarNext" type="button" aria-label="下个月" onclick="moveCalendarMonth(1)">›</button>
+    </div>
+  </div>
+  <div class="calendar-summary" id="calendarSummary" aria-live="polite">正在读取同步记录...</div>
+  <div class="calendar-weekdays" aria-hidden="true">
+    <span>日</span><span>一</span><span>二</span><span>三</span><span>四</span><span>五</span><span>六</span>
+  </div>
+  <div class="calendar-grid" id="syncCalendar" aria-label="逐日同步状态">
+    <div class="calendar-loading">加载中...</div>
+  </div>
+  <div class="calendar-legend" aria-label="同步状态图例">
+    <span class="calendar-legend-item"><i class="calendar-legend-dot synced"></i>已同步</span>
+    <span class="calendar-legend-item"><i class="calendar-legend-dot partial"></i>部分完成</span>
+    <span class="calendar-legend-item"><i class="calendar-legend-dot failed"></i>失败</span>
+    <span class="calendar-legend-item"><i class="calendar-legend-dot syncing"></i>同步中</span>
+    <span class="calendar-legend-item"><i class="calendar-legend-dot"></i>未同步</span>
+  </div>
+</section>
 
 <!-- Single-day Sync -->
 <div class="card">
@@ -185,6 +255,97 @@ document.getElementById('singleDate').value=today;
 document.getElementById('batchFromDate').value=localDateString(monthAgo);
 document.getElementById('batchToDate').value=today;
 
+var calendarCursor=new Date(now.getFullYear(),now.getMonth(),1);
+var calendarLabels={
+  synced:'已同步',partial:'部分完成',failed:'同步失败',syncing:'同步中',
+  unsynced:'未同步',future:'未来日期'
+};
+
+function calendarMonthKey(){
+  return calendarCursor.getFullYear()+'-'+String(calendarCursor.getMonth()+1).padStart(2,'0');
+}
+
+function moveCalendarMonth(offset){
+  calendarCursor=new Date(calendarCursor.getFullYear(),calendarCursor.getMonth()+offset,1);
+  loadSyncCalendar();
+}
+
+function selectCalendarDate(syncDate){
+  document.getElementById('singleDate').value=syncDate;
+  document.querySelectorAll('.calendar-day').forEach(function(day){
+    day.classList.toggle('selected',day.dataset.date===syncDate);
+  });
+  document.getElementById('singleDate').scrollIntoView({behavior:'smooth',block:'center'});
+}
+
+function renderSyncCalendar(payload){
+  var grid=document.getElementById('syncCalendar'),summary=document.getElementById('calendarSummary');
+  var parts=payload.month.split('-'),year=Number(parts[0]),month=Number(parts[1]);
+  document.getElementById('calendarMonthLabel').textContent=year+' 年 '+month+' 月';
+  grid.innerHTML='';
+
+  var firstWeekday=new Date(year,month-1,1).getDay();
+  for(var blank=0;blank<firstWeekday;blank++){
+    var spacer=document.createElement('span');
+    spacer.className='calendar-empty';
+    spacer.setAttribute('aria-hidden','true');
+    grid.appendChild(spacer);
+  }
+
+  payload.days.forEach(function(day){
+    var dayDate=new Date(day.date+'T00:00:00');
+    var button=document.createElement('button');
+    var label=calendarLabels[day.status]||day.status;
+    var details=[];
+    if(day.activity_count){details.push(day.activity_count+' 条运动')}
+    if(day.has_health){details.push('有健康数据')}
+    button.type='button';
+    button.className='calendar-day status-'+day.status+(day.date===today?' today':'');
+    button.dataset.date=day.date;
+    button.disabled=day.status==='future';
+    button.setAttribute('aria-label',(dayDate.getMonth()+1)+'月'+dayDate.getDate()+'日，'+label+(details.length?'，'+details.join('，'):''));
+    button.title=label+(details.length?' · '+details.join(' · '):'');
+    if(!button.disabled){button.addEventListener('click',function(){selectCalendarDate(day.date)})}
+
+    var number=document.createElement('span');
+    number.className='calendar-day-number';
+    number.textContent=String(dayDate.getDate());
+    button.appendChild(number);
+    var detail=document.createElement('span');
+    detail.className='calendar-day-detail';
+    detail.textContent=day.activity_count?day.activity_count+' 次':label;
+    button.appendChild(detail);
+    grid.appendChild(button);
+  });
+
+  var s=payload.summary||{},eligible=(s.total_days||0)-(s.future||0);
+  var text='完整同步 '+(s.synced||0)+' / '+eligible+' 天';
+  if(s.partial){text+=' · '+s.partial+' 天部分完成'}
+  if(s.failed){text+=' · '+s.failed+' 天失败'}
+  if(s.latest_synced_date){text+=' · 已同步至 '+s.latest_synced_date}
+  summary.textContent=text;
+
+  var currentMonthStart=new Date(now.getFullYear(),now.getMonth(),1);
+  document.getElementById('calendarNext').disabled=calendarCursor>=currentMonthStart;
+}
+
+async function loadSyncCalendar(){
+  var grid=document.getElementById('syncCalendar'),summary=document.getElementById('calendarSummary');
+  grid.innerHTML='<div class="calendar-loading">加载中...</div>';
+  summary.textContent='正在读取同步记录...';
+  try{
+    var r=await fetch('/api/sync/calendar?month='+encodeURIComponent(calendarMonthKey()),{cache:'no-store'});
+    var payload=await r.json();
+    if(r.status===401){location.href='/setup';return}
+    if(!r.ok){throw new Error(payload.message||'同步日历加载失败')}
+    renderSyncCalendar(payload);
+  }catch(e){
+    grid.innerHTML='<div class="calendar-error"></div>';
+    grid.firstChild.textContent=e.message||'同步日历加载失败';
+    summary.textContent='暂时无法读取同步记录';
+  }
+}
+
 async function loadStatus(){
   try{
     var r=await fetch('/api/status');
@@ -234,6 +395,11 @@ async function submitSync(btn,body){
     var el=document.getElementById('syncResult');
     if(d.status==='ok'){
       el.innerHTML='<div class="result-msg">✅ '+d.message+'<br><a href="/reports">前往日报页自主生成 →</a></div>';
+      if(d.to_date){
+        var syncedEnd=new Date(d.to_date+'T00:00:00');
+        calendarCursor=new Date(syncedEnd.getFullYear(),syncedEnd.getMonth(),1);
+      }
+      loadSyncCalendar();
       loadStatus();
     }else if(r.status===401){
       el.innerHTML='<div class="result-msg error">❌ '+(d.message||'登录已失效')+'<br><a href="/setup">重新绑定 →</a></div>';
@@ -263,6 +429,7 @@ function doBatchSync(){
   });
 }
 
+loadSyncCalendar();
 loadStatus();
 </script>
 </body>

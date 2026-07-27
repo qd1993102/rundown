@@ -35,6 +35,7 @@ _COOKIE_NAME = "neurun_key"
 _COOKIE_MAX_AGE = 30 * 24 * 3600  # 固定 30 天
 _TEMPLATE_DIR = Path(__file__).parent.parent / "web" / "templates"
 _EMAIL_PATTERN = re.compile(r"^[^\s@]+@[^\s@]+\.[^\s@]+$")
+_MONTH_PATTERN = re.compile(r"^\d{4}-\d{2}$")
 _INVITE_UNAVAILABLE = "邀请码无效、已停用或已经使用"
 
 
@@ -73,6 +74,22 @@ def _registration_error(nickname: str, email: str, password: str) -> str | None:
     if len(password) > 128:
         return "密码不能超过 128 个字符"
     return None
+
+
+def _calendar_month_range(value: str | None) -> tuple[str, date, date]:
+    """解析 YYYY-MM，并返回规范月份及包含首尾的日期范围。"""
+    month = value or date.today().strftime("%Y-%m")
+    if not _MONTH_PATTERN.fullmatch(month):
+        raise ValueError("月份格式必须为 YYYY-MM")
+    try:
+        start = date.fromisoformat(f"{month}-01")
+    except ValueError as exc:
+        raise ValueError("月份格式必须为有效的 YYYY-MM") from exc
+    if start.month == 12:
+        next_month = date(start.year + 1, 1, 1)
+    else:
+        next_month = date(start.year, start.month + 1, 1)
+    return month, start, next_month - timedelta(days=1)
 
 
 def _user_page(user: UserRecord | None) -> str:
@@ -708,6 +725,35 @@ def register_web_routes(server, user_manager: UserManager, config: Config):
                     status_code=401,
                 )
             return JSONResponse({"status": "error", "message": str(exc)}, status_code=500)
+
+    @server.custom_route("/api/sync/calendar", methods=["GET"])
+    async def api_sync_calendar(request: Request) -> Response:
+        """读取当前用户本地 SQLite，返回指定月份的逐日同步状态。"""
+        api_key = _get_api_key(request)
+        user = user_manager.get(api_key) if api_key else None
+        if not user or user.token_status != "active":
+            return JSONResponse(
+                {"status": "error", "message": "请先绑定数据源"}, status_code=401,
+            )
+
+        try:
+            month, start, end = _calendar_month_range(
+                request.query_params.get("month")
+            )
+        except ValueError as exc:
+            return JSONResponse(
+                {"status": "error", "message": str(exc)}, status_code=400,
+            )
+
+        user_cfg = config.for_user(api_key)
+        user_manager.ensure_dirs(api_key)
+        storage = Storage(user_cfg)
+        user_id = storage.get_local_user_id()
+        calendar_data = storage.get_sync_calendar(user_id, start, end)
+        return JSONResponse(
+            {"month": month, **calendar_data},
+            headers={"Cache-Control": "no-store"},
+        )
 
     @server.custom_route("/api/status", methods=["GET"])
     async def api_status(request: Request) -> Response:

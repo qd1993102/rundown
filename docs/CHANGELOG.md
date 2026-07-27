@@ -6,6 +6,11 @@ neurun 项目变更日志，按日期倒序。
 
 ## 2026-07-26
 
+### Added
+- **Web 逐日同步日历**: 同步页新增按月切换的七列日历，展示已同步、部分完成、失败、同步中、未同步和未来日期；点击历史日期可回填单日同步，单日或批量同步完成后自动刷新对应月份。核心同步流程在现有 `sync_status` 中按日记录 Provider 范围状态，空数据休息日也能准确显示为已覆盖；新增只读 `GET /api/sync/calendar?month=YYYY-MM` 聚合旧指标状态、本地活动及健康数据。
+- **影响范围**: src/storage.py, src/main.py, src/web.py, web/templates/sync.html, tests/test_storage.py, tests/test_main.py, tests/test_web.py
+- **关联文档**: [项目目标](design/01-project-goals.md), [模块设计](design/04-modules.md), [数据流](design/05-data-flow.md), [Web 部署设计](design/13-sae-deployment.md), [开发过程](process/2026-07-26-sync-calendar.md), [README](../README.md)
+
 ### Fixed
 - **三平台同步认证顺序与 Huawei 用户凭据**: Garmin、Coros、Huawei 统一先恢复并验证凭据，再读取正整数平台用户 ID 和打开 SQLite；认证失效统一返回 401、标记连接 `expired`，不会继续本地写入。Huawei Web 绑定仅在认证成功后把 CrewPals token 保存到当前用户目录。
 - **影响范围**: src/main.py, src/web.py, src/config.py, tests/test_main.py, tests/test_web.py, tests/test_config.py, tests/test_registration.py

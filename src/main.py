@@ -429,21 +429,32 @@ def _do_data_sync(config, target: date | None = None,
         _log(f"[dim]🔄 数据同步: {from_day} ~ {to_day}[/]")
         if force_sync:
             storage.reset_pending_metrics(user_id, from_day, to_day, force=True)
+        elif config.provider_type == "garmin":
+            storage.reset_pending_metrics(user_id, from_day, to_day)
 
-        if config.provider_type == "garmin":
-            # Web 多用户模式：每用户隔离 token_dir，需注入已认证 APIClient
-            if hasattr(provider, 'auth') and hasattr(provider.auth, '_client'):
-                from garmy import APIClient
-                storage.set_api_client(APIClient(auth_client=provider.auth._client))
-            if not force_sync:
-                storage.reset_pending_metrics(user_id, from_day, to_day)
-            storage.sync_range(user_id, from_day, to_day)
-            _sync_garmin_activities(provider, storage, user_id, from_day, to_day)
-        elif config.provider_type in ("coros", "huawei"):
-            if force_sync:
-                storage.reset_pending_metrics(user_id, from_day, to_day, force=True)
-            _sync_provider(provider, storage, user_id, from_day, to_day,
-                           config.provider_type)
+        storage.mark_sync_calendar_range(
+            user_id, from_day, to_day, "pending",
+        )
+        try:
+            if config.provider_type == "garmin":
+                # Web 多用户模式：每用户隔离 token_dir，需注入已认证 APIClient
+                if hasattr(provider, 'auth') and hasattr(provider.auth, '_client'):
+                    from garmy import APIClient
+                    storage.set_api_client(APIClient(auth_client=provider.auth._client))
+                storage.sync_range(user_id, from_day, to_day)
+                _sync_garmin_activities(provider, storage, user_id, from_day, to_day)
+            elif config.provider_type in ("coros", "huawei"):
+                _sync_provider(provider, storage, user_id, from_day, to_day,
+                               config.provider_type)
+        except Exception as exc:
+            storage.mark_sync_calendar_range(
+                user_id, from_day, to_day, "failed", error_message=str(exc),
+            )
+            raise
+        else:
+            storage.mark_sync_calendar_range(
+                user_id, from_day, to_day, "completed",
+            )
     else:
         _log("[dim]📦 本地数据完整，跳过同步[/]")
 

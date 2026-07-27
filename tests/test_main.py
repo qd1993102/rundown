@@ -2,6 +2,7 @@
 
 from datetime import date
 from types import SimpleNamespace
+from unittest import mock
 
 import pytest
 
@@ -81,6 +82,65 @@ def test_setup_preserves_actionable_local_persistence_error(monkeypatch):
             provider_type="coros",
             memory_dir="/tmp/memory",
         ))
+
+
+def test_data_sync_marks_calendar_range_completed(monkeypatch):
+    import src.main as main
+
+    calls = []
+
+    class FakeStorage:
+        def mark_sync_calendar_range(self, user_id, start, end, status, error_message=None):
+            calls.append((user_id, start, end, status, error_message))
+
+    storage = FakeStorage()
+    monkeypatch.setattr(main, "_setup", lambda config: (
+        config, SimpleNamespace(), storage, SimpleNamespace(), 42,
+    ))
+    monkeypatch.setattr(main, "_sync_provider", lambda *args: None)
+
+    main._do_data_sync(
+        SimpleNamespace(provider_type="coros"),
+        target=date(2026, 7, 26),
+        sync_days=2,
+        quiet=True,
+    )
+
+    assert calls == [
+        (42, date(2026, 7, 24), date(2026, 7, 26), "pending", None),
+        (42, date(2026, 7, 24), date(2026, 7, 26), "completed", None),
+    ]
+
+
+def test_data_sync_marks_calendar_range_failed(monkeypatch):
+    import src.main as main
+
+    calls = []
+
+    class FakeStorage:
+        def mark_sync_calendar_range(self, user_id, start, end, status, error_message=None):
+            calls.append((status, error_message))
+
+    storage = FakeStorage()
+    monkeypatch.setattr(main, "_setup", lambda config: (
+        config, SimpleNamespace(), storage, SimpleNamespace(), 42,
+    ))
+    monkeypatch.setattr(
+        main, "_sync_provider", mock.Mock(side_effect=RuntimeError("provider timeout")),
+    )
+
+    with pytest.raises(RuntimeError, match="provider timeout"):
+        main._do_data_sync(
+            SimpleNamespace(provider_type="huawei"),
+            target=date(2026, 7, 26),
+            sync_days=0,
+            quiet=True,
+        )
+
+    assert calls == [
+        ("pending", None),
+        ("failed", "provider timeout"),
+    ]
 
 
 def test_daily_report_rerenders_body_with_coach_insight(monkeypatch):

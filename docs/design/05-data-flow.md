@@ -1,6 +1,6 @@
 # 设计方案 — 5. 数据流
 
-> 属于 [设计方案索引](../design.md) · 版本 v3.1 · 2026-07-26
+> 属于 [设计方案索引](../design.md) · 版本 v3.2 · 2026-07-26
 
 ---
 
@@ -154,3 +154,8 @@ sequenceDiagram
 同步请求重新创建 Provider 时，必须先从用户目录恢复并执行 `authenticate()`，再读取平台
 `user_id`。任何平台认证失败都在本地 SQLite 写入之前终止，并把连接状态更新为
 `expired`；禁止用 `user_id=0` 或服务级默认凭证继续同步。
+
+认证完成且范围确定后，核心同步函数先将范围内每天的 `neurun_provider_sync` 标记为
+`pending`。全部 Provider 拉取与 SQLite 写入成功后统一更新为 `completed`；异常退出时
+统一更新为 `failed` 并保留截断后的错误信息。Web 日历 API 只聚合这些状态和本地表，
+不为展示日历触发 Provider 认证或远程请求。
