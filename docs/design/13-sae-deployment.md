@@ -1,6 +1,6 @@
 # 设计方案 — 13. Web Chat 部署方案（多用户）
 
-> 版本: v2.5 · 更新日期: 2026-07-26 · 状态: 已实现
+> 版本: v2.7 · 更新日期: 2026-07-28 · 状态: 已实现
 
 ---
 
@@ -42,9 +42,11 @@ graph TB
     subgraph EXTERNAL["外部"]
         GARMIN["Garmin Connect"]
         DEEPSEEK["DeepSeek API"]
+        ARMS["阿里云 ARMS RUM<br/>PV / UV / 性能 / 错误"]
     end
 
     BROWSER <-->|"HTTPS"| WEB
+    BROWSER -->|"Browser SDK v2 上报"| ARMS
     AUTH --> GARMIN
     COACH --> DEEPSEEK
     CORE --> DISK
@@ -181,7 +183,7 @@ VPS 磁盘是持久化的，容器重启不丢。OSS 仅作为灾备，初期可
 | `src/providers/garmin.py` | `non_interactive` 参数传递 |
 | `src/main.py` | + `cmd_serve` Web 服务入口；拆分纯同步与日报生成核心流程 |
 | `src/memory.py` | 日报生成接口透传在线 AI 洞察，以同一洞察重新渲染正文 |
-| `src/web.py` | 分离 `POST /api/sync` 与 `POST /api/reports` 的职责 |
+| `src/web.py` | 分离 `POST /api/sync` 与 `POST /api/reports` 的职责；统一向 HTML 页面注入 ARMS RUM |
 
 ### 5.3 不改的文件
 
@@ -266,6 +268,9 @@ async def api_goals(request): ...
 async def api_preferences(request): ...
     # 保存训练偏好
 
+# /setup 首次设置仅强制绑定运动平台；个人资料、目标和偏好默认收起且可跳过，
+# 用户之后可从 /profile（“我的”）调用同一组 API 补填
+
 @server.custom_route("/api/sync", methods=["POST"])
 async def api_sync(request): ...
     # 从用户注册表注入 provider；不得回退成服务级默认 provider
@@ -323,19 +328,55 @@ async def chat_stream(messages: list[dict], context: str) -> AsyncIterator[str]:
 
 ## 7. 日报仪表盘页面
 
-一个自包含的 HTML 文件，全部内嵌——零构建、零依赖、零 CDN：
+业务页面保持自包含——零构建、无前端框架；仅可观测性通过阿里云官方 CDN 加载 Browser SDK：
 
 ```
-web/templates/chat.html    (~300行)
-├── CSS: 移动端优先，暗色主题（跑步场景护眼）
-├── HTML: 训练概览卡片 + 身体指标 + 睡眠 + AI 洞察
+web/templates/chat.html
+├── CSS: 移动端基础布局 + min-width 桌面增强 + 三主题
+├── HTML: 训练概览卡片 + 身体指标 + 睡眠 + AI 洞察 + 图片保存操作
 ├── JS:  GET /api/dashboard 加载数据 → 渲染卡片
-└── 交互: 同步按钮 → POST /api/sync
+└── 导出: 当前日报 JSON → Canvas → Web Share API / PNG 下载
+
+web/templates/reports.html
+├── CSS: 移动端单行列表摘要 + 桌面三列摘要增强
+└── 交互: 选择日期 → POST /api/reports → 进入日报详情
 ```
 
 首页不再是聊天界面，而是**日报仪表盘**——展示昨日训练、睡眠评分、
 身体状态（RHR/HRV/电量/训练准备）、训练负荷与恢复、AI 教练洞察。
 用户看到的是结构化的数据卡片，而非对话消息列表。
+
+`sync.html`、`chat.html`、`reports.html`、`profile.html` 使用同一份导航结构和类名合同。
+320–640px 下主导航固定在视口底部，由同步、日报、我的三个“图标 + 文字”入口组成；每项至少
+54px 高，当前项使用 `aria-current="page"` 和主题强调色共同表达。内容容器必须预留导航高度及
+`safe-area-inset-bottom`，避免遮住最后一个操作。主题选择留在右上角工具区，不得再混入主导航。
+
+641px 以上主导航恢复静态顶部横向布局，图标与文字仍保留，四页的顺序、尺寸和当前态规则不变。
+日报计划条在手机上使用 2×2 Grid，核心恢复指标先于 AI 长文本展示。日报列表卡片使用“日期 /
+可收缩摘要 / 固定评分”三列 Grid；训练标题和洞察使用省略号，评分区保持单行且不跨列，避免
+320px 窄屏下评分被压缩到第二行。桌面端再增强为四列指标、横向训练详情和更紧凑的工具栏。
+hover 反馈只在支持 hover 的设备上启用，所有布局均不得产生横向滚动。
+
+“保存图片”不调用服务端截图能力。`chat.html` 复用当前 `GET /api/dashboard` JSON，按当前主题
+在浏览器 Canvas 中生成 2 倍像素密度 PNG。支持 `navigator.canShare({files})` 时进入系统分享，
+否则通过 Blob URL 下载；整个过程无 CDN、无额外前端依赖，训练数据不离开当前浏览器。
+
+### 7.1 ARMS RUM 的 PV、UV 与账户归因
+
+所有返回 HTML 的页面路由必须经 `src/web.py::_html_response()`，在 `</body>` 前统一注入阿里云
+ARMS Browser SDK v2；`/healthz` 和 `/api/*` JSON/SSE 响应不得注入。SDK 使用生产环境 endpoint，
+`env=prod`、`spaMode=history`，开启页面性能、Web Vitals、API、静态资源、JS/Console 错误和用户
+行为采集，链路追踪保持关闭。SDK CDN 或上报失败不得阻塞页面主体与 neurun API。
+
+PV 由 SDK 按页面加载和 pathname 自动上报。UV 必须保留 SDK 在浏览器存储中生成的 `user.id`
+（`_arms_uid`），服务端不得用账号 ID 覆盖，否则会改变 ARMS 原生 UV 口径。登录前页面不设置业务
+用户；登录后在 RUM `user.name` 中附加 `account_<digest>`，其中 `digest` 是服务端对随机 API Key
+执行 SHA-256 后截取的 24 位十六进制摘要。页面和上报配置不得包含原始 API Key、Cookie、邮箱、
+昵称或运动平台账号。
+
+因此两个指标需明确区分：ARMS 原生 UV 表示浏览器访客，同一浏览器登录前后保持连续；跨设备的
+同一账号可能对应多个原生 UV，但会具有相同的匿名化 `user.name`，可按该字段归因或去重为业务
+账户数。PV 仍按页面访问累计，不按账户去重。
 
 同步管理页 `web/templates/sync.html` 提供两个明确入口：
 

@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import os
@@ -37,6 +38,13 @@ _TEMPLATE_DIR = Path(__file__).parent.parent / "web" / "templates"
 _EMAIL_PATTERN = re.compile(r"^[^\s@]+@[^\s@]+\.[^\s@]+$")
 _MONTH_PATTERN = re.compile(r"^\d{4}-\d{2}$")
 _INVITE_UNAVAILABLE = "邀请码无效、已停用或已经使用"
+_ALIYUN_ARMS_RUM_SDK = "https://sdk.rum.aliyuncs.com/v2/browser-sdk.js"
+_ALIYUN_ARMS_RUM_ENDPOINT = (
+    "https://proj-xtrace-331c87d116484cdd1fe18f4f5e917845-cn-hangzhou."
+    "cn-hangzhou.log.aliyuncs.com/rum/web/v2?"
+    "workspace=default-cms-1561822425896437-cn-hangzhou&"
+    "service_id=fdmbbfbh11@80570cae83e7211869362"
+)
 
 
 @dataclass(frozen=True)
@@ -61,6 +69,54 @@ def _read_template(name: str) -> str:
     """读取 HTML 模板文件。"""
     path = _TEMPLATE_DIR / name
     return path.read_text(encoding="utf-8") if path.exists() else ""
+
+
+def _rum_account_name(user: UserRecord) -> str:
+    """生成可归因但不泄露账号凭证或个人信息的 RUM 账户名。"""
+    digest = hashlib.sha256(user.api_key.encode("utf-8")).hexdigest()[:24]
+    return f"account_{digest}"
+
+
+def _arms_rum_script(user: UserRecord | None = None) -> str:
+    """构建阿里云 ARMS Browser RUM v2 引导脚本。"""
+    user_config = ""
+    if user is not None:
+        user_config = (
+            f"\n      user: {{ name: {json.dumps(_rum_account_name(user))} }},"
+        )
+    return f"""<script>
+    !(function(c,b,d,a){{c[a]||(c[a]={{}});c[a]=
+    {{
+      endpoint: '{_ALIYUN_ARMS_RUM_ENDPOINT}',
+      env: 'prod',
+      spaMode: 'history',{user_config}
+      collectors: {{
+        perf: true,
+        webVitals: true,
+        api: true,
+        staticResource: true,
+        jsError: true,
+        consoleError: true,
+        action: true,
+      }},
+      tracing: false,
+    }}
+    with(b)with(body)with(insertBefore(createElement("script"),firstChild))setAttribute("crossorigin","",src=d)
+}})(window, document, "{_ALIYUN_ARMS_RUM_SDK}", "__rum");
+</script>"""
+
+
+def _html_response(html: str, user: UserRecord | None = None) -> HTMLResponse:
+    """返回统一注入 ARMS RUM 的 HTML 页面响应。"""
+    if _ALIYUN_ARMS_RUM_SDK in html:
+        return HTMLResponse(html)
+    script = _arms_rum_script(user)
+    body_end = re.search(r"</body\s*>", html, flags=re.IGNORECASE)
+    if body_end is None:
+        logger.warning("HTML 页面缺少 </body>，ARMS RUM 脚本追加到文末")
+        return HTMLResponse(f"{html}\n{script}")
+    monitored_html = f"{html[:body_end.start()]}{script}\n{html[body_end.start():]}"
+    return HTMLResponse(monitored_html)
 
 
 def _registration_error(nickname: str, email: str, password: str) -> str | None:
@@ -335,7 +391,7 @@ def register_web_routes(server, user_manager: UserManager, config: Config):
 
         if user and user.token_status == "active":
             html = _read_template("chat.html")
-            return HTMLResponse(html or _chat_fallback())
+            return _html_response(html or _chat_fallback(), user)
         return _redirect(_user_page(user))
 
     @server.custom_route("/login", methods=["GET"])
@@ -346,7 +402,7 @@ def register_web_routes(server, user_manager: UserManager, config: Config):
         if user:
             return _redirect(_user_page(user))
         html = _read_template("auth.html")
-        return HTMLResponse(html or _auth_fallback("login"))
+        return _html_response(html or _auth_fallback("login"))
 
     @server.custom_route("/register", methods=["GET"])
     async def register_page(request: Request) -> Response:
@@ -356,7 +412,7 @@ def register_web_routes(server, user_manager: UserManager, config: Config):
         if user:
             return _redirect(_user_page(user))
         html = _read_template("auth.html")
-        return HTMLResponse(html or _auth_fallback("register"))
+        return _html_response(html or _auth_fallback("register"))
 
     @server.custom_route("/setup", methods=["GET"])
     async def setup_page(request: Request) -> Response:
@@ -370,7 +426,7 @@ def register_web_routes(server, user_manager: UserManager, config: Config):
             return _redirect("/")
 
         html = _read_template("setup.html")
-        return HTMLResponse(html or _setup_fallback())
+        return _html_response(html or _setup_fallback(), user)
 
     @server.custom_route("/reports", methods=["GET"])
     async def reports_page(request: Request) -> Response:
@@ -381,7 +437,7 @@ def register_web_routes(server, user_manager: UserManager, config: Config):
             return _redirect(_user_page(user))
 
         html = _read_template("reports.html")
-        return HTMLResponse(html or _reports_fallback())
+        return _html_response(html or _reports_fallback(), user)
 
     @server.custom_route("/sync", methods=["GET"])
     async def sync_page(request: Request) -> Response:
@@ -392,7 +448,7 @@ def register_web_routes(server, user_manager: UserManager, config: Config):
             return _redirect(_user_page(user))
 
         html = _read_template("sync.html")
-        return HTMLResponse(html or _sync_fallback())
+        return _html_response(html or _sync_fallback(), user)
 
     @server.custom_route("/profile", methods=["GET"])
     async def profile_page(request: Request) -> Response:
@@ -403,7 +459,7 @@ def register_web_routes(server, user_manager: UserManager, config: Config):
             return _redirect(_user_page(user))
 
         html = _read_template("profile.html")
-        return HTMLResponse(html or _profile_fallback())
+        return _html_response(html or _profile_fallback(), user)
 
     # ═══ API 路由 ═══
 
@@ -1247,7 +1303,7 @@ def _auth_fallback(mode: str) -> str:
     is_register = mode == "register"
     title = "邀请码注册" if is_register else "登录"
     fields = (
-        '<input id="invite" placeholder="邀请码">'
+        '<input id="invite" placeholder="6 位邀请码（旧长码仍可用）">'
         '<input id="nickname" placeholder="昵称">'
         '<input id="email" type="email" placeholder="邮箱">'
         '<input id="password" type="password" placeholder="密码（至少 8 位）">'

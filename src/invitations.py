@@ -13,6 +13,10 @@ from typing import Any
 from .local_files import LocalPersistenceError, atomic_write_private
 
 
+_CODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
+_CODE_LENGTH = 6
+
+
 class InvitationError(ValueError):
     """邀请码不可用、目标不存在或配置无效。"""
 
@@ -23,6 +27,8 @@ def _utc_now() -> str:
 
 def _mask_code(code: str) -> str:
     """生成可用于列表输出的邀请码掩码。"""
+    if len(code) <= _CODE_LENGTH:
+        return "*" * len(code)
     if len(code) <= 10:
         return code[:2] + "***" + code[-2:]
     return code[:6] + "…" + code[-4:]
@@ -81,7 +87,9 @@ class InvitationStore:
             }
             for _ in range(count):
                 while True:
-                    code = "neurun_" + secrets.token_urlsafe(24)
+                    code = "".join(
+                        secrets.choice(_CODE_ALPHABET) for _ in range(_CODE_LENGTH)
+                    )
                     invitation_id = "inv_" + secrets.token_hex(8)
                     if code not in existing_codes and invitation_id not in existing_ids:
                         break

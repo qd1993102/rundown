@@ -5,7 +5,7 @@ neurun 为运动者提供训练数据同步、训练记忆与 AI 教练能力。
 ## Access and Registration
 
 **Invitation**:
-一份由系统随机生成且不可猜测、不预先绑定邮箱、仅允许创建一个 neurun 账号的一次性 bearer 注册资格；由首个成功使用者获得，只有账号创建成功后才算被使用，并在使用或管理员停用前持续有效。
+一份由系统随机生成、不预先绑定邮箱、仅允许创建一个 neurun 账号的一次性 bearer 注册资格；新 Invitation 使用 6 位无歧义大写字母与数字，已发布的旧版长码继续有效；由首个成功使用者获得，只有账号创建成功后才算被使用，并在使用或管理员停用前持续有效。
 _Avoid_: Shared invite, email-bound invite, campaign code, promo code
 
 ## Accounts and Connections

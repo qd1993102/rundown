@@ -115,6 +115,26 @@ class TestProviderRegistry:
         assert restored.is_authenticated() is True
         assert restored.get_user_id() == 12345
 
+    def test_coros_auth_reports_actionable_missing_dependency(self, tmp_path):
+        import builtins
+        import pytest
+
+        from src.providers.coros import CorosAuth, CorosDependencyError
+
+        real_import = builtins.__import__
+
+        def import_without_coros(name, *args, **kwargs):
+            if name.startswith("coros_mcp"):
+                raise ModuleNotFoundError(
+                    "No module named 'coros_mcp'", name="coros_mcp"
+                )
+            return real_import(name, *args, **kwargs)
+
+        auth = CorosAuth(str(tmp_path / "tokens"))
+        with mock.patch("builtins.__import__", side_effect=import_without_coros):
+            with pytest.raises(CorosDependencyError, match="pip install -e"):
+                auth.login("runner@example.com", "password")
+
     def test_coros_auth_migrates_legacy_global_token(self, tmp_path):
         from coros_mcp.models import StoredAuth
         from src.providers.coros import CorosAuth

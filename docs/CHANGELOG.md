@@ -4,6 +4,35 @@ neurun 项目变更日志，按日期倒序。
 
 ---
 
+## 2026-07-28
+
+### Added
+- **阿里云 ARMS Web RUM 与账户归因**: 所有 HTML 页面统一接入 Browser SDK v2，采集 PV/UV、性能、Web Vitals、API、静态资源、JS/Console 错误和用户行为；保留 SDK 生成的访客 ID 作为原生 UV 口径，登录后仅以 API Key 的不可逆摘要设置 `user.name`，支持按业务账户归因且不暴露 Cookie、API Key、邮箱或昵称。
+- **影响范围**: src/web.py, tests/test_web.py
+- **关联文档**: [依赖清单](design/07-dependencies.md), [Web 部署设计](design/13-sae-deployment.md)
+- **Web 日报一键保存图片**: 日报详情可将当前结构化数据和主题直接在浏览器内绘制为高清 PNG；手机优先调用系统文件分享以便保存到相册，不支持时下载 `neurun-daily-YYYY-MM-DD.png`，过程不上传训练数据、不依赖 CDN 或服务端截图组件。
+- **影响范围**: web/templates/chat.html, tests/test_web.py
+- **关联文档**: [模块设计](design/04-modules.md), [数据流](design/05-data-flow.md), [Web 部署设计](design/13-sae-deployment.md), [开发过程](process/2026-07-28-mobile-daily-image-export.md), [README](../README.md)
+
+### Changed
+- **Web 页面移动端优先与统一导航**: 同步、日报详情、日报列表和我的页面统一使用移动端底部三项导航，保留图标、文字、当前态和安全区；主题切换从主导航中分离，桌面端通过 `min-width` 恢复顶部横向导航。日报计划、恢复指标、训练卡和评分区同时按手机宽度重排，hover 只对支持设备启用。
+- **影响范围**: web/templates/sync.html, web/templates/chat.html, web/templates/reports.html, web/templates/profile.html, tests/test_web.py
+- **关联文档**: [模块设计](design/04-modules.md), [Web 部署设计](design/13-sae-deployment.md), [开发过程](process/2026-07-28-mobile-daily-image-export.md), [README](../README.md)
+- **新邀请码缩短为 6 位**: `invite create` 新生成的邀请码改为 6 位无歧义大写字母与数字；存量 JSON 中已发布的旧版长邀请码继续按原值验证和核销，无需迁移。
+- **影响范围**: src/invitations.py, src/main.py, src/mcp_server.py, web/templates/auth.html, src/web.py, tests/test_registration.py
+- **关联文档**: [领域语言](../CONTEXT.md), [MVP ADR](adr/0010-cost-first-invitation-registration-mvp.md), [模块设计](design/04-modules.md), [README](../README.md)
+- **首次设置精简为可跳过个性化**: 注册后只强制绑定运动平台；个人资料与 PB、训练目标与偏好改为默认收起的选填区域，可直接跳过进入首页，并保留“我的”页面后续补填入口。
+- **影响范围**: web/templates/setup.html, tests/test_setup_flow.py
+- **关联文档**: [MVP ADR](adr/0010-cost-first-invitation-registration-mvp.md), [数据流](design/05-data-flow.md), [Web 部署设计](design/13-sae-deployment.md), [README](../README.md)
+
+### Fixed
+- **移动端日报评分被挤到第二行**: 日报列表卡片改为“日期 / 可收缩摘要 / 固定评分”单行 Grid，训练摘要超长时使用省略号，睡眠和恢复评分在 320px 起保持稳定宽度且不换行。
+- **影响范围**: web/templates/reports.html, tests/test_web.py
+- **关联文档**: [Bug 记录](bugfixes/2026-07-28-report-scores-mobile-wrap.md), [模块设计](design/04-modules.md), [Web 部署设计](design/13-sae-deployment.md), [开发过程](process/2026-07-28-mobile-daily-image-export.md), [README](../README.md)
+- **Coros 绑定缺少运行模块**: `coros-mcp` 从可选 extras 调整为默认运行依赖，Docker 镜像补充 Git 安装能力；默认安装和部署不再在 Coros 绑定时触发 `No module named 'coros_mcp'`，缺失依赖时也会返回可操作提示。
+- **影响范围**: pyproject.toml, Dockerfile, src/providers/coros.py, tests/test_packaging.py
+- **关联文档**: [Bug 记录](bugfixes/2026-07-28-coros-runtime-dependency.md), [依赖清单](design/07-dependencies.md), [多平台设计](design/12-multi-platform.md), [README](../README.md)
+
 ## 2026-07-27
 
 ### Changed

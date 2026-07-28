@@ -35,102 +35,115 @@
 }
 
 *{margin:0;padding:0;box-sizing:border-box}
-body{background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSystemFont,'SF Pro Display','Segoe UI',Roboto,sans-serif;line-height:1.6;-webkit-font-smoothing:antialiased;transition:background .3s,color .3s}
-.container{max-width:720px;margin:0 auto;padding:24px 20px 80px}
+html{min-width:320px;background:var(--bg)}
+body{min-width:320px;background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSystemFont,'SF Pro Display','Segoe UI',Roboto,sans-serif;line-height:1.6;-webkit-font-smoothing:antialiased;transition:background .3s,color .3s}
+button,input{font:inherit}
+button{-webkit-tap-highlight-color:transparent;touch-action:manipulation}
+.container{width:100%;max-width:720px;margin:0 auto;padding:12px 12px calc(112px + env(safe-area-inset-bottom))}
+.visually-hidden{position:absolute!important;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
 
-/* ── Header ── */
-.header{display:flex;justify-content:space-between;align-items:center;padding:0 0 12px;flex-wrap:wrap;gap:8px}
-.nav-tabs{display:flex;gap:4px;background:var(--bg-card);border-radius:24px;padding:4px;box-shadow:var(--card-shadow)}
-.nav-tab{padding:8px 20px;border-radius:20px;font-size:13px;font-weight:600;color:var(--text-muted);text-decoration:none;transition:all .2s;letter-spacing:.5px}
-.nav-tab:hover{color:var(--text-secondary)}
-.nav-tab.active{background:var(--accent);color:#fff}
-.header-actions{display:flex;align-items:center;gap:8px}
-
-/* ── Theme Bar ── */
-.theme-bar{display:flex;gap:4px}
-.theme-btn{border:none;padding:5px 12px;border-radius:20px;font-size:11px;font-weight:600;cursor:pointer;background:var(--border-subtle);color:var(--text-muted);transition:all .2s;letter-spacing:.5px}
-.theme-btn:hover{opacity:.8}
+/* ── Shared app navigation ── */
+.app-header{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:0 0 12px}
+.app-brand{display:flex;align-items:center;gap:8px;color:var(--text);font-size:14px;font-weight:800;letter-spacing:.2px}
+.app-brand-mark{display:grid;place-items:center;width:32px;height:32px;border-radius:11px;background:var(--accent);color:#fff;font-size:17px;font-weight:900}
+.app-nav{position:fixed;z-index:50;left:50%;bottom:calc(10px + env(safe-area-inset-bottom));transform:translateX(-50%);width:min(calc(100% - 24px),520px);display:grid;grid-template-columns:repeat(3,1fr);gap:4px;padding:6px;border:1px solid var(--border-subtle);border-radius:22px;background:color-mix(in srgb,var(--bg-card) 92%,transparent);box-shadow:0 12px 40px rgba(0,0,0,.22);-webkit-backdrop-filter:blur(18px);backdrop-filter:blur(18px)}
+.app-nav-item{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;min-width:0;min-height:54px;padding:6px 10px;border-radius:16px;color:var(--text-muted);text-decoration:none;transition:color .2s,background .2s;-webkit-tap-highlight-color:transparent;touch-action:manipulation}
+.app-nav-item[aria-current="page"]{background:var(--accent-glow);color:var(--accent)}
+.app-nav-icon{width:21px;height:21px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+.app-nav-label{font-size:10px;font-weight:750;line-height:1;letter-spacing:.2px}
+.theme-bar{display:inline-flex;gap:3px;padding:3px;border:1px solid var(--border-subtle);border-radius:14px;background:var(--bg-card);box-shadow:var(--card-shadow)}
+.theme-btn{min-height:40px;border:1px solid transparent;padding:6px 10px;border-radius:10px;font-size:11px;font-weight:650;cursor:pointer;background:transparent;color:var(--text-muted);transition:color .2s,background .2s,border-color .2s;letter-spacing:.2px}
 .theme-btn.active{background:var(--accent);color:#fff}
 
 /* ── Buttons ── */
-.btn{padding:6px 14px;border-radius:20px;border:1px solid var(--border-subtle);background:transparent;color:var(--text-secondary);font-size:12px;font-weight:600;cursor:pointer;transition:all .2s;letter-spacing:.5px;white-space:nowrap}
-.btn:hover{border-color:var(--accent);color:var(--accent)}
+.btn{min-height:44px;padding:9px 16px;border-radius:12px;border:1px solid var(--border-subtle);background:transparent;color:var(--text-secondary);font-size:13px;font-weight:700;cursor:pointer;transition:color .2s,background .2s,border-color .2s,opacity .2s;letter-spacing:.3px;white-space:nowrap}
 .btn.primary{background:var(--accent);border-color:var(--accent);color:#fff}
-.btn.primary:hover{opacity:.85}
 .btn:disabled{opacity:.4;cursor:not-allowed}
 .spinner{display:inline-block;width:14px;height:14px;border:2px solid rgba(255,255,255,.3);border-top-color:#fff;border-radius:50%;animation:spin .6s linear infinite;vertical-align:middle;margin-right:6px}
 @keyframes spin{to{transform:rotate(360deg)}}
 
+/* ── Report toolbar ── */
+.report-toolbar{display:grid;gap:12px;margin-bottom:16px;padding:16px;background:var(--bg-card);border:1px solid var(--border-subtle);border-radius:18px;box-shadow:var(--card-shadow)}
+.report-eyebrow{font-size:10px;font-weight:800;letter-spacing:1.5px;color:var(--accent)}
+.report-title{font-size:24px;line-height:1.25;letter-spacing:-.5px}
+.report-date-label{margin-top:3px;font-size:12px;color:var(--text-muted)}
+.report-controls{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:8px}
+.date-control{min-width:0}
+.date-control input{width:100%;min-height:44px;padding:8px 11px;border-radius:12px;border:1px solid var(--border-subtle);background:var(--bg-subtle);color:var(--text);font-size:14px;outline:none;color-scheme:dark}
+[data-theme="fresh"] .date-control input,[data-theme="sport"] .date-control input{color-scheme:light}
+.date-control input:focus-visible,.btn:focus-visible,.theme-btn:focus-visible,.app-nav-item:focus-visible{outline:3px solid var(--accent-glow);outline-offset:2px;border-color:var(--accent)}
+.save-status{min-height:20px;font-size:12px;color:var(--text-muted)}
+.save-status.success{color:var(--performance)}
+.save-status.error{color:var(--danger)}
+
 /* ── Loading ── */
-.loading{text-align:center;padding:80px 20px;color:var(--text-muted);font-size:14px}
+.loading{text-align:center;padding:64px 20px;color:var(--text-muted);font-size:14px}
 .loading .spinner{width:20px;height:20px;border-width:2px;margin-bottom:12px;display:block;margin-left:auto;margin-right:auto}
 
 /* ── Plan Strip ── */
-.plan-strip{display:flex;gap:10px;margin-bottom:20px;background:var(--accent-glow);border-radius:14px;padding:14px 18px;border:1px solid var(--border-subtle)}
+.plan-strip{display:grid;grid-template-columns:repeat(2,1fr);gap:12px;margin-bottom:16px;background:var(--accent-glow);border-radius:14px;padding:14px;border:1px solid var(--border-subtle)}
 .plan-item{flex:1;text-align:center}
 .plan-val{display:block;font-family:-apple-system,'SF Pro Display','Helvetica Neue',sans-serif;font-size:15px;font-weight:700;color:var(--text)}
 .plan-lbl{display:block;font-size:10px;color:var(--text-muted);margin-top:2px;text-transform:uppercase;letter-spacing:.5px}
 
 /* ── Hero Grid ── */
-.hero-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:14px;margin-bottom:24px}
-.hero-card{background:var(--bg-card);border-radius:16px;padding:24px 18px;box-shadow:var(--card-shadow);text-align:center;transition:transform .15s,box-shadow .15s}
-.hero-card:hover{transform:translateY(-2px);box-shadow:var(--card-shadow-hover)}
-.hero-value{font-family:-apple-system,'SF Pro Display','Helvetica Neue',sans-serif;font-size:38px;font-weight:800;letter-spacing:-1px;line-height:1;margin-bottom:4px}
-.hero-value span{font-size:16px;font-weight:500;opacity:.5;margin-left:4px}
+.hero-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;margin-bottom:16px}
+.hero-card{min-width:0;background:var(--bg-card);border-radius:14px;padding:16px 6px;box-shadow:var(--card-shadow);text-align:center;transition:transform .15s,box-shadow .15s}
+.hero-value{font-family:-apple-system,'SF Pro Display','Helvetica Neue',sans-serif;font-size:clamp(23px,8vw,30px);font-weight:800;letter-spacing:-1px;line-height:1;margin-bottom:5px;white-space:nowrap}
+.hero-value span{font-size:10px;font-weight:500;opacity:.55;margin-left:2px}
 .hero-value.sleep{color:var(--sleep)}.hero-value.recovery{color:var(--recovery)}.hero-value.readiness{color:var(--performance)}
-.hero-label{font-size:13px;color:var(--text-secondary);font-weight:600}
-.hero-sub{font-size:11px;color:var(--text-muted);margin-top:2px;text-transform:capitalize}
+.hero-label{font-size:11px;color:var(--text-secondary);font-weight:700}
+.hero-sub{font-size:10px;color:var(--text-muted);margin-top:2px;text-transform:capitalize;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 
 /* ── Metric Strip ── */
-.metric-strip{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:32px}
-.metric-item{background:var(--bg-card);border-radius:12px;padding:18px 12px;text-align:center;box-shadow:var(--card-shadow)}
-.metric-val{font-family:-apple-system,'SF Pro Display','Helvetica Neue',sans-serif;font-size:26px;font-weight:700;letter-spacing:-.5px;line-height:1}
+.metric-strip{display:grid;grid-template-columns:repeat(2,1fr);gap:8px;margin-bottom:24px}
+.metric-item{background:var(--bg-card);border-radius:12px;padding:16px 10px;text-align:center;box-shadow:var(--card-shadow)}
+.metric-val{font-family:-apple-system,'SF Pro Display','Helvetica Neue',sans-serif;font-size:23px;font-weight:700;letter-spacing:-.5px;line-height:1}
 .metric-val.hrv{color:var(--hrv)}.metric-val.rhr{color:var(--performance)}.metric-val.bb{color:var(--accent)}.metric-val.stress{color:var(--sleep)}
 .metric-lbl{font-size:10px;color:var(--text-muted);margin-top:4px;font-weight:600;text-transform:uppercase;letter-spacing:.5px}
 
 /* ── Section Titles ── */
-.section-title{font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:1.5px;color:var(--text-muted);margin:28px 0 12px}
+.section-title{font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:1.2px;color:var(--text-muted);margin:24px 0 10px}
 
 /* ── Session Cards ── */
 .session-cards{display:flex;flex-direction:column;gap:10px;margin-bottom:8px}
-.session-card{background:var(--bg-card);border-radius:16px;padding:18px 20px;box-shadow:var(--card-shadow);display:flex;align-items:center;gap:16px;transition:box-shadow .15s}
-.session-card:hover{box-shadow:var(--card-shadow-hover)}
+.session-card{background:var(--bg-card);border-radius:16px;padding:16px;box-shadow:var(--card-shadow);display:grid;grid-template-columns:44px minmax(0,1fr);align-items:center;gap:12px;transition:box-shadow .15s}
 .session-icon{width:44px;height:44px;border-radius:12px;display:flex;align-items:center;justify-content:center;font-size:20px;flex-shrink:0;background:var(--accent-glow)}
 .session-info{flex:1;min-width:0}
 .session-name{font-weight:600;font-size:15px;color:var(--text)}
 .session-type{font-size:11px;color:var(--text-muted);text-transform:uppercase;letter-spacing:1px}
-.session-metrics{display:flex;gap:20px;flex-shrink:0}
+.session-metrics{grid-column:1/-1;display:grid;grid-template-columns:repeat(4,1fr);gap:8px;padding-top:12px;border-top:1px solid var(--border-subtle)}
 .session-metric{text-align:center}
 .session-metric .val{font-family:-apple-system,'SF Pro Display','Helvetica Neue',sans-serif;font-size:18px;font-weight:700;color:var(--text)}
 .session-metric .lbl{font-size:10px;color:var(--text-muted);text-transform:uppercase;letter-spacing:.5px}
 .activity-summary-strip{display:flex;gap:12px;margin-bottom:14px;font-size:13px;color:var(--text-secondary);flex-wrap:wrap}
-.activity-summary-strip span{background:var(--bg-card);padding:6px 14px;border-radius:20px;box-shadow:var(--card-shadow);font-weight:600}
+.activity-summary-strip span{background:var(--bg-card);padding:7px 12px;border-radius:12px;box-shadow:var(--card-shadow);font-weight:600}
 
 /* ── Rest Day ── */
-.rest-card{background:var(--bg-card);border-radius:16px;padding:36px;text-align:center;box-shadow:var(--card-shadow);margin-bottom:8px}
+.rest-card{background:var(--bg-card);border-radius:16px;padding:28px 18px;text-align:center;box-shadow:var(--card-shadow);margin-bottom:8px}
 .rest-emoji{font-size:48px;margin-bottom:8px}
 .rest-card h3{font-size:18px;color:var(--text);margin-bottom:4px}
 .rest-detail{font-size:13px;color:var(--text-secondary)}
 
 /* ── Load Card ── */
-.load-card{background:var(--bg-card);border-radius:16px;padding:28px;box-shadow:var(--card-shadow);margin-bottom:8px}
+.load-card{background:var(--bg-card);border-radius:16px;padding:20px 16px;box-shadow:var(--card-shadow);margin-bottom:8px}
 .load-header{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:18px}
 .load-header h3{font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:1.5px;color:var(--text-muted)}
-.load-score{font-family:-apple-system,'SF Pro Display','Helvetica Neue',sans-serif;font-size:44px;font-weight:800;letter-spacing:-1px;color:var(--text)}
-.load-stats{display:flex;gap:24px;justify-content:center;margin-top:18px}
+.load-score{font-family:-apple-system,'SF Pro Display','Helvetica Neue',sans-serif;font-size:38px;font-weight:800;letter-spacing:-1px;color:var(--text)}
+.load-stats{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-top:16px}
 .load-stat{text-align:center}
 .load-stat .val{font-family:-apple-system,'SF Pro Display','Helvetica Neue',sans-serif;font-size:20px;font-weight:700;color:var(--text)}
 .load-stat .lbl{font-size:11px;color:var(--text-muted)}
 
 /* ── Plan Execution Card ── */
-.plan-exec-card{background:var(--bg-card);border-radius:16px;padding:20px 24px;box-shadow:var(--card-shadow);margin-bottom:12px;border-left:3px solid var(--accent)}
-.pe-row{display:flex;justify-content:space-between;padding:5px 0;font-size:13px}
+.plan-exec-card{background:var(--bg-card);border-radius:16px;padding:16px;box-shadow:var(--card-shadow);margin-bottom:12px;border-left:3px solid var(--accent)}
+.pe-row{display:grid;grid-template-columns:72px minmax(0,1fr);gap:10px;padding:5px 0;font-size:13px}
 .pe-label{color:var(--text-muted);min-width:64px}
 .pe-val{color:var(--text);font-weight:500;text-align:right}
 
 /* ── AI Insight ── */
-.ai-section{background:var(--bg-card);border-radius:16px;padding:28px;box-shadow:var(--card-shadow);margin-bottom:8px;border-left:3px solid var(--accent)}
-.ai-conclusion{font-size:16px;color:var(--text);line-height:1.8;font-weight:500;padding:14px 18px;background:var(--accent-glow);border-radius:12px;margin-bottom:14px}
+.ai-section{background:var(--bg-card);border-radius:16px;padding:18px 16px;box-shadow:var(--card-shadow);margin-bottom:8px;border-left:3px solid var(--accent)}
+.ai-conclusion{font-size:15px;color:var(--text);line-height:1.75;font-weight:500;padding:13px 14px;background:var(--accent-glow);border-radius:12px;margin-bottom:14px;overflow-wrap:anywhere}
 .ai-block{margin-bottom:10px}
 .ai-block h4{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:1px;margin-bottom:4px;color:var(--text-muted)}
 .ai-block ul{list-style:none}
@@ -142,49 +155,104 @@ body{background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSy
 .empty-state .icon{font-size:48px;margin-bottom:16px}
 .empty-state h2{font-size:18px;color:var(--text);margin-bottom:8px}
 .empty-state p{font-size:13px;color:var(--text-muted);margin-bottom:24px;line-height:1.6}
-.footer{text-align:center;padding:40px 0 20px;font-size:11px;color:var(--text-muted);letter-spacing:1px;font-weight:500}
+.footer{text-align:center;padding:36px 0 20px;font-size:11px;color:var(--text-muted);letter-spacing:1px;font-weight:500}
 .footer span{background:linear-gradient(135deg,var(--accent),#ef4444);-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text;font-weight:700}
 
-@media(max-width:640px){
-  .container{padding:16px 14px 60px}
-  .hero-grid{grid-template-columns:repeat(3,1fr);gap:8px}
-  .hero-card{padding:14px 8px}
-  .hero-value{font-size:28px}
-  .metric-strip{grid-template-columns:repeat(2,1fr)}
-  .metric-val{font-size:22px}
-  .session-card{flex-direction:column;align-items:flex-start;gap:12px}
-  .session-metrics{width:100%;justify-content:space-between}
-  .load-stats{flex-direction:column;gap:8px}
-  .sync-options{gap:6px}
+@media(min-width:641px){
+  .container{padding:24px 20px 80px}
+  .app-header{padding-bottom:20px}
+  .app-brand{display:none}
+  .app-nav{position:static;transform:none;width:auto;display:flex;padding:4px;border-radius:24px;box-shadow:var(--card-shadow);-webkit-backdrop-filter:none;backdrop-filter:none}
+  .app-nav-item{flex-direction:row;gap:7px;min-width:84px;min-height:40px;padding:8px 16px;border-radius:20px}
+  .app-nav-icon{width:17px;height:17px}
+  .app-nav-label{font-size:12px}
+  .theme-btn{min-height:36px;border-radius:20px;padding:5px 12px}
+  .report-toolbar{grid-template-columns:minmax(0,1fr) auto;align-items:center;padding:20px 22px}
+  .report-controls{grid-template-columns:150px auto}
+  .save-status{grid-column:1/-1}
+  .plan-strip{grid-template-columns:repeat(4,1fr);padding:14px 18px}
+  .hero-grid{gap:14px;margin-bottom:24px}
+  .hero-card{padding:24px 18px}
+  .hero-value{font-size:38px}
+  .hero-value span{font-size:16px;margin-left:4px}
+  .hero-label{font-size:13px}
+  .hero-sub{font-size:11px}
+  .metric-strip{grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:32px}
+  .metric-item{padding:18px 12px}
+  .metric-val{font-size:26px}
+  .session-card{grid-template-columns:44px minmax(0,1fr) auto;padding:18px 20px;gap:16px}
+  .session-metrics{grid-column:auto;display:flex;gap:20px;padding-top:0;border-top:0}
+  .rest-card{padding:36px}
+  .load-card{padding:28px}
+  .load-stats{display:flex;gap:24px;justify-content:center;margin-top:18px}
+  .plan-exec-card{padding:20px 24px}
+  .pe-row{display:flex;justify-content:space-between;gap:16px}
+  .ai-section{padding:28px}
+  .ai-conclusion{font-size:16px;padding:14px 18px}
 }
+
+@media(hover:hover){
+  .app-nav-item:hover{color:var(--accent);background:var(--accent-glow)}
+  .theme-btn:hover{opacity:.82}
+  .btn:hover{border-color:var(--accent);color:var(--accent)}
+  .btn.primary:hover{color:#fff;opacity:.86}
+  .hero-card:hover{transform:translateY(-2px);box-shadow:var(--card-shadow-hover)}
+  .session-card:hover{box-shadow:var(--card-shadow-hover)}
+}
+
+@media(prefers-reduced-motion:reduce){*{scroll-behavior:auto!important;transition:none!important;animation-duration:.01ms!important;animation-iteration-count:1!important}}
 </style>
 </head>
 <body data-theme="dark">
 
 <div class="container">
 
-<!-- Header Row: Nav + Theme -->
-<div class="header">
-  <div class="nav-tabs">
-    <a href="/sync" class="nav-tab">同步</a>
-    <a href="/reports" class="nav-tab active">日报</a>
-    <a href="/profile" class="nav-tab">我的</a>
+<header class="app-header">
+  <div class="app-brand" aria-hidden="true"><span class="app-brand-mark">n</span><span>neurun</span></div>
+  <nav class="app-nav" aria-label="主要导航">
+    <a href="/sync" class="app-nav-item" data-nav-item>
+      <svg class="app-nav-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M20 7h-3.5A7 7 0 0 0 5 9M20 3v4h-4M4 17h3.5A7 7 0 0 0 19 15M4 21v-4h4"/></svg>
+      <span class="app-nav-label">同步</span>
+    </a>
+    <a href="/reports" class="app-nav-item" data-nav-item aria-current="page">
+      <svg class="app-nav-icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="3" width="14" height="18" rx="2"/><path d="M9 8h6M9 12h6M9 16h4"/></svg>
+      <span class="app-nav-label">日报</span>
+    </a>
+    <a href="/profile" class="app-nav-item" data-nav-item>
+      <svg class="app-nav-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="8" r="3.5"/><path d="M5 21c.5-4 3-6 7-6s6.5 2 7 6"/></svg>
+      <span class="app-nav-label">我的</span>
+    </a>
+  </nav>
+  <div class="theme-bar" role="group" aria-label="主题">
+    <button class="theme-btn active" data-theme="dark" onclick="setTheme('dark')">暗黑</button>
+    <button class="theme-btn" data-theme="sport" onclick="setTheme('sport')">运动</button>
+    <button class="theme-btn" data-theme="fresh" onclick="setTheme('fresh')">清新</button>
   </div>
-  <div class="header-actions">
-    <div class="theme-bar">
-      <button class="theme-btn active" data-theme="dark" onclick="setTheme('dark')">暗黑</button>
-      <button class="theme-btn" data-theme="sport" onclick="setTheme('sport')">运动</button>
-      <button class="theme-btn" data-theme="fresh" onclick="setTheme('fresh')">清新</button>
-    </div>
-    <input type="date" id="viewDate" style="padding:5px 10px;border-radius:20px;border:1px solid var(--border-subtle);background:var(--bg-card);color:var(--text);font-size:12px;outline:none;font-family:inherit" onchange="onDateChange()" title="查看指定日期">
+</header>
+
+<section class="report-toolbar" aria-label="日报操作">
+  <div>
+    <p class="report-eyebrow">DAILY OVERVIEW</p>
+    <h1 class="report-title">训练日报</h1>
+    <p class="report-date-label" id="reportDateLabel">查看每日训练与恢复状态</p>
   </div>
-</div>
+  <div class="report-controls">
+    <label class="date-control">
+      <span class="visually-hidden">选择日报日期</span>
+      <input type="date" id="viewDate" onchange="onDateChange()" title="查看指定日期">
+    </label>
+    <button class="btn primary" id="saveImageBtn" type="button" onclick="saveReportImage()" disabled>保存图片</button>
+  </div>
+  <p class="save-status" id="saveStatus" aria-live="polite"></p>
+</section>
 
 <!-- Loading -->
 <div class="loading" id="loading"><span class="spinner"></span>加载中...</div>
 
 <!-- Dashboard -->
 <div id="dashboard" style="display:none">
+
+  <main id="reportContent" style="display:none">
 
   <!-- Plan Status -->
   <div class="plan-strip" id="planStrip" style="display:none">
@@ -193,9 +261,6 @@ body{background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSy
     <div class="plan-item"><span class="plan-val" id="planTarget">—</span><span class="plan-lbl">周目标 km</span></div>
     <div class="plan-item"><span class="plan-val" id="planNote">—</span><span class="plan-lbl">大纲状态</span></div>
   </div>
-
-  <!-- AI Insight (置顶) -->
-  <div id="aiArea"></div>
 
   <!-- Hero Grid -->
   <div class="hero-grid">
@@ -224,6 +289,9 @@ body{background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSy
     <div class="metric-item"><div class="metric-val stress" id="metStress">—</div><div class="metric-lbl">压力</div></div>
   </div>
 
+  <!-- AI Insight -->
+  <div id="aiArea"></div>
+
   <!-- Training -->
   <div class="section-title">🏃 昨日训练</div>
   <div id="trainingArea"></div>
@@ -242,20 +310,22 @@ body{background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSy
     </div>
   </div>
 
+    <div class="footer">Built with <span>neurun</span></div>
+  </main>
+
   <!-- Empty -->
   <div class="empty-state" id="emptyState" style="display:none">
     <div class="icon">📡</div>
     <h2>暂无数据</h2>
     <p>先同步数据，再前往「日报」页选择日期生成。</p>
   </div>
-
-  <div class="footer">Built with <span>neurun</span></div>
 </div>
 
 </div><!-- /.container -->
 
 <script>
 function $(id){return document.getElementById(id)}
+var currentReport=null;
 
 // ── Theme ──
 var savedTheme = localStorage.getItem('neurun-theme')||'dark';
@@ -274,19 +344,24 @@ function setTheme(t){
 
 // ── Render ──
 function render(d){
+  currentReport=d&&d.has_data?d:null;
+  $('loading').style.display='none';
+  $('dashboard').style.display='block';
+  $('reportContent').style.display=currentReport?'block':'none';
+  $('emptyState').style.display=currentReport?'none':'block';
+  $('saveImageBtn').disabled=!currentReport;
+  $('saveStatus').textContent='';
+  $('saveStatus').className='save-status';
   if(!d.has_data){
-    $('dashboard').style.display='block';
-    $('emptyState').style.display='block';
+    $('reportDateLabel').textContent='所选日期尚未生成日报';
     return;
   }
-  $('dashboard').style.display='block';
-  $('loading').style.display='none';
-  $('emptyState').style.display='none';
+  $('reportDateLabel').textContent=(d.report_date||'最新')+' · 训练与恢复概览';
 
   // Plan context
   var pc=d.plan_context||{};
   if(pc.exists){
-    $('planStrip').style.display='flex';
+    $('planStrip').style.display='grid';
     $('planPhase').textContent=pc.phase||'—';
     $('planWeek').textContent=pc.weeks_to_race||'—';
     $('planTarget').textContent=(pc.weekly_km_target||'—')+' km';
@@ -377,6 +452,199 @@ function render(d){
   $('loadAcute').textContent=ld.acute_load||'—';
   $('loadStatus').textContent=ld.acwr_status||'—';
 
+}
+
+// ── Local PNG export ──
+function reportPalette(){
+  var theme=document.body.getAttribute('data-theme')||'dark';
+  var palettes={
+    dark:{bg:'#0b1120',card:'#1a2333',subtle:'#151e2c',text:'#e2e8f0',secondary:'#94a3b8',muted:'#64748b',border:'#243044',accent:'#34d399',sleep:'#a78bfa',recovery:'#60a5fa',performance:'#4ade80',hrv:'#22d3ee'},
+    sport:{bg:'#f0f0f0',card:'#ffffff',subtle:'#f5f5f5',text:'#171717',secondary:'#525252',muted:'#858585',border:'#e3e3e3',accent:'#f15b2a',sleep:'#7c3aed',recovery:'#2563eb',performance:'#16a34a',hrv:'#0891b2'},
+    fresh:{bg:'#e8efe9',card:'#ffffff',subtle:'#f0f4f0',text:'#1a2e23',secondary:'#5a7d6e',muted:'#789689',border:'#d7e1da',accent:'#2d9d6f',sleep:'#7c6fcf',recovery:'#3b82b6',performance:'#22a86e',hrv:'#3b9fc6'}
+  };
+  return palettes[theme]||palettes.dark;
+}
+
+function roundedRect(ctx,x,y,w,h,r,fill,stroke){
+  var radius=Math.min(r,w/2,h/2);
+  ctx.beginPath();
+  ctx.moveTo(x+radius,y);
+  ctx.arcTo(x+w,y,x+w,y+h,radius);
+  ctx.arcTo(x+w,y+h,x,y+h,radius);
+  ctx.arcTo(x,y+h,x,y,radius);
+  ctx.arcTo(x,y,x+w,y,radius);
+  ctx.closePath();
+  if(fill){ctx.fillStyle=fill;ctx.fill()}
+  if(stroke){ctx.strokeStyle=stroke;ctx.lineWidth=1;ctx.stroke()}
+}
+
+function wrapCanvasText(ctx,text,maxWidth){
+  var source=String(text||'').trim();
+  if(!source)return [];
+  var lines=[];
+  source.split(/\n/).forEach(function(paragraph){
+    var line='';
+    Array.from(paragraph).forEach(function(char){
+      var next=line+char;
+      if(line&&ctx.measureText(next).width>maxWidth){lines.push(line);line=char}else{line=next}
+    });
+    if(line)lines.push(line);
+  });
+  return lines;
+}
+
+function drawCanvasLines(ctx,lines,x,y,lineHeight,color){
+  ctx.fillStyle=color;
+  lines.forEach(function(line,index){ctx.fillText(line,x,y+index*lineHeight)});
+  return y+lines.length*lineHeight;
+}
+
+function buildReportCanvas(report){
+  var width=720,scale=2,pad=36,gap=12,inner=width-pad*2;
+  var colors=reportPalette();
+  var font='-apple-system,BlinkMacSystemFont,"PingFang SC","Microsoft YaHei",sans-serif';
+  var measure=document.createElement('canvas').getContext('2d');
+  var ai=report.ai_insight||{},ya=report.yesterday_activities||{};
+  measure.font='500 22px '+font;
+  var insightLines=wrapCanvasText(measure,ai.conclusion||'',inner-40);
+  measure.font='400 18px '+font;
+  var observationLines=[];
+  (ai.observations||[]).forEach(function(item){
+    observationLines=observationLines.concat(wrapCanvasText(measure,'• '+item,inner-40));
+  });
+  var aiHeight=insightLines.length||observationLines.length?64+insightLines.length*32+observationLines.length*27:0;
+  var sessions=ya.sessions||[];
+  var trainingRows=ya.is_rest_day?1:Math.max(1,sessions.length);
+  var trainingHeight=48+trainingRows*86+Math.max(0,trainingRows-1)*10;
+  var totalHeight=105+132+18+108+18+(aiHeight?aiHeight+18:0)+trainingHeight+18+150+86;
+  var canvas=document.createElement('canvas');
+  canvas.width=width*scale;
+  canvas.height=totalHeight*scale;
+  var ctx=canvas.getContext('2d');
+  ctx.scale(scale,scale);
+  ctx.textBaseline='alphabetic';
+  ctx.fillStyle=colors.bg;
+  ctx.fillRect(0,0,width,totalHeight);
+
+  var y=38;
+  ctx.font='800 13px '+font;ctx.fillStyle=colors.accent;ctx.fillText('NEURUN DAILY',pad,y);
+  ctx.font='800 34px '+font;ctx.fillStyle=colors.text;ctx.fillText('训练日报',pad,y+42);
+  ctx.font='500 16px '+font;ctx.textAlign='right';ctx.fillStyle=colors.secondary;ctx.fillText(report.report_date||'最新日报',width-pad,y+37);ctx.textAlign='left';
+  y=105;
+
+  var sleep=report.last_night_sleep||{},recovery=report.recovery||{},morning=report.this_morning||{};
+  var hero=[
+    {label:'睡眠',value:(sleep.total_hours||'—')+'h',sub:sleep.quality||'—',color:colors.sleep},
+    {label:'恢复',value:(recovery.overall_score||'—')+'/100',sub:recovery.level||'—',color:colors.recovery},
+    {label:'训练准备',value:morning.training_readiness_score||'—',sub:morning.training_readiness_level||'—',color:colors.performance}
+  ];
+  var heroWidth=(inner-gap*2)/3;
+  hero.forEach(function(item,index){
+    var x=pad+index*(heroWidth+gap);
+    roundedRect(ctx,x,y,heroWidth,132,18,colors.card,colors.border);
+    ctx.textAlign='center';ctx.font='800 31px '+font;ctx.fillStyle=item.color;ctx.fillText(String(item.value),x+heroWidth/2,y+53);
+    ctx.font='700 15px '+font;ctx.fillStyle=colors.text;ctx.fillText(item.label,x+heroWidth/2,y+82);
+    ctx.font='500 13px '+font;ctx.fillStyle=colors.muted;ctx.fillText(String(item.sub),x+heroWidth/2,y+108);ctx.textAlign='left';
+  });
+  y+=150;
+
+  var metrics=[['HRV',morning.hrv_ms||'—','ms',colors.hrv],['静息心率',morning.resting_hr||'—','bpm',colors.performance],['身体电量',morning.body_battery_morning!=null?morning.body_battery_morning:'—','',colors.accent],['压力',morning.avg_stress||'—','',colors.sleep]];
+  var metricWidth=(inner-gap*3)/4;
+  metrics.forEach(function(item,index){
+    var x=pad+index*(metricWidth+gap);
+    roundedRect(ctx,x,y,metricWidth,108,16,colors.card,colors.border);
+    ctx.textAlign='center';ctx.font='800 26px '+font;ctx.fillStyle=item[3];ctx.fillText(String(item[1]),x+metricWidth/2,y+45);
+    ctx.font='700 12px '+font;ctx.fillStyle=colors.secondary;ctx.fillText(item[0]+(item[2]?' · '+item[2]:''),x+metricWidth/2,y+76);ctx.textAlign='left';
+  });
+  y+=126;
+
+  if(aiHeight){
+    roundedRect(ctx,pad,y,inner,aiHeight,18,colors.card,colors.border);
+    ctx.font='800 13px '+font;ctx.fillStyle=colors.accent;ctx.fillText('AI 教练洞察',pad+20,y+29);
+    ctx.font='500 22px '+font;
+    var textY=drawCanvasLines(ctx,insightLines,pad+20,y+62,32,colors.text);
+    ctx.font='400 18px '+font;
+    drawCanvasLines(ctx,observationLines,pad+20,textY+4,27,colors.secondary);
+    y+=aiHeight+18;
+  }
+
+  ctx.font='800 13px '+font;ctx.fillStyle=colors.muted;ctx.fillText('昨日训练',pad,y+20);
+  y+=36;
+  if(ya.is_rest_day){
+    roundedRect(ctx,pad,y,inner,86,18,colors.card,colors.border);
+    ctx.font='800 24px '+font;ctx.fillStyle=colors.text;ctx.fillText('休息日',pad+20,y+37);
+    ctx.font='500 15px '+font;ctx.fillStyle=colors.secondary;
+    var restText=ya.daily_steps?ya.daily_steps+' 步 · '+Number(ya.daily_distance_km||0).toFixed(1)+' km':'身体在恢复中';
+    ctx.fillText(restText,pad+20,y+64);
+    y+=86;
+  }else if(sessions.length){
+    sessions.forEach(function(session,index){
+      roundedRect(ctx,pad,y,inner,86,18,colors.card,colors.border);
+      ctx.font='800 18px '+font;ctx.fillStyle=colors.text;
+      var name=String(session.name||session.type||'训练');
+      ctx.fillText(name.length>27?name.slice(0,27)+'…':name,pad+20,y+34);
+      ctx.font='500 14px '+font;ctx.fillStyle=colors.secondary;
+      var details=[(session.duration_min||0)+' min'];
+      if(session.distance_km)details.push(session.distance_km+' km');
+      if(session.avg_hr)details.push('HR '+session.avg_hr);
+      details.push('负荷 '+(session.training_load||0));
+      ctx.fillText(details.join('  ·  '),pad+20,y+62);
+      y+=86+(index<sessions.length-1?10:0);
+    });
+  }else{
+    roundedRect(ctx,pad,y,inner,86,18,colors.card,colors.border);
+    ctx.font='600 17px '+font;ctx.fillStyle=colors.secondary;ctx.fillText('暂无训练记录',pad+20,y+50);
+    y+=86;
+  }
+  y+=18;
+
+  var load=report.training_load||{};
+  roundedRect(ctx,pad,y,inner,150,18,colors.card,colors.border);
+  ctx.font='800 13px '+font;ctx.fillStyle=colors.muted;ctx.fillText('训练负荷',pad+20,y+29);
+  ctx.font='800 42px '+font;ctx.fillStyle=colors.text;ctx.fillText(String(load.acwr||'—'),pad+20,y+78);
+  ctx.font='600 14px '+font;ctx.fillStyle=colors.secondary;ctx.fillText('ACWR · '+(load.acwr_status||'—'),pad+20,y+105);
+  ctx.textAlign='right';ctx.font='700 17px '+font;ctx.fillStyle=colors.text;ctx.fillText('急性 '+(load.acute_load||'—'),width-pad-20,y+61);ctx.fillText('慢性 '+(load.chronic_load||'—'),width-pad-20,y+94);ctx.textAlign='left';
+  y+=150;
+
+  ctx.textAlign='center';ctx.font='700 12px '+font;ctx.fillStyle=colors.muted;ctx.fillText('Generated locally by neurun · 训练数据仅在浏览器中处理',width/2,totalHeight-35);ctx.textAlign='left';
+  return canvas;
+}
+
+function canvasBlob(canvas){
+  return new Promise(function(resolve,reject){
+    canvas.toBlob(function(blob){blob?resolve(blob):reject(new Error('浏览器未能生成图片'))},'image/png');
+  });
+}
+
+function downloadImageBlob(blob,filename){
+  var url=URL.createObjectURL(blob),link=document.createElement('a');
+  link.href=url;link.download=filename;document.body.appendChild(link);link.click();link.remove();
+  setTimeout(function(){URL.revokeObjectURL(url)},1000);
+}
+
+async function saveReportImage(){
+  if(!currentReport)return;
+  var btn=$('saveImageBtn'),status=$('saveStatus'),original=btn.textContent;
+  btn.disabled=true;btn.innerHTML='<span class="spinner"></span>生成中';status.textContent='正在本地生成高清日报图片…';status.className='save-status';
+  try{
+    var canvas=buildReportCanvas(currentReport),blob=await canvasBlob(canvas);
+    var reportDate=currentReport.report_date||new Date().toISOString().slice(0,10);
+    var filename='neurun-daily-'+reportDate+'.png';
+    var file=new File([blob],filename,{type:'image/png'});
+    var shareData={files:[file],title:'neurun 训练日报',text:reportDate+' 训练日报'};
+    if(navigator.share&&navigator.canShare&&navigator.canShare({files:[file]})){
+      await navigator.share(shareData);
+      status.textContent='已打开系统分享，可选择保存到相册';status.className='save-status success';
+    }else{
+      downloadImageBlob(blob,filename);
+      status.textContent='图片已下载';status.className='save-status success';
+    }
+  }catch(error){
+    if(error&&error.name==='AbortError'){status.textContent='已取消保存'}
+    else{status.textContent='保存失败：'+(error.message||'请稍后重试');status.className='save-status error'}
+  }finally{
+    btn.disabled=!currentReport;btn.textContent=original;
+  }
 }
 
 // ── Load ──

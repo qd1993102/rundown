@@ -7,11 +7,11 @@
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
 body{font-family:-apple-system,BlinkMacSystemFont,sans-serif;background:#0a0a0a;color:#e0e0e0;
-  display:flex;justify-content:center;align-items:center;min-height:100vh;padding:20px}
+  display:flex;justify-content:center;min-height:100vh;padding:20px}
 
 /* ── Card ── */
 .card{background:#141414;border:1px solid #222;border-radius:20px;padding:40px 32px;
-  max-width:460px;width:100%;min-height:520px;display:flex;flex-direction:column}
+  max-width:520px;width:100%;min-height:520px;display:flex;flex-direction:column;margin:auto 0}
 
 /* ── Progress ── */
 .progress{display:flex;gap:8px;margin-bottom:32px}
@@ -60,6 +60,31 @@ p.desc{font-size:14px;color:#777;margin-bottom:28px;line-height:1.5}
 .step{display:none;flex:1;flex-direction:column}
 .step.active{display:flex}
 
+/* ── Optional personalization ── */
+.completion-note{display:flex;gap:12px;align-items:flex-start;background:#102015;border:1px solid #214b2a;
+  border-radius:12px;padding:13px 14px;margin-bottom:16px;color:#a8d5ad;font-size:13px;line-height:1.5}
+.completion-note .icon{font-size:18px;line-height:1.2}
+.optional-section{border:1px solid #292929;border-radius:14px;background:#181818;margin-bottom:12px;overflow:hidden}
+.optional-section summary{display:grid;grid-template-columns:auto minmax(0,1fr) auto;align-items:center;gap:12px;
+  padding:16px;cursor:pointer;list-style:none;min-height:72px}
+.optional-section summary::-webkit-details-marker{display:none}
+.optional-section[open] summary{border-bottom:1px solid #292929}
+.optional-section.saved{border-color:#285b32}
+.optional-icon{font-size:22px}
+.optional-copy{min-width:0}
+.optional-copy strong{display:block;color:#eee;font-size:14px;margin-bottom:4px}
+.optional-copy small{display:block;color:#777;font-size:12px;line-height:1.45}
+.optional-action{color:#65bd69;font-size:12px;font-weight:600;white-space:nowrap}
+.optional-section[open] .optional-action{color:#888}
+.optional-content{padding:18px 16px 16px}
+.section-heading{color:#aaa;font-size:13px;margin:4px 0 12px;font-weight:600}
+.section-status{min-height:18px;font-size:12px;text-align:center;margin-top:10px;color:#777}
+.section-status.success{color:#67bd6b}
+.section-status.error{color:#ef6c67}
+.optional-help{font-size:12px;color:#686868;line-height:1.55;margin:2px 0 14px}
+.skip-note{font-size:12px;color:#666;text-align:center;line-height:1.55;margin-top:4px}
+.later-hint{font-size:12px;color:#666;text-align:center;line-height:1.55;margin-top:12px}
+
 /* ── MFA ── */
 #mfa-section{display:none}
 
@@ -89,12 +114,11 @@ p.desc{font-size:14px;color:#777;margin-bottom:28px;line-height:1.5}
 <div class="progress">
   <div class="dot active" id="dot1"></div>
   <div class="dot" id="dot2"></div>
-  <div class="dot" id="dot3"></div>
 </div>
 
 <!-- ═══ Step 1: 连接数据源 ═══ -->
 <div class="step active" id="step1">
-  <div class="step-label">步骤 1/3</div>
+  <div class="step-label">步骤 1/2</div>
   <h1>📡 连接数据源</h1>
   <p class="desc">选择你的运动平台并登录，neurun 将自动同步你的训练与健康数据。</p>
 
@@ -156,80 +180,102 @@ p.desc{font-size:14px;color:#777;margin-bottom:28px;line-height:1.5}
   </div>
 </div>
 
-<!-- ═══ Step 2: 个人资料 ═══ -->
+<!-- ═══ Step 2: 可选个性化 ═══ -->
 <div class="step" id="step2">
-  <div class="step-label">步骤 2/3</div>
-  <h1>🏃 个人资料</h1>
-  <p class="desc">完善身体数据与个人最佳成绩，AI 教练会据此制定个性计划。</p>
+  <div class="step-label">步骤 2/2 · 选填</div>
+  <h1>✨ 让教练更懂你</h1>
+  <p class="desc">数据源已经连接。下面的信息能让建议更贴合你，但现在不填也可以正常使用。</p>
 
-  <div class="form-row">
-    <div class="form-group"><label>身高 (cm)</label><input id="height" type="number" placeholder="175" min="100" max="250"></div>
-    <div class="form-group"><label>体重 (kg)</label><input id="weight" type="number" placeholder="70" min="30" max="200"></div>
+  <div class="completion-note">
+    <span class="icon">✓</span>
+    <span><strong>必需设置已完成</strong><br>复杂资料只在你主动展开时显示。</span>
   </div>
-  <div class="form-row">
-    <div class="form-group"><label>年龄</label><input id="age" type="number" placeholder="30" min="10" max="100"></div>
-    <div class="form-group">
-      <label>性别</label>
-      <select id="gender"><option value="male">男</option><option value="female">女</option></select>
+
+  <details class="optional-section" id="profile-section">
+    <summary>
+      <span class="optional-icon">🏃</span>
+      <span class="optional-copy"><strong>基本资料与个人最佳</strong><small>身体信息、训练地点、PB · 约 1 分钟</small></span>
+      <span class="optional-action" id="profile-action">填写</span>
+    </summary>
+    <div class="optional-content">
+      <p class="optional-help">只填写你愿意提供的字段，留空不会影响使用。</p>
+      <div class="form-row">
+        <div class="form-group"><label>身高 (cm)</label><input id="height" type="number" placeholder="175" min="100" max="250"></div>
+        <div class="form-group"><label>体重 (kg)</label><input id="weight" type="number" placeholder="70" min="30" max="200"></div>
+      </div>
+      <div class="form-row">
+        <div class="form-group"><label>年龄</label><input id="age" type="number" placeholder="30" min="10" max="100"></div>
+        <div class="form-group">
+          <label>性别</label>
+          <select id="gender"><option value="male">男</option><option value="female">女</option></select>
+        </div>
+      </div>
+      <div class="form-group"><label>训练地点</label><input id="location" placeholder="例如：北京"></div>
+
+      <p class="section-heading">🏆 个人最佳成绩</p>
+      <div class="form-row">
+        <div class="form-group"><label>5K</label><input id="pb5k" placeholder="MM:SS 或 分钟"></div>
+        <div class="form-group"><label>10K</label><input id="pb10k" placeholder="MM:SS 或 分钟"></div>
+      </div>
+      <div class="form-row">
+        <div class="form-group"><label>半马</label><input id="pbHm" placeholder="H:MM:SS"></div>
+        <div class="form-group"><label>全马</label><input id="pbM" placeholder="H:MM:SS"></div>
+      </div>
+      <div class="form-group"><label>VO2max 估算</label><input id="vo2max" type="number" placeholder="45" min="20" max="90"></div>
+      <div class="btn-row">
+        <button class="btn btn-primary" id="profile-save-btn" onclick="doProfile()">保存资料</button>
+      </div>
+      <div class="section-status" id="profile-status" aria-live="polite"></div>
     </div>
-  </div>
-  <div class="form-group"><label>训练地点</label><input id="location" placeholder="例如：北京"></div>
+  </details>
 
-  <p style="color:#999;font-size:13px;margin:20px 0 8px;font-weight:600">🏆 个人最佳成绩（选填）</p>
-  <div class="form-row">
-    <div class="form-group"><label>5K</label><input id="pb5k" placeholder="MM:SS 或 分钟"></div>
-    <div class="form-group"><label>10K</label><input id="pb10k" placeholder="MM:SS 或 分钟"></div>
-  </div>
-  <div class="form-row">
-    <div class="form-group"><label>半马</label><input id="pbHm" placeholder="H:MM:SS"></div>
-    <div class="form-group"><label>全马</label><input id="pbM" placeholder="H:MM:SS"></div>
-  </div>
-  <div class="form-group"><label>VO2max 估算</label><input id="vo2max" type="number" placeholder="45" min="20" max="90"></div>
+  <details class="optional-section" id="coaching-section">
+    <summary>
+      <span class="optional-icon">🎯</span>
+      <span class="optional-copy"><strong>训练目标与偏好</strong><small>目标成绩、周跑量、训练习惯与伤病史</small></span>
+      <span class="optional-action" id="coaching-action">填写</span>
+    </summary>
+    <div class="optional-content">
+      <p class="optional-help">目标名称可留空；此时只保存你选择的训练偏好。</p>
+      <div class="form-group"><label>目标名称</label><input id="goalName" placeholder="例如：全马破4"></div>
+      <div class="form-row">
+        <div class="form-group">
+          <label>目标距离</label>
+          <select id="goalDist"><option value="5k">5K</option><option value="10k">10K</option><option value="hm">半马</option><option value="marathon" selected>全马</option></select>
+        </div>
+        <div class="form-group"><label>目标成绩</label><input id="goalTime" placeholder="H:MM:SS"></div>
+      </div>
+      <div class="form-row">
+        <div class="form-group"><label>目标日期</label><input id="goalDate" type="date"></div>
+        <div class="form-group"><label>周跑量目标 (km)</label><input id="goalKm" type="number" placeholder="50" min="10" max="200"></div>
+      </div>
 
+      <p class="section-heading">⚙️ 训练偏好</p>
+      <div class="form-row">
+        <div class="form-group">
+          <label>偏好时间</label>
+          <select id="prefTime"><option value="morning">早晨</option><option value="afternoon">下午</option><option value="evening" selected>傍晚</option></select>
+        </div>
+        <div class="form-group">
+          <label>偏好地形</label>
+          <select id="prefTerrain"><option value="田径场">田径场</option><option value="公路" selected>公路</option><option value="混合">混合</option></select>
+        </div>
+      </div>
+      <div class="form-group"><label>偏好训练类型（逗号分隔）</label><input id="prefWorkouts" placeholder="间歇,节奏,长距离,轻松跑"></div>
+      <div class="form-group"><label>伤病史</label><input id="injury" placeholder="无则留空"></div>
+      <div class="form-group"><label>训练理念</label><input id="philosophy" placeholder="数据驱动，极化训练，重视恢复"></div>
+      <div class="btn-row">
+        <button class="btn btn-primary" id="coaching-save-btn" onclick="doCoaching()">保存目标与偏好</button>
+      </div>
+      <div class="section-status" id="coaching-status" aria-live="polite"></div>
+    </div>
+  </details>
+
+  <p class="skip-note">跳过时不会创建空档案或默认偏好。</p>
   <div class="btn-row">
-    <button class="btn btn-secondary" onclick="goStep(1)">← 上一步</button>
-    <button class="btn btn-primary" id="step2-btn" onclick="doProfile()">保存并继续</button>
+    <button class="btn btn-primary" id="finish-btn" onclick="finishSetup()">跳过，先开始使用</button>
   </div>
-</div>
-
-<!-- ═══ Step 3: 训练目标 ═══ -->
-<div class="step" id="step3">
-  <div class="step-label">步骤 3/3</div>
-  <h1>🎯 训练目标</h1>
-  <p class="desc">设定你的目标与偏好，AI 教练将为你制定针对性训练建议。</p>
-
-  <div class="form-group"><label>目标名称</label><input id="goalName" placeholder="例如：全马破4"></div>
-  <div class="form-row">
-    <div class="form-group">
-      <label>目标距离</label>
-      <select id="goalDist"><option value="5k">5K</option><option value="10k">10K</option><option value="hm">半马</option><option value="marathon" selected>全马</option></select>
-    </div>
-    <div class="form-group"><label>目标成绩</label><input id="goalTime" placeholder="H:MM:SS"></div>
-  </div>
-  <div class="form-row">
-    <div class="form-group"><label>目标日期</label><input id="goalDate" type="date"></div>
-    <div class="form-group"><label>周跑量目标 (km)</label><input id="goalKm" type="number" placeholder="50" min="10" max="200"></div>
-  </div>
-
-  <p style="color:#999;font-size:13px;margin:20px 0 8px;font-weight:600">⚙️ 训练偏好</p>
-  <div class="form-row">
-    <div class="form-group">
-      <label>偏好时间</label>
-      <select id="prefTime"><option value="morning">早晨</option><option value="afternoon">下午</option><option value="evening" selected>傍晚</option></select>
-    </div>
-    <div class="form-group">
-      <label>偏好地形</label>
-      <select id="prefTerrain"><option value="田径场">田径场</option><option value="公路" selected>公路</option><option value="混合">混合</option></select>
-    </div>
-  </div>
-  <div class="form-group"><label>偏好训练类型（逗号分隔）</label><input id="prefWorkouts" placeholder="间歇,节奏,长距离,轻松跑"></div>
-  <div class="form-group"><label>伤病史</label><input id="injury" placeholder="无则留空"></div>
-  <div class="form-group"><label>训练理念</label><input id="philosophy" placeholder="数据驱动，极化训练，重视恢复"></div>
-
-  <div class="btn-row">
-    <button class="btn btn-secondary" onclick="goStep(2)">← 上一步</button>
-    <button class="btn btn-primary" id="step3-btn" onclick="doFinish()">完成设置</button>
-  </div>
+  <p class="later-hint">之后可在「我的」页面补填或修改。</p>
 </div>
 
 </div><!-- /.card -->
@@ -245,6 +291,11 @@ function $(id){return document.getElementById(id)}
 function showError(msg){const e=$('error');e.textContent=msg;e.style.display='block';$('success').style.display='none'}
 function hideError(){$('error').style.display='none'}
 function showSuccess(msg){const e=$('success');e.textContent=msg;e.style.display='block';$('error').style.display='none'}
+function showSectionStatus(id,msg,kind){const e=$(id);e.textContent=msg;e.className='section-status '+kind}
+function markOptionalSaved(sectionId,actionId,statusId,msg){
+  $(sectionId).classList.add('saved');$(actionId).textContent='已保存';
+  showSectionStatus(statusId,msg,'success');$('finish-btn').textContent='完成，进入首页';
+}
 
 // ── Provider ──
 function selectProvider(p){
@@ -280,7 +331,7 @@ function goStep(n){
 }
 
 function updateDots(){
-  for(let i=1;i<=3;i++){
+  for(let i=1;i<=2;i++){
     const d = $('dot'+i);
     d.classList.remove('active','done');
     if(i<step) d.classList.add('done');
@@ -356,10 +407,9 @@ async function submitMfa(){
   btn.disabled=false;btn.textContent='验证';
 }
 
-// ── Step 2: Profile ──
+// ── Step 2: Optional personalization ──
 async function doProfile(){
-  hideError();
-  const btn = $('step2-btn');btn.disabled=true;btn.innerHTML='<span class="spinner"></span>保存中...';
+  const btn = $('profile-save-btn');btn.disabled=true;btn.innerHTML='<span class="spinner"></span>保存中...';
   try{
     const r = await fetch('/api/profile',{method:'POST',headers:{'Content-Type':'application/json'},
       body:JSON.stringify({
@@ -377,21 +427,18 @@ async function doProfile(){
         }
       })});
     const d = await r.json();
-    if(d.status==='ok'){goStep(3)}
-    else{showError(d.message||'保存失败')}
-  }catch(e){showError('网络错误: '+e.message)}
-  btn.disabled=false;btn.textContent='保存并继续';
+    if(d.status==='ok') markOptionalSaved('profile-section','profile-action','profile-status','资料已保存');
+    else showSectionStatus('profile-status',d.message||'保存失败','error');
+  }catch(e){showSectionStatus('profile-status','网络错误: '+e.message,'error')}
+  btn.disabled=false;btn.textContent='保存资料';
 }
 
-// ── Step 3: Finish ──
-async function doFinish(){
-  hideError();
-  const btn = $('step3-btn');btn.disabled=true;btn.innerHTML='<span class="spinner"></span>保存中...';
+async function doCoaching(){
+  const btn = $('coaching-save-btn');btn.disabled=true;btn.innerHTML='<span class="spinner"></span>保存中...';
   try{
-    // Save goals
     const goalName = $('goalName').value.trim();
     if(goalName){
-      await fetch('/api/goals',{method:'POST',headers:{'Content-Type':'application/json'},
+      const goalResponse = await fetch('/api/goals',{method:'POST',headers:{'Content-Type':'application/json'},
         body:JSON.stringify({
           name:goalName,
           distance:$('goalDist').value,
@@ -399,9 +446,10 @@ async function doFinish(){
           target_date:$('goalDate').value||null,
           weekly_km:$('goalKm').value||null
         })});
+      const goalData = await goalResponse.json();
+      if(goalData.status!=='ok') throw new Error(goalData.message||'目标保存失败');
     }
-    // Save preferences
-    await fetch('/api/preferences',{method:'POST',headers:{'Content-Type':'application/json'},
+    const preferenceResponse = await fetch('/api/preferences',{method:'POST',headers:{'Content-Type':'application/json'},
       body:JSON.stringify({
         preferred_time:$('prefTime').value,
         preferred_workouts:$('prefWorkouts').value||'间歇,节奏,长距离',
@@ -409,12 +457,15 @@ async function doFinish(){
         injury_history:$('injury').value||'',
         training_philosophy:$('philosophy').value||'数据驱动，极化训练，重视恢复'
       })});
-
-    showSuccess('设置完成！即将跳转...');
-    setTimeout(()=>location.href='/',1200);
-  }catch(e){showError('网络错误: '+e.message)}
-  btn.disabled=false;btn.textContent='完成设置';
+    const preferenceData = await preferenceResponse.json();
+    if(preferenceData.status!=='ok') throw new Error(preferenceData.message||'偏好保存失败');
+    markOptionalSaved('coaching-section','coaching-action','coaching-status',
+      goalName?'目标与偏好已保存':'训练偏好已保存');
+  }catch(e){showSectionStatus('coaching-status',e.message||'保存失败','error')}
+  btn.disabled=false;btn.textContent='保存目标与偏好';
 }
+
+function finishSetup(){location.href='/'}
 
 // ── Init ──
 selectProvider('garmin');

@@ -166,7 +166,7 @@ def create_server(
 
         @mcp.tool()
         def invite_create(count: int = 1) -> str:
-            """【仅本地管理员】生成随机一次性邀请码；返回 ID 和掩码，完整邀请码须用本地 CLI 查看。"""
+            """【仅本地管理员】生成 6 位随机一次性邀请码；返回 ID 和掩码，完整邀请码须用本地 CLI 查看。"""
             records = [item.to_admin_dict() for item in invitation_store.create(count)]
             return json.dumps(records, ensure_ascii=False)
 

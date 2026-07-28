@@ -82,6 +82,67 @@ def test_healthz_is_public_and_supports_get_and_head(tmp_path):
     manager.get.assert_not_called()
 
 
+def test_html_response_injects_aliyun_arms_rum_before_body_end():
+    import hashlib
+
+    from src.web import _html_response
+
+    user = SimpleNamespace(api_key="rd_private-session-key")
+    response = _html_response(
+        "<!doctype html><html><body>neurun</body></html>", user
+    )
+    html = response.body.decode()
+
+    assert html.count("https://sdk.rum.aliyuncs.com/v2/browser-sdk.js") == 1
+    assert "proj-xtrace-331c87d116484cdd1fe18f4f5e917845-cn-hangzhou" in html
+    assert "workspace=default-cms-1561822425896437-cn-hangzhou" in html
+    assert "service_id=fdmbbfbh11@80570cae83e7211869362" in html
+    assert "env: 'prod'" in html
+    assert "spaMode: 'history'" in html
+    assert "perf: true" in html
+    assert "webVitals: true" in html
+    assert "api: true" in html
+    assert "staticResource: true" in html
+    assert "jsError: true" in html
+    assert "consoleError: true" in html
+    assert "action: true" in html
+    assert "tracing: false" in html
+    account_digest = hashlib.sha256(user.api_key.encode()).hexdigest()[:24]
+    assert f'user: {{ name: "account_{account_digest}" }}' in html
+    assert "rd_private-session-key" not in html
+    assert html.index("https://sdk.rum.aliyuncs.com/v2/browser-sdk.js") < html.index(
+        "</body>"
+    )
+
+
+def test_html_response_keeps_anonymous_rum_identity_for_logged_out_pages():
+    from src.web import _html_response
+
+    response = _html_response("<!doctype html><html><body>login</body></html>")
+
+    assert "user: {" not in response.body.decode()
+
+
+def test_authenticated_page_attributes_rum_to_pseudonymous_account(tmp_path):
+    import hashlib
+
+    manager, user = _active_user(tmp_path)
+    server = _FakeServer()
+    register_web_routes(server, manager, Config(data_dir=str(tmp_path)))
+
+    response = asyncio.run(server.routes[("/", "GET")](_request(
+        "/", {}, user.api_key, method="GET",
+    )))
+    html = response.body.decode()
+    account_digest = hashlib.sha256(user.api_key.encode()).hexdigest()[:24]
+
+    assert response.status_code == 200
+    assert f'user: {{ name: "account_{account_digest}" }}' in html
+    assert user.api_key not in html
+    assert user.email not in html
+    assert user.nickname not in html
+
+
 def test_legacy_coros_token_migrates_only_for_single_active_user(tmp_path):
     from src.config import Config
     from src.web import _migrate_legacy_coros_auth
@@ -287,6 +348,79 @@ def test_sync_template_contains_accessible_calendar_contract():
     assert ".calendar-day.today{outline:2px solid var(--text-secondary)" not in html
     assert ".calendar-day.today .calendar-day-number{text-decoration" not in html
     assert "var text='已同步 '" in html
+
+
+def test_daily_templates_are_mobile_first_and_support_local_png_export():
+    from pathlib import Path
+
+    dashboard = Path("web/templates/chat.html").read_text(encoding="utf-8")
+    reports = Path("web/templates/reports.html").read_text(encoding="utf-8")
+
+    assert 'id="saveImageBtn"' in dashboard
+    assert 'id="saveStatus"' in dashboard
+    assert 'aria-live="polite"' in dashboard
+    assert "function buildReportCanvas" in dashboard
+    assert "canvas.toBlob" in dashboard
+    assert "navigator.canShare" in dashboard
+    assert "navigator.share" in dashboard
+    assert "URL.createObjectURL" in dashboard
+    assert "$('planStrip').style.display='grid'" in dashboard
+    assert "@media(min-width:641px)" in dashboard
+    assert "min-height:44px" in dashboard
+
+    assert "@media(min-width:641px)" in reports
+    assert "min-height:44px" in reports
+    assert 'aria-live="polite"' in reports
+
+
+def test_report_list_keeps_scores_on_the_summary_row_on_mobile():
+    from pathlib import Path
+
+    reports = Path("web/templates/reports.html").read_text(encoding="utf-8")
+
+    assert (
+        ".report-row{display:grid;grid-template-columns:44px minmax(0,1fr) auto"
+        in reports
+    )
+    assert ".report-training{white-space:nowrap;overflow:hidden;text-overflow:ellipsis" in reports
+    assert ".report-scores{grid-column:auto;display:flex;flex-wrap:nowrap" in reports
+    assert ".report-score{text-align:center;min-width:36px" in reports
+
+
+def test_primary_navigation_uses_one_mobile_bottom_bar_contract():
+    from pathlib import Path
+
+    templates = {
+        name: Path(f"web/templates/{name}.html").read_text(encoding="utf-8")
+        for name in ("sync", "chat", "reports", "profile")
+    }
+    nav_styles = []
+    nav_markup = []
+
+    for html in templates.values():
+        assert 'class="app-nav"' in html
+        assert 'aria-label="主要导航"' in html
+        assert html.count("data-nav-item") == 3
+        assert html.count('data-nav-item aria-current="page"') == 1
+        assert 'href="/sync"' in html
+        assert 'href="/reports"' in html
+        assert 'href="/profile"' in html
+        assert ".app-nav{position:fixed" in html
+        assert "safe-area-inset-bottom" in html
+        assert "@media(min-width:641px)" in html
+        assert ".nav-tabs" not in html
+
+        style_start = html.index(".app-header{")
+        style_end = html.index(".theme-btn.active{background:var(--accent);color:#fff}")
+        nav_styles.append(html[style_start:style_end])
+        nav_start = html.index('<nav class="app-nav"')
+        nav_end = html.index("</nav>", nav_start) + len("</nav>")
+        nav_markup.append(
+            html[nav_start:nav_end].replace(' aria-current="page"', "")
+        )
+
+    assert len(set(nav_styles)) == 1
+    assert len(set(nav_markup)) == 1
 
 
 def test_report_route_explicitly_generates_without_sync(tmp_path, monkeypatch):

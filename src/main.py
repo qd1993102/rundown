@@ -1385,7 +1385,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_invite = sub.add_parser("invite", help="管理 Web 注册邀请码")
     p_invite_sub = p_invite.add_subparsers(dest="invite_subcommand", help="子命令")
 
-    p_invite_create = p_invite_sub.add_parser("create", help="生成随机一次性邀请码")
+    p_invite_create = p_invite_sub.add_parser("create", help="生成 6 位随机一次性邀请码")
     p_invite_create.add_argument("-n", "--count", type=int, default=1, help="生成数量（1-100）")
     p_invite_create.add_argument("-o", "--output", choices=["table", "json"], default="table")
 

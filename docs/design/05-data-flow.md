@@ -146,10 +146,20 @@ sequenceDiagram
     Provider-->>API: Token / MFA 状态
     API->>Provider: 按用户目录持久化 Token/连接凭证
     API->>Users: 更新 provider 与 token_status
+    API-->>Web: 绑定成功
+    Web-->>User: 展示默认收起的个性化资料（选填）
+    alt 用户主动填写
+        User->>API: POST /api/profile、/api/goals、/api/preferences
+        API-->>User: 保存后可进入首页
+    else 用户跳过
+        Web-->>User: 直接进入首页，之后可在“我的”补填
+    end
 ```
 
 注册认证和运动平台认证是两层独立边界：`/api/setup` 不得为无会话请求自动创建用户；
 应用退出只删除 Cookie，不清理运动平台 Token。再次登录后仍使用原 API Key 和用户数据目录。
+身体信息、个人最佳、训练目标和偏好不属于账号创建或平台绑定的前置条件；首次设置页面必须默认
+收起这些复杂表单并提供显式跳过入口，跳过时不得写入空档案或默认偏好。
 
 同步请求重新创建 Provider 时，必须先从用户目录恢复并执行 `authenticate()`，再读取平台
 `user_id`。任何平台认证失败都在本地 SQLite 写入之前终止，并把连接状态更新为
@@ -163,3 +173,30 @@ sequenceDiagram
 三平台写入活动时同时保存标准化 `activity_type`。日历聚合先判断当天是否存在跑步记录；
 存在时直接输出 `synced`，优先于范围标记和指标级状态。升级前的历史活动没有该字段时，
 只在名称包含“跑步”或 `run` 时作兼容识别；非跑步活动和健康数据仍按原状态证据聚合。
+
+---
+
+### 5.6 Web 日报图片保存流程
+
+```mermaid
+sequenceDiagram
+    actor User as 用户
+    participant Web as chat.html
+    participant Canvas as Browser Canvas
+    participant OS as 系统分享或下载
+
+    User->>Web: 点击“保存图片”
+    Web->>Web: 复用当前 GET /api/dashboard 数据
+    Web->>Canvas: 按当前主题绘制日报摘要
+    Canvas-->>Web: PNG Blob
+    alt 浏览器支持文件分享
+        Web->>OS: navigator.share(files)
+        OS-->>User: 分享或保存到相册
+    else 不支持文件分享
+        Web->>OS: Blob URL + download
+        OS-->>User: 下载 PNG 文件
+    end
+```
+
+此流程不再请求服务端，也不读取页面之外的数据。取消系统分享属于正常可恢复状态；生成或保存失败时，
+页面通过 `aria-live` 状态文本反馈原因，并恢复“保存图片”按钮。

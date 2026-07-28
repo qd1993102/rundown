@@ -30,7 +30,7 @@ def _write_invites(path):
     }), encoding="utf-8")
 
 
-def test_invitation_store_consumes_code_and_enforces_limit(tmp_path):
+def test_invitation_store_accepts_and_consumes_legacy_long_code(tmp_path):
     path = tmp_path / "invite-codes.json"
     _write_invites(path)
     store = InvitationStore(str(path))
@@ -50,7 +50,8 @@ def test_invitation_store_admin_create_list_show_and_revoke(tmp_path):
 
     created = store.create(2)
     assert len(created) == 2
-    assert created[0].code.startswith("neurun_")
+    assert len(created[0].code) == 6
+    assert set(created[0].code) <= set("ABCDEFGHJKLMNPQRSTUVWXYZ23456789")
     assert created[0].code != created[1].code
     assert path.stat().st_mode & 0o777 == 0o600
     assert stat.S_IMODE(tmp_path.stat().st_mode) == 0o700
@@ -58,7 +59,7 @@ def test_invitation_store_admin_create_list_show_and_revoke(tmp_path):
     listed = store.list_all()
     assert [item.id for item in listed] == [item.id for item in created]
     assert store.get(created[0].id) == created[0]
-    assert store.get(created[0].id).to_admin_dict()["code"] != created[0].code
+    assert store.get(created[0].id).to_admin_dict()["code"] == "******"
     assert store.get(created[0].id).to_admin_dict(reveal=True)["code"] == created[0].code
 
     revoked = store.revoke(created[0].id)
@@ -380,7 +381,8 @@ def test_invite_cli_generates_json_without_provider_credentials(tmp_path, monkey
     output = capsys.readouterr().out
     payload = json.loads(output)
     assert len(payload) == 1
-    assert payload[0]["code"].startswith("neurun_")
+    assert len(payload[0]["code"]) == 6
+    assert set(payload[0]["code"]) <= set("ABCDEFGHJKLMNPQRSTUVWXYZ23456789")
     assert (tmp_path / "data" / "invite-codes.json").exists()
 
 

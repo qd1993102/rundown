@@ -19,6 +19,8 @@ neurun sync --full
 neurun daily
 ```
 
+默认安装包含 Garmin、Coros 和 Huawei 的运行依赖；Coros 无需再单独安装 extras。
+
 ## Commands
 
 ### `neurun sync`
@@ -89,6 +91,9 @@ Web 服务不再通过“绑定运动平台”隐式创建用户。首次访问�
 2. 填写昵称、邮箱和至少 8 位密码；
 3. 注册成功后，再单独绑定 Garmin、Coros 或 Huawei 数据源。
 
+运动平台绑定完成后即可进入首页。身体信息、个人最佳、训练目标和偏好都是选填项，首次设置时
+默认收起，可直接跳过；之后随时可在“我的”页面补填或修改。
+
 应用账号邮箱只用于 neurun 登录，和运动平台账号相互独立。密码使用随机盐 `scrypt`
 哈希保存，不写入日志或用户 JSON 明文字段。登录成功后继续使用 HttpOnly Cookie 维持会话。
 
@@ -104,7 +109,7 @@ neurun invite revoke inv_xxx --output json
 
 | 子命令 | 关键参数 | 说明 |
 |--------|----------|------|
-| `invite create` | `-n/--count`, `-o/--output` | 生成 1–100 个随机一次性邀请码，返回完整码 |
+| `invite create` | `-n/--count`, `-o/--output` | 生成 1–100 个 6 位随机一次性邀请码，返回完整码 |
 | `invite list` | `-o/--output` | 列出状态，邀请码默认掩码 |
 | `invite show` | `invitation_id`, `--reveal`, `-o/--output` | 查看单条记录；仅本地 CLI 可显式显示完整码 |
 | `invite revoke` | `invitation_id`, `-o/--output` | 非交互式停用邀请码 |
@@ -114,7 +119,7 @@ neurun invite revoke inv_xxx --output json
   "codes": [
     {
       "id": "inv_xxx",
-      "code": "neurun_系统随机生成的完整邀请码",
+      "code": "7K9M2Q",
       "enabled": true,
       "created_at": "2026-07-21T00:00:00+00:00",
       "used_by": null,
@@ -124,7 +129,9 @@ neurun invite revoke inv_xxx --output json
 }
 ```
 
-每个邀请码严格只能创建一个账号，不自动过期；`enabled=false` 可立即停用。
+新生成的邀请码固定为 6 位，使用排除 `0`、`1`、`I`、`O` 的大写字母和数字，方便人工输入。
+升级前已生成并发布的长邀请码继续按原值验证和核销，不需要重新生成。每个邀请码严格只能创建
+一个账号，不自动过期；`enabled=false` 可立即停用。
 每次成功注册后服务端原子写入 `used_by` 和 `used_at`。邀请码文件缺失或
 格式错误时，注册接口返回可操作的 `503` 错误，不会降级为开放注册。
 普通 `list` 只显示掩码，完整邀请码必须通过服务器本地 `show --reveal` 显式读取。
@@ -230,6 +237,21 @@ Garmin 遗留的 `activities=pending` 或个别健康指标失败显示为“部
 日报先基于本地数据生成结构化指标，再通过 `prompts/coach.md` 驱动在线 AI 教练生成洞察，
 并将洞察写入 Front Matter 和 Markdown 正文。未配置 `DEEPSEEK_API_KEY` 或在线调用失败时，
 保留本地规则洞察作为降级结果。
+
+### Web 日报与图片保存
+
+`/sync`、`/reports`、`/` 和 `/profile` 使用同一套响应式应用导航：手机上固定在底部，
+以图标和文字展示“同步 / 日报 / 我的”并为当前页面提供明确高亮，同时为系统安全区预留空间；
+主题切换作为右上角工具，不再与主导航混排。641px 以上导航恢复到页面顶部横向排列。
+
+日报列表和详情采用移动端优先布局，日期控件和主要按钮保持适合触控的尺寸；列表卡片中的日期、
+训练摘要和睡眠/恢复评分在手机上保持同一行，摘要过长时省略，不会挤压评分或产生横向滚动；
+桌面端在更宽视口下恢复紧凑的多列布局。
+
+日报详情提供“保存图片”按钮。图片直接在当前浏览器中根据已加载的日报 JSON 绘制为高清 PNG，
+不会把训练数据上传到第三方服务，也不要求服务器安装 Playwright 或连接 CDN。支持文件分享的
+手机浏览器会打开系统分享面板，可继续保存到相册；其他浏览器会下载
+`neurun-daily-YYYY-MM-DD.png`。该能力只影响 Web 展示，不新增 CLI 参数或 MCP tool。
 
 ---
 

@@ -35,34 +35,34 @@
 }
 
 *{margin:0;padding:0;box-sizing:border-box}
-body{background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSystemFont,'SF Pro Display','Segoe UI',Roboto,sans-serif;line-height:1.6;-webkit-font-smoothing:antialiased;transition:background .3s,color .3s}
-.container{max-width:720px;margin:0 auto;padding:24px 20px 80px}
+html{min-width:320px;background:var(--bg)}
+body{min-width:320px;background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSystemFont,'SF Pro Display','Segoe UI',Roboto,sans-serif;line-height:1.6;-webkit-font-smoothing:antialiased;transition:background .3s,color .3s}
+button,input{font:inherit}button{-webkit-tap-highlight-color:transparent;touch-action:manipulation}
+.container{width:100%;max-width:720px;margin:0 auto;padding:12px 12px calc(112px + env(safe-area-inset-bottom))}
 
-/* Header */
-.header{display:flex;justify-content:space-between;align-items:center;padding:0 0 20px;flex-wrap:wrap;gap:8px}
-.nav-tabs{display:flex;gap:4px;background:var(--bg-card);border-radius:24px;padding:4px;box-shadow:var(--card-shadow)}
-.nav-tab{padding:8px 20px;border-radius:20px;font-size:13px;font-weight:600;color:var(--text-muted);text-decoration:none;transition:all .2s;letter-spacing:.5px}
-.nav-tab:hover{color:var(--text-secondary)}
-.nav-tab.active{background:var(--accent);color:#fff}
-.header-actions{display:flex;align-items:center;gap:8px}
-
-/* Theme Bar */
-.theme-bar{display:flex;gap:4px}
-.theme-btn{border:none;padding:5px 12px;border-radius:20px;font-size:11px;font-weight:600;cursor:pointer;background:var(--border-subtle);color:var(--text-muted);transition:all .2s;letter-spacing:.5px}
-.theme-btn:hover{opacity:.8}
+/* Shared app navigation */
+.app-header{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:0 0 12px}
+.app-brand{display:flex;align-items:center;gap:8px;color:var(--text);font-size:14px;font-weight:800;letter-spacing:.2px}
+.app-brand-mark{display:grid;place-items:center;width:32px;height:32px;border-radius:11px;background:var(--accent);color:#fff;font-size:17px;font-weight:900}
+.app-nav{position:fixed;z-index:50;left:50%;bottom:calc(10px + env(safe-area-inset-bottom));transform:translateX(-50%);width:min(calc(100% - 24px),520px);display:grid;grid-template-columns:repeat(3,1fr);gap:4px;padding:6px;border:1px solid var(--border-subtle);border-radius:22px;background:color-mix(in srgb,var(--bg-card) 92%,transparent);box-shadow:0 12px 40px rgba(0,0,0,.22);-webkit-backdrop-filter:blur(18px);backdrop-filter:blur(18px)}
+.app-nav-item{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;min-width:0;min-height:54px;padding:6px 10px;border-radius:16px;color:var(--text-muted);text-decoration:none;transition:color .2s,background .2s;-webkit-tap-highlight-color:transparent;touch-action:manipulation}
+.app-nav-item[aria-current="page"]{background:var(--accent-glow);color:var(--accent)}
+.app-nav-icon{width:21px;height:21px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+.app-nav-label{font-size:10px;font-weight:750;line-height:1;letter-spacing:.2px}
+.theme-bar{display:inline-flex;gap:3px;padding:3px;border:1px solid var(--border-subtle);border-radius:14px;background:var(--bg-card);box-shadow:var(--card-shadow)}
+.theme-btn{min-height:40px;border:1px solid transparent;padding:6px 10px;border-radius:10px;font-size:11px;font-weight:650;cursor:pointer;background:transparent;color:var(--text-muted);transition:color .2s,background .2s,border-color .2s;letter-spacing:.2px}
 .theme-btn.active{background:var(--accent);color:#fff}
 
-.btn{padding:6px 14px;border-radius:20px;border:1px solid var(--border-subtle);background:transparent;color:var(--text-secondary);font-size:12px;font-weight:600;cursor:pointer;transition:all .2s;letter-spacing:.5px;white-space:nowrap}
-.btn:hover{border-color:var(--accent);color:var(--accent)}
+.btn{min-height:44px;padding:9px 16px;border-radius:12px;border:1px solid var(--border-subtle);background:transparent;color:var(--text-secondary);font-size:13px;font-weight:700;cursor:pointer;transition:color .2s,background .2s,border-color .2s,opacity .2s;letter-spacing:.3px;white-space:nowrap}
 .btn.primary{background:var(--accent);border-color:var(--accent);color:#fff}
-.btn.primary:hover{opacity:.85}
 .btn:disabled{opacity:.4;cursor:not-allowed}
 .spinner-sm{display:inline-block;width:14px;height:14px;border:2px solid rgba(255,255,255,.3);border-top-color:#fff;border-radius:50%;animation:spin .6s linear infinite;vertical-align:middle;margin-right:6px}
-.gen-card{background:var(--bg-card);border-radius:16px;padding:20px 24px;box-shadow:var(--card-shadow);margin-bottom:20px;display:flex;align-items:center;gap:14px;flex-wrap:wrap}
-.gen-card input[type=date]{padding:8px 12px;border-radius:10px;border:1px solid var(--border-subtle);background:var(--bg-subtle);color:var(--text);font-size:14px;outline:none;font-family:inherit}
+.gen-card{background:var(--bg-card);border-radius:18px;padding:16px;box-shadow:var(--card-shadow);margin-bottom:16px;display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;gap:10px}
+.gen-card input[type=date]{width:100%;min-width:0;min-height:44px;padding:8px 11px;border-radius:12px;border:1px solid var(--border-subtle);background:var(--bg-subtle);color:var(--text);font-size:14px;outline:none;color-scheme:dark}
+[data-theme="fresh"] .gen-card input[type=date],[data-theme="sport"] .gen-card input[type=date]{color-scheme:light}
 .gen-card input[type=date]:focus{border-color:var(--accent)}
-.gen-card .gen-hint{font-size:12px;color:var(--text-muted);flex:1}
-.gen-msg{font-size:13px;margin-left:8px}
+.gen-card .gen-hint{grid-column:1/-1;font-size:12px;color:var(--text-muted)}
+.gen-msg{grid-column:1/-1;min-height:20px;font-size:13px}
 
 /* Loading */
 .loading{text-align:center;padding:60px 20px;color:var(--text-muted);font-size:14px}
@@ -71,17 +71,16 @@ body{background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSy
 
 /* Report Cards */
 .report-list{display:flex;flex-direction:column;gap:10px}
-.report-card{background:var(--bg-card);border-radius:16px;padding:20px 24px;box-shadow:var(--card-shadow);cursor:pointer;transition:transform .15s,box-shadow .15s;text-decoration:none;display:block;color:inherit}
-.report-card:hover{transform:translateY(-2px);box-shadow:var(--card-shadow-hover)}
-.report-row{display:flex;align-items:center;gap:16px}
-.report-date{flex-shrink:0;text-align:center;min-width:56px}
+.report-card{min-height:44px;background:var(--bg-card);border-radius:16px;padding:16px;box-shadow:var(--card-shadow);cursor:pointer;transition:transform .15s,box-shadow .15s;text-decoration:none;display:block;color:inherit;-webkit-tap-highlight-color:transparent}
+.report-row{display:grid;grid-template-columns:44px minmax(0,1fr) auto;align-items:center;gap:10px}
+.report-date{text-align:center;min-width:0}
 .report-date .d{font-family:-apple-system,'SF Pro Display','Helvetica Neue',sans-serif;font-size:22px;font-weight:700;color:var(--text);line-height:1}
 .report-date .w{font-size:10px;color:var(--text-muted);margin-top:2px;text-transform:uppercase;letter-spacing:.5px}
 .report-body{flex:1;min-width:0}
-.report-training{font-size:14px;font-weight:600;color:var(--text)}
+.report-training{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-size:14px;font-weight:600;color:var(--text)}
 .report-insight{font-size:12px;color:var(--text-secondary);margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.report-scores{display:flex;gap:16px;flex-shrink:0}
-.report-score{text-align:center;min-width:44px}
+.report-scores{grid-column:auto;display:flex;flex-wrap:nowrap;justify-content:flex-end;gap:8px;min-width:max-content}
+.report-score{text-align:center;min-width:36px;white-space:nowrap}
 .report-score .sv{font-family:-apple-system,'SF Pro Display','Helvetica Neue',sans-serif;font-size:18px;font-weight:700}
 .report-score .sv.sleep-c{color:var(--sleep)}.report-score .sv.recovery-c{color:var(--recovery)}
 .report-score .sl{font-size:9px;color:var(--text-muted);text-transform:uppercase;letter-spacing:.5px;margin-top:1px}
@@ -94,39 +93,69 @@ body{background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSy
 .footer{text-align:center;padding:40px 0 20px;font-size:11px;color:var(--text-muted);letter-spacing:1px;font-weight:500}
 .footer span{background:linear-gradient(135deg,var(--accent),#ef4444);-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text;font-weight:700}
 
-@media(max-width:640px){
-  .container{padding:16px 14px 60px}
-  .report-card{padding:16px 18px}
-  .report-scores{gap:10px}
-  .report-score .sv{font-size:16px}
+@media(min-width:641px){
+  .container{padding:24px 20px 80px}
+  .app-header{padding-bottom:20px}
+  .app-brand{display:none}
+  .app-nav{position:static;transform:none;width:auto;display:flex;padding:4px;border-radius:24px;box-shadow:var(--card-shadow);-webkit-backdrop-filter:none;backdrop-filter:none}
+  .app-nav-item{flex-direction:row;gap:7px;min-width:84px;min-height:40px;padding:8px 16px;border-radius:20px}
+  .app-nav-icon{width:17px;height:17px}
+  .app-nav-label{font-size:12px}
+  .theme-btn{min-height:36px;border-radius:20px;padding:5px 12px}
+  .gen-card{padding:20px 24px;grid-template-columns:150px auto minmax(0,1fr);gap:14px;margin-bottom:20px}
+  .gen-card .gen-hint{grid-column:auto}
+  .gen-msg{grid-column:1/-1}
+  .report-card{padding:20px 24px}
+  .report-row{grid-template-columns:56px minmax(0,1fr) auto;gap:16px}
+  .report-date{min-width:56px}
+  .report-scores{gap:16px}
+  .report-score{min-width:44px}
 }
+
+@media(hover:hover){
+  .app-nav-item:hover{color:var(--accent);background:var(--accent-glow)}
+  .theme-btn:hover{opacity:.82}
+  .btn:hover{border-color:var(--accent);color:var(--accent)}
+  .btn.primary:hover{color:#fff;opacity:.86}
+  .report-card:hover{transform:translateY(-2px);box-shadow:var(--card-shadow-hover)}
+}
+
+@media(prefers-reduced-motion:reduce){*{scroll-behavior:auto!important;transition:none!important;animation-duration:.01ms!important;animation-iteration-count:1!important}}
 </style>
 </head>
 <body data-theme="dark">
 
 <div class="container">
 
-<div class="header">
-  <div class="nav-tabs">
-    <a href="/sync" class="nav-tab">同步</a>
-    <a href="/" class="nav-tab active">日报</a>
-    <a href="/profile" class="nav-tab">我的</a>
+<header class="app-header">
+  <div class="app-brand" aria-hidden="true"><span class="app-brand-mark">n</span><span>neurun</span></div>
+  <nav class="app-nav" aria-label="主要导航">
+    <a href="/sync" class="app-nav-item" data-nav-item>
+      <svg class="app-nav-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M20 7h-3.5A7 7 0 0 0 5 9M20 3v4h-4M4 17h3.5A7 7 0 0 0 19 15M4 21v-4h4"/></svg>
+      <span class="app-nav-label">同步</span>
+    </a>
+    <a href="/reports" class="app-nav-item" data-nav-item aria-current="page">
+      <svg class="app-nav-icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="3" width="14" height="18" rx="2"/><path d="M9 8h6M9 12h6M9 16h4"/></svg>
+      <span class="app-nav-label">日报</span>
+    </a>
+    <a href="/profile" class="app-nav-item" data-nav-item>
+      <svg class="app-nav-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="8" r="3.5"/><path d="M5 21c.5-4 3-6 7-6s6.5 2 7 6"/></svg>
+      <span class="app-nav-label">我的</span>
+    </a>
+  </nav>
+  <div class="theme-bar" role="group" aria-label="主题">
+    <button class="theme-btn active" data-theme="dark" onclick="setTheme('dark')">暗黑</button>
+    <button class="theme-btn" data-theme="sport" onclick="setTheme('sport')">运动</button>
+    <button class="theme-btn" data-theme="fresh" onclick="setTheme('fresh')">清新</button>
   </div>
-  <div class="header-actions">
-    <div class="theme-bar">
-      <button class="theme-btn active" data-theme="dark" onclick="setTheme('dark')">暗黑</button>
-      <button class="theme-btn" data-theme="sport" onclick="setTheme('sport')">运动</button>
-      <button class="theme-btn" data-theme="fresh" onclick="setTheme('fresh')">清新</button>
-    </div>
-  </div>
-</div>
+</header>
 
 <!-- Generate Report -->
 <div class="gen-card">
-  <input type="date" id="genDate">
+  <input type="date" id="genDate" aria-label="选择日报日期">
   <button class="btn primary" id="genBtn" onclick="genReport()">📰 生成日报</button>
   <span class="gen-hint">基于已有本地数据生成，不拉取新数据。需要同步最新数据请到 <a href="/sync" style="color:var(--accent)">同步</a></span>
-  <span id="genMsg" class="gen-msg"></span>
+  <span id="genMsg" class="gen-msg" aria-live="polite"></span>
 </div>
 
 <div class="loading" id="loading"><span class="spinner"></span>加载中...</div>

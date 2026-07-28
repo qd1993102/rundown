@@ -190,6 +190,8 @@ Huawei API 返回字段存在嵌套差异，Provider 对 ID、名称、类型、
 
 基于 `coros-mcp` 库（MIT 协议，GitHub: cygnusb/coros-mcp）：
 
+- **运行依赖**：Coros 是 Web 注册后可直接选择的数据源，`coros-mcp` 必须随默认安装和
+  Docker 镜像一起安装，不得仅放在可选 extras 中；缺失时绑定接口返回可操作的部署错误
 - **认证**：POST `/account/login`，MD5 密码 + mobile encrypt fallback
 - **Web Token 隔离**：绑定成功后将 `StoredAuth` 保存到
   `data/<api_key>/tokens/coros-auth.json`；目录权限为 `0700`，文件权限为 `0600`。

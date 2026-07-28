@@ -1,3 +1,3 @@
 # Keep invitation registration cost-first
 
-neurun 当前没有正式用户，注册 MVP 只实现：JSON 持久化的系统随机、明文、单次、不过期 Invitation；昵称、格式合法且唯一的 Login Email、密码注册与登录；固定 30 天 Cookie；每个账号一个 Platform Connection；服务器本地邀请码管理 CLI。Recovery Code、密码找回与修改、账号删除、换绑、旧数据迁移、SQLite 认证库和多设备可撤销 Session 全部延后，等真实用户需求出现再设计；ADR-0002、0004、0005 和 0007 因此被本决策取代。
+neurun 当前没有正式用户，注册 MVP 只实现：JSON 持久化的系统随机、明文、单次、不过期 Invitation；昵称、格式合法且唯一的 Login Email、密码注册与登录；固定 30 天 Cookie；每个账号一个 Platform Connection；服务器本地邀请码管理 CLI。新生成的邀请码固定为 6 位，字符集使用排除 `0`、`1`、`I`、`O` 的大写字母与数字以便人工输入；存量 JSON 中已发布的旧版长邀请码不做迁移或长度校验，继续按原值验证和核销。注册后的首次设置只强制完成运动平台绑定；身体信息、个人最佳、训练目标与偏好均为可跳过的个性化资料，复杂表单默认收起，用户主动展开时才显示，并可在之后从“我的”页面补填。Recovery Code、密码找回与修改、账号删除、换绑、旧数据迁移、SQLite 认证库和多设备可撤销 Session 全部延后，等真实用户需求出现再设计；ADR-0002、0004、0005 和 0007 因此被本决策取代。

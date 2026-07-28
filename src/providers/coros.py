@@ -32,6 +32,10 @@ _BASE_URLS = {
 }
 
 
+class CorosDependencyError(RuntimeError):
+    """Coros 运行依赖未随应用安装。"""
+
+
 def _base_for_auth(auth) -> str:
     if hasattr(auth, '_auth') and hasattr(auth._auth, 'region'):
         return _BASE_URLS.get(auth._auth.region, _BASE_URLS["us"])
@@ -202,7 +206,15 @@ class CorosAuth(AuthProvider):
             return False
 
     def login(self, email: str, password: str) -> bool:
-        from coros_mcp.coros_api import login as _login
+        try:
+            from coros_mcp.coros_api import login as _login
+        except ModuleNotFoundError as exc:
+            if exc.name == "coros_mcp" or "coros_mcp" in str(exc):
+                raise CorosDependencyError(
+                    "Coros 运行依赖未安装；请重新执行 pip install -e . 并重启服务，"
+                    "Docker 部署请重新构建镜像"
+                ) from exc
+            raise
         region = "cn" if (email.isdigit() and len(email) >= 10) else "eu"
         logger.info("Coros: 登录 (region=%s, account=%s...)", region, email[:3])
         try:

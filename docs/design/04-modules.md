@@ -285,12 +285,15 @@ backup 目录统一为 `0700`；用户 JSON、邀请码、平台凭证、SQLite�
 ```json
 {
   "codes": [
-    {"id": "inv_xxx", "code": "完整随机邀请码", "enabled": true, "used_by": null, "used_at": null}
+    {"id": "inv_xxx", "code": "7K9M2Q", "enabled": true, "used_by": null, "used_at": null}
   ]
 }
 ```
 
-邀请码由系统使用加密安全随机数生成，JSON 保留完整邀请码，便于管理员之后重新查看和分发。
+新邀请码由系统使用加密安全随机数生成，固定为 6 位，字符集为排除 `0`、`1`、`I`、`O`
+的无歧义大写字母与数字；生成时与仓库内全部邀请码判重。读取、验证、核销和 schema 解析不限制
+邀请码长度，因此升级前已经发布并写入 JSON 的 `neurun_...` 等长邀请码仍可继续使用，无需迁移。
+JSON 保留完整邀请码，便于管理员之后重新查看和分发。
 因此文件必须视为敏感凭证并限制为服务账号和管理员可读；文件泄露意味着所有未使用邀请码同时泄露。
 起步阶段不设置自动过期时间，邀请码在成功使用或管理员停用前持续有效。
 
@@ -307,4 +310,14 @@ Web 数据同步与日报生成是两个独立动作：
 - `POST /api/reports` 由已登录用户显式触发，只读取本地 SQLite 并生成指定日期日报；不得隐式访问运动平台；
 - 日报的结构化指标和固定版式由 `memory.py` 生成，在线 AI 洞察由 `coach.py` 使用
   `prompts/coach.md` 生成；AI 成功后必须重新渲染正文，使 Front Matter 与正文使用同一份洞察；
-- 未配置在线模型或调用失败时，日报仍可使用 `memory.py` 的本地规则洞察完成生成。
+- 未配置在线模型或调用失败时，日报仍可使用 `memory.py` 的本地规则洞察完成生成；
+- `sync.html`、`chat.html`、`reports.html` 和 `profile.html` 共用同一导航合同：320–640px
+  使用固定底部三项导航（图标、文字、`aria-current="page"`），容器按 `safe-area-inset-bottom`
+  预留内容空间；641px 以上恢复静态顶部横向导航；主题选择是独立工具，不属于主导航；
+- 四页普通内容使用 Grid/Flex 文档流，移动端主导航触控目标不小于 54px；
+  `min-width:641px` 仅用于增强桌面布局；
+- 日报列表卡片在 320px 起保持“日期 / 可收缩摘要 / 固定评分”单行 Grid；训练摘要使用省略号，
+  `report-scores` 禁止换行且不得跨到第二行，避免评分被压缩或改变卡片节奏；
+- 日报图片由 `chat.html` 在浏览器内根据 `GET /api/dashboard` 已返回的数据绘制到 Canvas。
+  支持文件分享时调用 Web Share API，否则使用 Blob URL 下载 PNG；图片数据不回传服务器，
+  不引入外部 CDN，也不修改 `src/image.py` 的 CLI 静态报告截图职责。
