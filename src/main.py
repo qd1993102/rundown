@@ -41,6 +41,7 @@ from .local_files import (
     ensure_private_dir,
     restrict_private_file,
 )
+from .resource_lifecycle import close_runtime_resources
 
 logger = logging.getLogger(__name__)
 console = Console()
@@ -78,17 +79,22 @@ def _setup(config=None):
     try:
         authenticated = provider.authenticate()
     except LocalPersistenceError:
+        close_runtime_resources(provider)
         raise
     except Exception as exc:
+        close_runtime_resources(provider)
         raise ProviderAuthenticationError(config.provider_type) from exc
     if not authenticated:
+        close_runtime_resources(provider)
         raise ProviderAuthenticationError(config.provider_type)
 
     try:
         user_id = int(provider.user_id)
     except Exception as exc:
+        close_runtime_resources(provider)
         raise ProviderAuthenticationError(config.provider_type) from exc
     if user_id <= 0:
+        close_runtime_resources(provider)
         raise ProviderAuthenticationError(config.provider_type)
 
     storage = Storage(config)
@@ -466,6 +472,37 @@ def _do_data_sync(config, target: date | None = None,
                   sync_days: int | None = None, quiet: bool = False):
     """核心数据同步逻辑；只写入 SQLite，不生成日报。"""
     _, provider, storage, memory_store, user_id = _setup(config=config)
+    try:
+        return _do_initialized_data_sync(
+            config=config,
+            provider=provider,
+            storage=storage,
+            memory_store=memory_store,
+            user_id=user_id,
+            target=target,
+            full_sync=full_sync,
+            force_sync=force_sync,
+            sync_days=sync_days,
+            quiet=quiet,
+        )
+    except Exception:
+        close_runtime_resources(provider, storage)
+        raise
+
+
+def _do_initialized_data_sync(
+    config,
+    provider,
+    storage,
+    memory_store,
+    user_id: int,
+    target: date | None = None,
+    full_sync: bool = False,
+    force_sync: bool = False,
+    sync_days: int | None = None,
+    quiet: bool = False,
+):
+    """使用已初始化资源执行数据同步；成功后资源所有权交还调用方。"""
 
     target = target or date.today()
 

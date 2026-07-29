@@ -12,6 +12,19 @@ SERVICE_FILE="${SERVICE_FILE:-/etc/systemd/system/neurun.service}"
 SYSTEMCTL_BIN="${SYSTEMCTL_BIN:-systemctl}"
 RUN_USER="${RUN_USER:-neurun}"
 RUN_GROUP="${RUN_GROUP:-neurun}"
+CURRENT_SWITCHED=0
+
+report_candidate_failure() {
+  local status="$1"
+  local line="$2"
+
+  if [ "${CURRENT_SWITCHED}" -eq 0 ]; then
+    echo "错误：候选版本在第 ${line} 行失败；当前 release、软链接和在线服务均未修改" >&2
+  fi
+  exit "${status}"
+}
+
+trap 'report_candidate_failure "$?" "$LINENO"' ERR
 
 # 下载暂存区必须在任何安装、软链接切换或 systemd 操作前通过检查。
 if [ ! -f "${SOURCE_DIR}/pyproject.toml" ]; then
@@ -99,6 +112,7 @@ ExecStart=${CURRENT_LINK}/.venv/bin/python -c "from src.main import cmd_serve; c
 Restart=on-failure
 RestartSec=5
 TimeoutStopSec=30
+LimitNOFILE=8192
 
 [Install]
 WantedBy=multi-user.target
@@ -147,6 +161,7 @@ restore_previous_release() {
 
 # 到这里新 release 已完成构建和导入检查，才切换在线指针。
 activate_release "${RELEASE_DIR}"
+CURRENT_SWITCHED=1
 
 if ! "${SYSTEMCTL_BIN}" daemon-reload \
   || ! "${SYSTEMCTL_BIN}" enable neurun.service >/dev/null \
@@ -158,6 +173,7 @@ then
 fi
 
 if wait_for_health; then
+  trap - ERR
   echo "neurun 启动成功，release=${RELEASE_ID}"
   "${SYSTEMCTL_BIN}" --no-pager --full status neurun.service || true
   exit 0

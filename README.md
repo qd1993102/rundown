@@ -190,17 +190,25 @@ curl -fsS http://<ECS_PRIVATE_IP>:8080/healthz
 
 ```bash
 set -Eeuo pipefail
-WORK_DIR="$(pwd)"
-DEPLOY_SCRIPT="${WORK_DIR}/code_deploy_application/scripts/deploy-ecs.sh"
+WORK_DIR="${WORK_DIR:-$(pwd)}"
+SOURCE_DIR="${WORK_DIR}/code_deploy_application"
+DEPLOY_SCRIPT="${SOURCE_DIR}/scripts/deploy-ecs.sh"
 
-if [ ! -f "${DEPLOY_SCRIPT}" ]; then
-  echo "错误：Git 仓库未成功下载，当前应用保持运行" >&2
+if [ ! -f "${SOURCE_DIR}/pyproject.toml" ] || [ ! -f "${DEPLOY_SCRIPT}" ]; then
+  echo "错误：Git 仓库未成功下载或部署物不完整；未停止、重启或覆盖当前应用" >&2
   exit 1
 fi
 
-export WORK_DIR
-exec bash "${DEPLOY_SCRIPT}"
+exec env WORK_DIR="${WORK_DIR}" SOURCE_DIR="${SOURCE_DIR}" bash "${DEPLOY_SCRIPT}"
 ```
+
+不要在上述校验前执行 `cd ./code_deploy_application`，也不要再使用共享的
+`/opt/neurun-venv`。候选代码仅在 `/opt/neurun-releases/<release-id>` 内安装；依赖或导入
+失败不会切换 `/opt/neurun-current`，也不会调用 `systemctl restart`。如果阿里云部署平台
+自身配置了“部署前停止应用”的生命周期动作，需要在控制台关闭该动作；仓库内脚本只能保证
+自己不会提前停止服务，无法撤销平台在脚本执行前已经完成的停机。
+部署脚本生成的 `neurun.service` 由 systemd 直接守护 Python 进程，使用
+`Restart=on-failure` 自动拉起异常退出，并设置 `LimitNOFILE=8192`；该部署不依赖 Docker。
 
 ### Web 同步页面
 
@@ -239,6 +247,10 @@ Garmin 遗留的 `activities=pending` 或个别健康指标失败显示为“部
 ```
 
 `POST /api/sync` 成功响应包含 `mode`、`from_date`、`to_date`，不包含日报生成结果。
+Web 同步在工作线程中执行，默认单进程最多同时执行 4 个不同用户任务，并接纳最多 100 个
+执行中或排队中的不同用户。同一用户重复点击返回 HTTP 409（`sync_in_progress`）；达到全局
+接纳上限后返回 HTTP 503（`sync_capacity_exceeded`），客户端应稍后重试。同步期间
+`GET|HEAD /healthz` 仍可响应。单机 100 是准入上限，不代表 100 个任务会同时访问平台。
 同步开始时 Garmin、Coros、Huawei 都会先恢复并验证当前用户凭据，再读取平台
 `user_id` 和打开 SQLite；认证失败会返回 HTTP 401、将连接标记为 `expired` 并提示重新绑定，
 不会用 `user_id=0` 或未认证客户端继续写本地数据。
@@ -429,6 +441,8 @@ output/
 | `NEURUN_INVITE_CODES_FILE` | Web | `<NEURUN_DATA_DIR>/invite-codes.json` | 管理员维护的邀请码 JSON 文件路径 |
 | `NEURUN_ENABLE_ADMIN_TOOLS` | 本地 MCP | `false` | 仅在 stdio/localhost 注册邀请码管理 tools；公网 Web 模式禁止 |
 | `NEURUN_SYNC_DAYS` | — | `30` | 默认同步天数 |
+| `NEURUN_SYNC_MAX_CONCURRENCY` | Web | `4` | 单进程同时执行的不同用户同步数 |
+| `NEURUN_SYNC_MAX_PENDING` | Web | `100` | 单进程执行中与排队中的不同用户总数 |
 | `NEURUN_LOG_LEVEL` | — | `INFO` | 日志级别 |
 | `GARMIN_DOMAIN` | — | `garmin.com` | Garmin 专用：API 域名 |
 | `GARMIN_TOKEN_DIR` | — | `~/.garmy` | Garmin 专用：Token 目录 |
@@ -450,7 +464,8 @@ Coros 活动时长使用 API 的 `workoutTime`（实际运动时间，不包含�
 Coros 睡眠使用 Mobile token 读取总睡眠、深睡、REM、清醒、小睡和平台睡眠评分；
 统一健康表保存总睡眠、深睡、REM 及其占比。Mobile 授权失败不会影响活动、RHR 和 HRV
 同步。升级前已绑定的 Coros 用户可在“我的”点击“重新授权 Coros 睡眠”，按原流程重新
-输入一次账号密码；授权后执行覆盖目标日期的普通批量同步即可补齐历史睡眠，无需勾选
+输入一次账号密码；重新授权页固定为 Coros，不显示 Garmin 区域或平台切换选项。授权后执行
+覆盖目标日期的普通批量同步即可补齐历史睡眠，无需勾选
 “强制覆盖”。明文密码不会落盘。
 
 Huawei 配置只需要当前用户的 CrewPals token：

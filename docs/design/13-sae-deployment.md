@@ -1,6 +1,6 @@
 # 设计方案 — 13. Web Chat 部署方案（多用户）
 
-> 版本: v2.8 · 更新日期: 2026-07-28 · 状态: 已实现
+> 版本: v2.9 · 更新日期: 2026-07-29 · 状态: 已实现
 
 ---
 
@@ -279,6 +279,9 @@ async def api_sync(request): ...
     # mode=batch: from_date/to_date → 包含首尾日期的精确范围
     # 只同步和持久化数据，不生成或覆盖日报
     # 未提供 mode 时兼容旧版 date/sync_days/full
+    # 阻塞式平台请求与 SQLite 写入通过 SyncCoordinator 移出事件循环
+    # 默认最多 4 个不同用户执行、100 个不同用户执行或排队
+    # 同用户重复请求返回 409；全局容量超限返回 503
 
 @server.custom_route("/api/reports", methods=["POST"])
 async def api_report_generate(request): ...
@@ -298,7 +301,23 @@ async def api_logout(request): ...
 
 `/healthz` 是进程存活检查，不是业务就绪检查：它不得读取 Cookie、用户注册表、SQLite，
 也不得调用 Garmin、Coros、Huawei 或 DeepSeek。负载均衡只用它判断 Web 进程能否响应 HTTP；
-业务依赖故障应由各 API 自身的错误和监控暴露。
+业务依赖故障应由各 API 自身的错误和监控暴露。所有同步中的阻塞式网络和磁盘工作
+必须在受控工作线程中执行，不得占用运行 `/healthz` 的 asyncio 事件循环。
+
+#### 6.2.1 Web 同步调度与容量
+
+`SyncCoordinator` 是单 Web 进程内的同步准入与执行边界：
+
+- `NEURUN_SYNC_MAX_CONCURRENCY` 默认为 `4`，控制同时在工作线程执行的不同用户同步；
+- `NEURUN_SYNC_MAX_PENDING` 默认为 `100`，控制执行中与等待中的不同用户总数；
+- 用户从准入开始到请求结束始终占用一个 singleflight 名额，重复请求不进入工作线程；
+- 容量不足时快速失败，不在事件循环中忙等待；
+- 工作函数在 `finally` 中关闭 Provider HTTP Session、`Storage` 及 SQLAlchemy engine，
+  成功时在关闭前完成 SQLite 备份。
+
+该队列是单进程内边界，不是持久化任务系统。HTTP 请求保持现有同步响应合同；
+进程重启时正在运行的请求由客户端按日历状态重试。若未来需要跨重启任务、脱离 HTTP
+超时或多实例协调，必须另立持久化任务队列设计，不在本次 Bug 修复中隐式扩展。
 
 ### 6.3 `src/auth.py` — MFA 两步
 
@@ -312,6 +331,7 @@ class AuthManager:
 ```
 
 MFA 中间状态存内存 dict（5 分钟过期），容器重启丢失，用户重新发起即可。
+每次发起新登录前清理过期状态并关闭其 HTTP Session；完成、失败或主动清理的登录也必须显式释放客户端资源。
 
 ### 6.4 `src/coach.py` — 流式对话
 
@@ -407,6 +427,8 @@ Grid，日期按钮保持在文档流中；窄屏减小 gap 和卡片内边距�
 日期缺失、格式错误、开始日期晚于结束日期或范围超过 3 年时，API 返回 HTTP 400 和
 可操作的 JSON 错误信息。两种模式都允许 `force=true` 强制覆盖相应范围的数据。
 同步完成后只返回标准化的数据范围，不调用 `MemoryStore.generate_daily_report()`，也不调用在线 AI。
+同用户重复同步返回 HTTP 409、`code=sync_in_progress`；全局已达接纳上限时返回
+HTTP 503、`code=sync_capacity_exceeded`。这两类错误不改变用户的 `token_status`。
 
 日报页通过 `POST /api/reports` 提供独立的用户触发入口。后端先调用
 `MemoryStore.generate_daily_report()` 汇总本地 SQLite，再将其 Front Matter 交给
@@ -479,13 +501,25 @@ docker compose exec neurun neurun invite create --output json
 控制台的启动脚本只需从当前工作目录定位
 `code_deploy_application/scripts/deploy-ecs.sh`；文件不存在时直接返回非零，不得尝试
 `systemctl stop/restart` 或清理任何 release。完整入口示例见 README。
+控制台入口不得先执行 `cd ./code_deploy_application`，因为 Git 下载失败时该目录可能根本
+不存在；应先用绝对路径验证 `pyproject.toml` 和发布脚本，再 `exec` 发布脚本。发布脚本
+不得复用指向暂存区的共享 `/opt/neurun-venv`，也不得删除旧 release。只有候选 release 的
+独立虚拟环境安装和入口导入检查全部成功后，才允许原子切换当前软链接并重启 systemd。
 
 CLB 通过 ECS 私网地址访问后端，因此 Web 服务必须监听所有网卡，而不是仅监听回环地址：
 
 ```ini
 Environment=MCP_HOST=0.0.0.0
 Environment=MCP_PORT=8080
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=30
+LimitNOFILE=8192
 ```
+
+ECS 原生部署由 systemd 直接守护 Python 进程，不要求 Docker。`Restart=on-failure`
+负责异常退出后的自动拉起，`LimitNOFILE=8192` 为服务级文件描述符兜底；应用仍必须主动
+关闭每次请求创建的 HTTP Session 与 SQLite engine，不能把提高 FD 上限当作泄漏修复。
 
 部署后先分别验证回环地址和 ECS 私网地址；两者都必须返回 200：
 
@@ -544,6 +578,11 @@ curl -I http://localhost:8080/healthz    # → HTTP 200
 # 多用户
 # 两个浏览器（或无痕窗口）用不同邀请码注册并绑定不同运动平台账号
 # 验证数据隔离 + AI 回复互不干扰
+
+# 同步容量
+# 100 个不同用户同时请求；执行并发不超过 4，全部成功且 /healthz 可响应
+# 第 101 个不同用户快速返回 503；同用户重复请求返回 409
+# 测试结束后确认 FD 回落，无 SQLite 串库
 
 pytest  # 零失败
 ```

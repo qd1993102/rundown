@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 import logging
@@ -33,7 +34,13 @@ from .invitations import InvitationError, InvitationStore
 from .local_files import atomic_write_private, ensure_private_dir
 from .main import ProviderAuthenticationError, _do_daily_sync, _do_data_sync
 from .memory import Memory, MemoryStore, build_memory_file
+from .resource_lifecycle import close_runtime_resources
 from .storage import Storage
+from .sync_coordinator import (
+    SyncCapacityExceededError,
+    SyncCoordinator,
+    SyncInProgressError,
+)
 from .users import UserExistsError, UserManager, UserRecord
 
 logger = logging.getLogger(__name__)
@@ -395,7 +402,7 @@ def _is_provider_auth_error(exc: Exception, provider_type: str) -> bool:
     ))
 
 
-def _user_context(memory_store: MemoryStore, storage: Storage) -> str:
+def _user_context(memory_store: MemoryStore) -> str:
     """构建用户上下文文本（注入 AI 对话）。"""
     parts = []
 
@@ -504,6 +511,10 @@ def register_web_routes(server, user_manager: UserManager, config: Config):
     """在 FastMCP server 上注册所有 Web 路由。"""
 
     invitations = InvitationStore(config.invite_codes_path)
+    sync_coordinator = SyncCoordinator(
+        max_concurrency=config.sync_max_concurrency,
+        max_pending=config.sync_max_pending,
+    )
 
     # ═══ 基础设施路由 ═══
 
@@ -802,12 +813,14 @@ def register_web_routes(server, user_manager: UserManager, config: Config):
         user_cfg._domain = domain
 
         auth = AuthManager(user_cfg)
+        keep_mfa_session = False
 
         try:
             session_key = secrets.token_hex(16)
             result = auth.start_login(email, password, session_key)
 
             if result == "needs_mfa":
+                keep_mfa_session = True
                 resp = JSONResponse({"status": "needs_mfa", "session": session_key})
             else:
                 user_manager.update(api_key, garmin_email=email,
@@ -819,6 +832,9 @@ def register_web_routes(server, user_manager: UserManager, config: Config):
         except Exception as exc:
             logger.error("Garmin 登录失败: %s", exc)
             return JSONResponse({"status": "error", "message": f"登录失败: {exc}"}, status_code=400)
+        finally:
+            if not keep_mfa_session:
+                auth.close()
 
     @server.custom_route("/api/mfa", methods=["POST"])
     async def api_mfa(request: Request) -> Response:
@@ -850,6 +866,8 @@ def register_web_routes(server, user_manager: UserManager, config: Config):
         except Exception as exc:
             logger.error("MFA 验证失败: %s", exc)
             return JSONResponse({"status": "error", "message": f"验证失败: {exc}"}, status_code=400)
+        finally:
+            auth.close()
 
     @server.custom_route("/api/chat/stream", methods=["POST"])
     async def api_chat_stream(request: Request) -> Response:
@@ -869,10 +887,8 @@ def register_web_routes(server, user_manager: UserManager, config: Config):
         # 构建用户上下文
         user_cfg = config.for_user(api_key)
         user_manager.ensure_dirs(api_key)
-        storage = Storage(user_cfg)
-        memory_store = MemoryStore(user_cfg.memory_dir,
-                                   db_getter=lambda: storage.db)
-        context = _user_context(memory_store, storage)
+        memory_store = MemoryStore(user_cfg.memory_dir)
+        context = _user_context(memory_store)
 
         async def generate():
             async for token in chat_stream(messages, context=context):
@@ -920,15 +936,23 @@ def register_web_routes(server, user_manager: UserManager, config: Config):
                 {"status": "error", "message": str(exc)}, status_code=400
             )
 
-        try:
-            _provider, storage, _ms, _uid = _do_data_sync(
-                config=user_cfg, target=sync_request.target,
-                sync_days=sync_request.sync_days, full_sync=sync_request.full,
-                force_sync=sync_request.force, quiet=True,
-            )
+        def run_sync() -> None:
+            provider = None
+            storage = None
+            try:
+                provider, storage, _ms, _uid = _do_data_sync(
+                    config=user_cfg, target=sync_request.target,
+                    sync_days=sync_request.sync_days, full_sync=sync_request.full,
+                    force_sync=sync_request.force, quiet=True,
+                )
+                storage.backup_to(user_manager.get_backup_path(api_key))
+            finally:
+                close_runtime_resources(provider)
+                if storage is not None:
+                    storage.close()
 
-            # 备份数据库
-            storage.backup_to(user_manager.get_backup_path(api_key))
+        try:
+            await sync_coordinator.run(api_key, run_sync)
             user_manager.update(api_key, last_sync=str(date.today()))
 
             return JSONResponse({
@@ -945,6 +969,24 @@ def register_web_routes(server, user_manager: UserManager, config: Config):
                 "to_date": str(sync_request.end),
             })
 
+        except SyncInProgressError as exc:
+            return JSONResponse(
+                {
+                    "status": "error",
+                    "code": "sync_in_progress",
+                    "message": str(exc),
+                },
+                status_code=409,
+            )
+        except SyncCapacityExceededError as exc:
+            return JSONResponse(
+                {
+                    "status": "error",
+                    "code": "sync_capacity_exceeded",
+                    "message": str(exc),
+                },
+                status_code=503,
+            )
         except Exception as exc:
             logger.error("同步失败: %s", exc)
             if _is_provider_auth_error(exc, user.provider):
@@ -980,12 +1022,15 @@ def register_web_routes(server, user_manager: UserManager, config: Config):
         user_cfg = config.for_user(api_key)
         user_manager.ensure_dirs(api_key)
         storage = Storage(user_cfg)
-        user_id = storage.get_local_user_id()
-        calendar_data = storage.get_sync_calendar(user_id, start, end)
-        return JSONResponse(
-            {"month": month, **calendar_data},
-            headers={"Cache-Control": "no-store"},
-        )
+        try:
+            user_id = storage.get_local_user_id()
+            calendar_data = storage.get_sync_calendar(user_id, start, end)
+            return JSONResponse(
+                {"month": month, **calendar_data},
+                headers={"Cache-Control": "no-store"},
+            )
+        finally:
+            storage.close()
 
     @server.custom_route("/api/status", methods=["GET"])
     async def api_status(request: Request) -> Response:
@@ -1026,9 +1071,7 @@ def register_web_routes(server, user_manager: UserManager, config: Config):
 
         user_cfg = config.for_user(api_key)
         user_manager.ensure_dirs(api_key)
-        storage = Storage(user_cfg)
-        memory_store = MemoryStore(user_cfg.memory_dir,
-                                   db_getter=lambda: storage.db)
+        memory_store = MemoryStore(user_cfg.memory_dir)
 
         # 支持 ?date=YYYY-MM-DD 查看历史日报
         target_date = None
@@ -1052,9 +1095,7 @@ def register_web_routes(server, user_manager: UserManager, config: Config):
 
         user_cfg = config.for_user(api_key)
         user_manager.ensure_dirs(api_key)
-        storage = Storage(user_cfg)
-        memory_store = MemoryStore(user_cfg.memory_dir,
-                                   db_getter=lambda: storage.db)
+        memory_store = MemoryStore(user_cfg.memory_dir)
 
         reports = memory_store.list_by_type("daily_report")
         summaries = []
@@ -1114,8 +1155,10 @@ def register_web_routes(server, user_manager: UserManager, config: Config):
 
         user_cfg = config.for_user(api_key)
         user_manager.ensure_dirs(api_key)
+        result = None
         try:
-            _do_daily_sync(
+            result = await asyncio.to_thread(
+                _do_daily_sync,
                 config=user_cfg,
                 target=target,
                 skip_sync=True,
@@ -1124,6 +1167,10 @@ def register_web_routes(server, user_manager: UserManager, config: Config):
         except Exception as exc:
             logger.error("日报生成失败: %s", exc)
             return JSONResponse({"status": "error", "message": str(exc)}, status_code=500)
+        finally:
+            if result is not None:
+                _mem, provider, storage, _memory_store, _user_id = result
+                close_runtime_resources(provider, storage)
 
         return JSONResponse({
             "status": "ok",
@@ -1141,9 +1188,7 @@ def register_web_routes(server, user_manager: UserManager, config: Config):
 
         user_cfg = config.for_user(api_key)
         user_manager.ensure_dirs(api_key)
-        storage = Storage(user_cfg)
-        memory_store = MemoryStore(user_cfg.memory_dir,
-                                   db_getter=lambda: storage.db)
+        memory_store = MemoryStore(user_cfg.memory_dir)
 
         result = {
             "nickname": user.nickname,
@@ -1199,10 +1244,6 @@ def register_web_routes(server, user_manager: UserManager, config: Config):
 
         user_cfg = config.for_user(api_key)
         user_manager.ensure_dirs(api_key)
-        storage = Storage(user_cfg)
-        memory_store = MemoryStore(user_cfg.memory_dir,
-                                   db_getter=lambda: storage.db)
-
         now = datetime.now().isoformat(timespec="seconds")
         today = str(date.today())
 

@@ -23,6 +23,51 @@ def test_progress_reporter_gets_warning_compatibility(caplog):
     assert "activity fetch failed" in caplog.text
 
 
+def test_storage_close_releases_http_sessions_and_sqlite_engines():
+    """一次同步结束后应显式释放网络连接池与两个 SQLite Engine。"""
+    from types import SimpleNamespace
+
+    from src.storage import Storage
+
+    class Closeable:
+        def __init__(self):
+            self.closed = 0
+
+        def close(self):
+            self.closed += 1
+
+    class Engine:
+        def __init__(self):
+            self.disposed = 0
+
+        def dispose(self):
+            self.disposed += 1
+
+    session = Closeable()
+    api_client = SimpleNamespace(
+        http_client=SimpleNamespace(session=session)
+    )
+    primary_engine = Engine()
+    sync_engine = Engine()
+
+    storage = Storage.__new__(Storage)
+    storage._db = SimpleNamespace(engine=primary_engine)
+    storage._sync_manager = SimpleNamespace(
+        api_client=api_client,
+        db=SimpleNamespace(engine=sync_engine),
+    )
+    storage._injected_client = api_client
+    storage._initialized = True
+
+    storage.close()
+
+    assert session.closed == 1
+    assert primary_engine.disposed == 1
+    assert sync_engine.disposed == 1
+    assert storage._db is None
+    assert storage._sync_manager is None
+
+
 def test_non_garmin_resync_updates_existing_activity_duration(tmp_path):
     """修正 Provider 映射后，普通重同步也应更新已有活动时长。"""
     from sqlalchemy import text

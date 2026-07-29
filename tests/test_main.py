@@ -156,9 +156,12 @@ def test_data_sync_marks_calendar_range_failed(monkeypatch):
             calls.append((status, error_message))
 
     storage = FakeStorage()
+    provider = SimpleNamespace()
+    closer = mock.Mock()
     monkeypatch.setattr(main, "_setup", lambda config: (
-        config, SimpleNamespace(), storage, SimpleNamespace(), 42,
+        config, provider, storage, SimpleNamespace(), 42,
     ))
+    monkeypatch.setattr(main, "close_runtime_resources", closer)
     monkeypatch.setattr(
         main, "_sync_provider", mock.Mock(side_effect=RuntimeError("provider timeout")),
     )
@@ -175,6 +178,7 @@ def test_data_sync_marks_calendar_range_failed(monkeypatch):
         ("pending", None),
         ("failed", "provider timeout"),
     ]
+    closer.assert_called_once_with(provider, storage)
 
 
 def test_garmin_data_sync_injects_regional_api_client(monkeypatch):

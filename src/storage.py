@@ -18,6 +18,7 @@ from garmy.localdb import HealthDB, SyncManager
 
 from .config import Config
 from .local_files import atomic_write_private, ensure_private_dir, restrict_private_file
+from .resource_lifecycle import close_runtime_resources
 
 logger = logging.getLogger(__name__)
 
@@ -104,6 +105,30 @@ class Storage:
     def set_api_client(self, api_client) -> None:
         """注入已验证的 APIClient（Web 多用户模式，在 initialize_sync 前调用）。"""
         self._injected_client = api_client
+
+    def close(self) -> None:
+        """关闭网络会话和 SQLite Engine；允许重复调用。"""
+        close_runtime_resources(
+            self._injected_client,
+            getattr(self._sync_manager, "api_client", None),
+        )
+
+        databases = [
+            self._db,
+            getattr(self._sync_manager, "db", None),
+        ]
+        disposed: set[int] = set()
+        for database in databases:
+            engine = getattr(database, "engine", None)
+            if engine is None or id(engine) in disposed:
+                continue
+            engine.dispose()
+            disposed.add(id(engine))
+
+        self._db = None
+        self._sync_manager = None
+        self._injected_client = None
+        self._initialized = False
 
     # ── 备份 / 恢复 ────────────────────────────
 

@@ -26,6 +26,10 @@
   入口导入检查不再修改当前版本。
 - 新 release 完全就绪后才原子切换 `/opt/neurun-current` 并重启。新版本健康检查失败时，
   恢复旧软链接并重启旧 release。
+- 控制台入口先通过绝对路径验证 `pyproject.toml` 和发布脚本，不在验证前执行
+  `cd ./code_deploy_application`；候选构建阶段发生任何未处理错误时输出“当前 release、软链接
+  和在线服务均未修改”。
+- 不再复用指向 Git 暂存区的 `/opt/neurun-venv`，也不删除旧 release。
 
 ## 相关文件
 
@@ -39,5 +43,7 @@
 - 运行 `bash -n scripts/deploy-ecs.sh`，脚本语法检查通过。
 - 在临时工作目录中不创建 `code_deploy_application/pyproject.toml`，执行脚本后返回非零，
   fake `systemctl` 日志保持不存在。
+- 模拟候选 release 的依赖安装失败，确认 `/opt/neurun-current` 仍指向旧 release、旧文件仍
+  存在且 fake `systemctl` 没有收到任何命令。
 - 打包契约测试确认 systemd 只指向 `/opt/neurun-current`，而不是 Git 下载暂存区。
 - 运行完整 `pytest`，确认零失败。

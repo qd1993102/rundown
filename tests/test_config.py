@@ -126,6 +126,25 @@ class TestInviteCodeConfig:
         assert config.invite_codes_path == str(custom)
 
 
+class TestWebSyncCapacityConfig:
+    def test_defaults_support_one_hundred_admitted_users(self):
+        with mock.patch.dict(os.environ, {}, clear=True):
+            config = Config()
+
+        assert config.sync_max_concurrency == 4
+        assert config.sync_max_pending == 100
+
+    def test_environment_overrides_capacity(self):
+        with mock.patch.dict(os.environ, {
+            "NEURUN_SYNC_MAX_CONCURRENCY": "6",
+            "NEURUN_SYNC_MAX_PENDING": "120",
+        }, clear=True):
+            config = Config()
+
+        assert config.sync_max_concurrency == 6
+        assert config.sync_max_pending == 120
+
+
 def test_rundown_home_does_not_inherit_global_user_credentials(tmp_path):
     user_home = tmp_path / "user-a"
     user_home.mkdir()

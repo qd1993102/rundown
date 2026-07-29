@@ -483,7 +483,7 @@ async function doCoaching(){
 function finishSetup(){location.href='/'}
 
 // ── Init ──
-selectProvider('garmin');
+selectProvider(rebindProvider==='coros'?'coros':'garmin');
 // Set default goal date to next year
 const nextYear = new Date();nextYear.setFullYear(nextYear.getFullYear()+1);
 $('goalDate').value = nextYear.toISOString().slice(0,10);

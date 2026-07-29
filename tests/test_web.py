@@ -2,6 +2,8 @@
 
 import asyncio
 import json
+import threading
+import time
 from datetime import date
 from pathlib import Path
 from types import SimpleNamespace
@@ -207,6 +209,10 @@ def test_coros_sleep_reauthorization_is_exposed_to_existing_users():
     assert "searchParams.get('rebind')" in setup_html
     assert "body.rebind = true" in setup_html
 
+    init_script = setup_html.split("// ── Init ──", 1)[1]
+    assert "selectProvider(rebindProvider==='coros'?'coros':'garmin');" in init_script
+    assert "selectProvider('garmin');" not in init_script
+
 
 def test_active_coros_user_can_open_sleep_reauthorization_page(tmp_path):
     manager, user = _active_user(tmp_path)
@@ -343,6 +349,9 @@ def test_sync_route_only_persists_data_without_generating_reports(tmp_path, monk
         def backup_to(self, path):
             calls.append(("backup", path))
 
+        def close(self):
+            calls.append(("close", None))
+
     def fake_sync(**kwargs):
         calls.append(("sync", kwargs))
         return SimpleNamespace(), FakeStorage(), SimpleNamespace(), 123
@@ -366,6 +375,110 @@ def test_sync_route_only_persists_data_without_generating_reports(tmp_path, monk
         "to_date": "2026-07-19",
     }
     assert calls[0][0] == "sync"
+    assert calls[-1][0] == "close"
+
+
+def test_sync_route_keeps_health_responsive_and_rejects_same_user(tmp_path, monkeypatch):
+    import src.web as web
+
+    manager, user = _active_user(tmp_path)
+    server = _FakeServer()
+    config = Config(
+        data_dir=str(tmp_path), sync_max_concurrency=1, sync_max_pending=2,
+    )
+    started = threading.Event()
+    release = threading.Event()
+
+    class FakeStorage:
+        def backup_to(self, path):
+            pass
+
+        def close(self):
+            pass
+
+    def fake_sync(**kwargs):
+        started.set()
+        release.wait(timeout=2)
+        return SimpleNamespace(), FakeStorage(), SimpleNamespace(), 123
+
+    monkeypatch.setattr(web, "_do_data_sync", fake_sync)
+    register_web_routes(server, manager, config)
+
+    async def scenario():
+        first = asyncio.create_task(server.routes[("/api/sync", "POST")](
+            _request("/api/sync", {"mode": "single", "date": "2026-07-26"}, user.api_key)
+        ))
+        while not started.is_set():
+            await asyncio.sleep(0.005)
+
+        health_started = time.perf_counter()
+        health = await server.routes[("/healthz", "GET")](
+            _request("/healthz", {}, "", method="GET")
+        )
+        health_elapsed = time.perf_counter() - health_started
+        duplicate = await server.routes[("/api/sync", "POST")](
+            _request("/api/sync", {"mode": "single", "date": "2026-07-26"}, user.api_key)
+        )
+        release.set()
+        completed = await first
+        return health, health_elapsed, duplicate, completed
+
+    health, health_elapsed, duplicate, completed = asyncio.run(scenario())
+
+    assert health.status_code == 200
+    assert health_elapsed < 0.1
+    assert duplicate.status_code == 409
+    assert json.loads(duplicate.body)["code"] == "sync_in_progress"
+    assert completed.status_code == 200
+
+
+def test_sync_route_rejects_distinct_user_over_pending_capacity(tmp_path, monkeypatch):
+    import src.web as web
+
+    manager, first_user = _active_user(tmp_path)
+    second_user = manager.register_account(
+        "跑者二", "runner-two@example.com", "safe-password",
+    )
+    manager.update(second_user.api_key, token_status="active")
+    server = _FakeServer()
+    config = Config(
+        data_dir=str(tmp_path), sync_max_concurrency=1, sync_max_pending=1,
+    )
+    started = threading.Event()
+    release = threading.Event()
+
+    class FakeStorage:
+        def backup_to(self, path):
+            pass
+
+        def close(self):
+            pass
+
+    def fake_sync(**kwargs):
+        started.set()
+        release.wait(timeout=2)
+        return SimpleNamespace(), FakeStorage(), SimpleNamespace(), 123
+
+    monkeypatch.setattr(web, "_do_data_sync", fake_sync)
+    register_web_routes(server, manager, config)
+
+    async def scenario():
+        first = asyncio.create_task(server.routes[("/api/sync", "POST")](
+            _request("/api/sync", {"mode": "single", "date": "2026-07-26"}, first_user.api_key)
+        ))
+        while not started.is_set():
+            await asyncio.sleep(0.005)
+        excess = await server.routes[("/api/sync", "POST")](
+            _request("/api/sync", {"mode": "single", "date": "2026-07-26"}, second_user.api_key)
+        )
+        release.set()
+        await first
+        return excess
+
+    excess = asyncio.run(scenario())
+
+    assert excess.status_code == 503
+    assert json.loads(excess.body)["code"] == "sync_capacity_exceeded"
 
 
 def test_sync_calendar_route_returns_local_month_status(tmp_path, monkeypatch):
@@ -379,6 +492,9 @@ def test_sync_calendar_route_returns_local_month_status(tmp_path, monkeypatch):
     class FakeStorage:
         def __init__(self, user_config):
             calls.append(("init", user_config.api_key))
+
+        def close(self):
+            calls.append(("close", None))
 
         def get_local_user_id(self):
             return 88
@@ -402,9 +518,10 @@ def test_sync_calendar_route_returns_local_month_status(tmp_path, monkeypatch):
     assert response.headers["cache-control"] == "no-store"
     assert payload["month"] == "2026-07"
     assert payload["days"][0]["status"] == "synced"
-    assert calls[-1] == (
+    assert calls[-2] == (
         "calendar", 88, date(2026, 7, 1), date(2026, 7, 31),
     )
+    assert calls[-1] == ("close", None)
 
 
 def test_calendar_month_range_handles_december_boundary():

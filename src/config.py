@@ -125,6 +125,12 @@ class Config:
     invite_codes_file: str = field(
         default_factory=lambda: os.getenv("NEURUN_INVITE_CODES_FILE", "")
     )
+    sync_max_concurrency: int = field(
+        default_factory=lambda: int(os.getenv("NEURUN_SYNC_MAX_CONCURRENCY", "4"))
+    )
+    sync_max_pending: int = field(
+        default_factory=lambda: int(os.getenv("NEURUN_SYNC_MAX_PENDING", "100"))
+    )
     non_interactive: bool = field(
         default_factory=lambda: (
             os.getenv("NEURUN_NON_INTERACTIVE") or
@@ -159,6 +165,8 @@ class Config:
             logger.info("  Email:           %s", _mask_email(self.email))
         logger.info("  DB:              %s", self.db_path)
         logger.info("  Sync days:       %s", self.sync_days)
+        logger.info("  Sync concurrency:%s", self.sync_max_concurrency)
+        logger.info("  Sync pending max:%s", self.sync_max_pending)
         logger.info("  Log level:       %s", self.log_level)
         if self.provider_type == "garmin":
             logger.info("  Domain:          %s", self.domain)

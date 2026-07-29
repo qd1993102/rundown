@@ -12,6 +12,15 @@ neurun 项目变更日志，按日期倒序。
 - **关联文档**: [联系入口产品方案](product/contact-community.md), [联系入口技术设计](design/contact-community.md), [README](../README.md)
 
 ### Fixed
+- **ECS Web 同步阻塞与文件描述符耗尽**: 阻塞式平台同步和 SQLite 写入移入受控工作线程，单进程默认同时执行 4 个、接纳 100 个不同用户；同用户 singleflight 与容量超限分别返回 409/503。同步、MFA 和临时 SQLite/HTTP 客户端显式释放资源，systemd 服务增加 `LimitNOFILE=8192` 防线。
+- **影响范围**: src/sync_coordinator.py, src/resource_lifecycle.py, src/web.py, src/main.py, src/storage.py, src/auth.py, src/config.py, scripts/deploy-ecs.sh, tests/
+- **关联文档**: [数据源同步产品方案](product/data-source-sync.md), [Bug 记录](bugfixes/2026-07-29-ecs-sync-event-loop-fd-exhaustion.md), [Web 部署设计](design/13-sae-deployment.md), [开发过程](process/2026-07-29-web-sync-capacity.md), [README](../README.md)
+- **Coros 睡眠重新授权被重置为 Garmin**: 重新授权页面的最终 Provider 初始化改为由 `rebind=coros` 决定，不再被脚本末尾的 Garmin 默认值覆盖；页面保持隐藏 Garmin 区域、使用邮箱或手机号标签，并固定提交当前 Coros 平台。
+- **影响范围**: web/templates/setup.html, tests/test_web.py
+- **关联文档**: [数据源同步产品方案](product/data-source-sync.md), [Bug 记录](bugfixes/2026-07-29-coros-rebind-provider-reset.md), [多平台设计](design/12-multi-platform.md), [README](../README.md)
+- **ECS 候选发布失败不再影响在线版本**: 阿里云控制台入口先验证 Git 下载结果再执行仓库发布脚本；候选 release 使用独立虚拟环境，依赖或导入失败时不切换当前软链接、不调用 systemd 且不删除旧 release，新版本健康失败时继续回滚旧版本。
+- **影响范围**: scripts/deploy-ecs.sh, tests/test_packaging.py
+- **关联文档**: [Bug 记录](bugfixes/2026-07-28-ecs-deploy-preserve-current-release.md), [Web 部署设计](design/13-sae-deployment.md), [开发过程](process/2026-07-29-ecs-safe-release.md), [README](../README.md)
 - **Garmin 中国区同步误报认证失败**: Garmin APIClient 现在显式继承绑定时选择的 `garmin.com` 或 `garmin.cn`，profile、活动、健康同步和记忆补全不再把中国区 Token 发往国际区；真正的 Token 失效仍保持 401 与重新绑定流程。
 - **影响范围**: src/auth.py, src/providers/garmin.py, src/main.py, src/fetcher.py, tests/test_auth.py, tests/test_providers.py, tests/test_main.py, tests/test_fetcher.py
 - **关联文档**: [数据源同步产品方案](product/data-source-sync.md), [Bug 记录](bugfixes/2026-07-29-garmin-cn-api-client-domain.md), [多平台设计](design/12-multi-platform.md), [README](../README.md)

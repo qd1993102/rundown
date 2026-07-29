@@ -26,6 +26,8 @@
 | `NEURUN_DATA_DIR` | Web | `./data` | Web 多用户持久化目录 |
 | `NEURUN_INVITE_CODES_FILE` | Web | `<data_dir>/invite-codes.json` | 邀请码 JSON 路径 |
 | `NEURUN_ENABLE_ADMIN_TOOLS` | 本地 MCP | `false` | 仅 stdio/localhost 启用邀请码管理员 tools；公网 Web 禁止 |
+| `NEURUN_SYNC_MAX_CONCURRENCY` | Web | `4` | 单进程同时执行的不同用户同步数 |
+| `NEURUN_SYNC_MAX_PENDING` | Web | `100` | 单进程执行中与排队中的不同用户总数 |
 
 **设计要点**:
 - 使用 `python-dotenv` 支持 `.env` 文件（方便本地开发）
@@ -182,6 +184,7 @@ sync_status:       同步状态追踪（user_id, date, metric_type, status）
 - `mark_sync_calendar_range(user_id, start, end, status)` — 在 `sync_status` 中维护 neurun 自有的逐日范围标记
 - `get_sync_calendar(user_id, start, end)` — 聚合范围标记、garmy 指标状态及本地活动/健康数据，返回逐日同步日历
 - `export_csv(table, path)` — 导出 CSV
+- `close()` — 显式关闭 garmy `HealthDB`/`SyncManager` 的 SQLAlchemy engine 与注入的 HTTP 客户端
 
 同步日历复用 `sync_status` 表，使用保留的 `metric_type=neurun_provider_sync` 标识一次
 Provider 范围同步对某一天的整体覆盖。它不替代 garmy 的各指标状态；查询时按以下优先级聚合：
@@ -255,7 +258,7 @@ tags: [5k, speed, spring-season]
 
 ---
 
-### 4.6 Web 应用账号与邀请码 (`users.py`, `invitations.py`, `web.py`)
+### 4.6 Web 应用账号、同步协调与邀请码 (`users.py`, `invitations.py`, `web.py`, `sync_coordinator.py`, `resource_lifecycle.py`)
 
 **职责拆分**：
 
@@ -307,7 +310,14 @@ JSON 保留完整邀请码，便于管理员之后重新查看和分发。
 Web 数据同步与日报生成是两个独立动作：
 
 - `POST /api/sync` 只调用核心数据同步函数，将活动和健康数据写入用户 SQLite；不得创建、更新或覆盖日报文件；
-- `POST /api/reports` 由已登录用户显式触发，只读取本地 SQLite 并生成指定日期日报；不得隐式访问运动平台；
+- `_do_data_sync()` 在成功时把 Provider/Storage 所有权交回调用方，在初始化后发生异常时
+  必须自行关闭局部资源，避免异常发生在返回前时 Web 层无法回收；
+- Web 同步由 `SyncCoordinator` 在受控工作线程中执行，不得阻塞 asyncio 事件循环；
+  默认执行上限 4、全局接纳上限 100，并对同用户实施 singleflight；
+- `resource_lifecycle.py` 只遍历已经创建的客户端属性，在同步或 MFA 结束时关闭 HTTP Session；
+  `Storage.close()` 另行负责 SQLAlchemy engine，关闭失败不得阻断其他资源回收；
+- `POST /api/reports` 由已登录用户显式触发，只读取本地 SQLite 并在工作线程生成指定日期日报；
+  不得阻塞 Web 事件循环，也不得隐式访问运动平台；
 - 日报的结构化指标和固定版式由 `memory.py` 生成，在线 AI 洞察由 `coach.py` 使用
   `prompts/coach.md` 生成；AI 成功后必须重新渲染正文，使 Front Matter 与正文使用同一份洞察；
 - 未配置在线模型或调用失败时，日报仍可使用 `memory.py` 的本地规则洞察完成生成；

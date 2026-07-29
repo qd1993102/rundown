@@ -20,11 +20,21 @@ if TYPE_CHECKING:
     from garmy import APIClient
 
 from .config import Config
+from .resource_lifecycle import close_runtime_resources
 
 logger = logging.getLogger(__name__)
 
 # MFA 中间状态存储（Web 模式共享，5 分钟过期）
 _mfa_states: dict[str, dict] = {}
+
+
+def _discard_mfa_state(session_key: str) -> bool:
+    """删除一个 MFA 状态并关闭其认证会话。"""
+    state = _mfa_states.pop(session_key, None)
+    if state is None:
+        return False
+    close_runtime_resources(state.get("client"))
+    return True
 
 
 def _mask_email(email: str) -> str:
@@ -61,7 +71,7 @@ def get_mfa_state(session_key: str) -> dict | None:
     state = _mfa_states.get(session_key)
     if state and state.get("expires", 0) > time.time():
         return state
-    _mfa_states.pop(session_key, None)
+    _discard_mfa_state(session_key)
     return None
 
 
@@ -70,7 +80,7 @@ def cleanup_expired_mfa_states() -> int:
     now = time.time()
     expired = [k for k, v in _mfa_states.items() if v.get("expires", 0) <= now]
     for k in expired:
-        _mfa_states.pop(k, None)
+        _discard_mfa_state(k)
     return len(expired)
 
 
@@ -153,6 +163,8 @@ class AuthManager:
         如需 MFA，状态保留在 _mfa_states[session_key] 中。
         """
         logger.info("Web 登录启动: %s", _mask_email(email))
+        cleanup_expired_mfa_states()
+        _discard_mfa_state(session_key)
 
         client = AuthClient(
             domain=self._config.domain,
@@ -189,6 +201,7 @@ class AuthManager:
             return "ok"
 
         except Exception as exc:
+            close_runtime_resources(client)
             logger.error("❌ 登录失败: %s", exc)
             raise
 
@@ -211,10 +224,16 @@ class AuthManager:
             self._client = client
             logger.info("✅ MFA 验证通过，登录成功 (session=%s)", session_key)
         except Exception as exc:
+            close_runtime_resources(client)
             logger.error("❌ MFA 验证失败: %s", exc)
             raise
 
         return client
+
+    def close(self) -> None:
+        """关闭当前认证客户端的 HTTP 会话；Token 文件保持不变。"""
+        close_runtime_resources(self._client)
+        self._client = None
 
     # ── 通用方法 ────────────────────────────────
 
