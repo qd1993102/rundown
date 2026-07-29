@@ -86,6 +86,10 @@ class Config:
     group_pals_token: str = field(default_factory=lambda: os.getenv("GROUP_PALS_TOKEN", ""))
     huawei_token_dir: str = field(default_factory=lambda: os.getenv(
         "HUAWEI_TOKEN_DIR", _default_huawei_token_dir()))
+    coros_credential_key: str = field(
+        default_factory=lambda: os.getenv("NEURUN_COROS_CREDENTIAL_KEY", ""),
+        repr=False,
+    )
 
     # ── 存储 ──────────────────────────────────
     db_path: str = field(
@@ -200,6 +204,7 @@ class UserConfig:
     _domain: str = ""  # 用户选择的 Garmin 区域，覆盖 parent.domain
     provider: str = ""  # 用户绑定的数据源，覆盖服务级 NEURUN_PROVIDER
     _group_pals_token: str = ""  # Huawei Web 绑定期间的用户级凭证
+    coros_auto_relogin: bool | None = None  # 仅绑定请求显式传入；同步时为 None
 
     @property
     def token_dir(self) -> str:
@@ -258,6 +263,10 @@ class UserConfig:
     @property
     def huawei_token_dir(self) -> str:
         return str(Path(self.parent.data_dir) / self.api_key / "huawei-tokens")
+
+    @property
+    def coros_credential_key(self) -> str:
+        return self.parent.coros_credential_key
 
 
 def get_config(*, validate_credentials: bool = True) -> Config:

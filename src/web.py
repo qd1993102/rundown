@@ -823,28 +823,36 @@ def register_web_routes(server, user_manager: UserManager, config: Config):
             user_manager.ensure_dirs(api_key)
 
             try:
-                from .providers.coros import CorosProvider
-                # 临时设置 email/password 到 user_cfg
-                user_cfg.email = email  # type: ignore[attr-defined]
-                user_cfg.password = password  # type: ignore[attr-defined]
-                cp = CorosProvider(user_cfg)
-                if cp.authenticate():
+                from .providers.coros import CorosAuth
+                auth = CorosAuth(
+                    user_cfg.token_dir,
+                    credential_key=user_cfg.coros_credential_key,
+                )
+                region = str(body.get("region") or "cn").strip().lower()
+                auto_refresh = body.get(
+                    "auto_refresh", body.get("coros_auto_relogin", True),
+                ) is True
+                if auth.login_training(
+                    email, password, region, auto_refresh=auto_refresh,
+                ):
                     user_manager.update(api_key, garmin_email=email,
                                        provider="coros", token_status="active")
-                    sleep_available = cp.sleep_available
+                    enabled = auth.auto_relogin_enabled
+                    message = "Coros 运动数据授权成功"
+                    if enabled:
+                        message += "；Training Hub 自动鉴权已启用"
+                    elif auth.auto_relogin_warning:
+                        message += f"；自动鉴权未启用：{auth.auto_relogin_warning}"
                     return JSONResponse({
                         "status": "ok",
-                        "sleep_available": sleep_available,
-                        "message": (
-                            "Coros 活动与睡眠授权成功，请执行批量同步补齐历史睡眠"
-                            if sleep_available and is_coros_rebind else
-                            "Coros 活动与睡眠绑定成功"
-                            if sleep_available else
-                            "Coros 活动授权成功，但睡眠授权未取得；可稍后重新授权"
-                        ),
+                        "scope": "training",
+                        "training_auth_status": "active",
+                        "training_auto_refresh_enabled": enabled,
+                        "coros_auto_relogin_enabled": enabled,
+                        "message": message,
                     })
                 else:
-                    return JSONResponse({"status": "error", "message": "Coros 登录失败，请检查账号密码"}, status_code=400)
+                    return JSONResponse({"status": "error", "message": "Coros Training Hub 登录失败，请检查账号、密码和区域"}, status_code=400)
             except Exception as exc:
                 logger.error("Coros 登录失败: %s", exc)
                 return JSONResponse({"status": "error", "message": f"登录失败: {exc}"}, status_code=400)
@@ -882,6 +890,122 @@ def register_web_routes(server, user_manager: UserManager, config: Config):
         finally:
             if not keep_mfa_session:
                 auth.close()
+
+    @server.custom_route("/api/coros/auth/training", methods=["POST"])
+    async def api_coros_training_auth(request: Request) -> Response:
+        """重新认证 Coros Training Hub 运动数据域。"""
+        api_key = _get_api_key(request)
+        user = user_manager.get(api_key) if api_key else None
+        if not user:
+            return JSONResponse(
+                {"status": "error", "message": "请先登录应用账号"},
+                status_code=401,
+            )
+        if user.token_status == "active" and user.provider != "coros":
+            return JSONResponse(
+                {"status": "error", "message": "当前账号已绑定其他运动平台"},
+                status_code=409,
+            )
+        try:
+            body = await request.json()
+        except Exception:
+            return JSONResponse(
+                {"status": "error", "message": "无效请求"}, status_code=400,
+            )
+        account = str(body.get("account") or body.get("email") or "").strip()
+        password = str(body.get("password") or "")
+        region = str(body.get("region") or "cn").strip().lower()
+        if not account or not password or region not in {"eu", "us", "cn", "asia"}:
+            return JSONResponse({
+                "status": "error",
+                "message": "请输入 Coros Training Hub 账号、密码并选择账号区域",
+            }, status_code=400)
+        from .providers.coros import CorosAuth
+        user_cfg = config.for_user(api_key)
+        user_manager.ensure_dirs(api_key)
+        auth = CorosAuth(
+            user_cfg.token_dir,
+            credential_key=user_cfg.coros_credential_key,
+        )
+        if not auth.login_training(
+            account, password, region,
+            auto_refresh=body.get("auto_refresh", True) is True,
+        ):
+            return JSONResponse({
+                "status": "error",
+                "message": "Coros Training Hub 登录失败，请检查账号、密码和区域",
+            }, status_code=400)
+        user_manager.update(
+            api_key, garmin_email=account,
+            provider="coros", token_status="active",
+        )
+        message = "Coros 运动数据授权成功"
+        if auth.auto_relogin_enabled:
+            message += "；Training Hub 自动鉴权已启用"
+        elif auth.auto_relogin_warning:
+            message += f"；自动鉴权未启用：{auth.auto_relogin_warning}"
+        return JSONResponse({
+            "status": "ok",
+            "scope": "training",
+            "training_auth_status": "active",
+            "training_auto_refresh_enabled": auth.auto_relogin_enabled,
+            "message": message,
+        })
+
+    @server.custom_route("/api/coros/auth/sleep", methods=["POST"])
+    async def api_coros_sleep_auth(request: Request) -> Response:
+        """认证 Coros App Mobile 睡眠域，不改动 Training Hub Token。"""
+        api_key = _get_api_key(request)
+        user = user_manager.get(api_key) if api_key else None
+        if not user:
+            return JSONResponse(
+                {"status": "error", "message": "请先登录应用账号"},
+                status_code=401,
+            )
+        if user.provider != "coros" or user.token_status != "active":
+            return JSONResponse(
+                {"status": "error", "message": "请先完成 Coros 运动数据认证"},
+                status_code=409,
+            )
+        try:
+            body = await request.json()
+        except Exception:
+            return JSONResponse(
+                {"status": "error", "message": "无效请求"}, status_code=400,
+            )
+        email = str(body.get("account") or body.get("email") or "").strip()
+        password = str(body.get("password") or "")
+        if "@" not in email or not password:
+            return JSONResponse({
+                "status": "error",
+                "message": "请输入可登录 Coros App 的邮箱和密码；睡眠认证不支持手机号",
+            }, status_code=400)
+        from .providers.coros import CorosAuth
+        user_cfg = config.for_user(api_key)
+        auth = CorosAuth(
+            user_cfg.token_dir,
+            credential_key=user_cfg.coros_credential_key,
+        )
+        if not auth.login_sleep(
+            email, password,
+            auto_refresh=body.get("auto_refresh", True) is True,
+        ):
+            return JSONResponse({
+                "status": "error",
+                "message": auth.sleep_auth_error or "Coros App 睡眠认证失败",
+            }, status_code=400)
+        message = "Coros 睡眠数据授权成功"
+        if auth.sleep_auto_refresh_enabled:
+            message += "；睡眠自动鉴权已启用"
+        elif auth.sleep_auto_refresh_warning:
+            message += f"；自动鉴权未启用：{auth.sleep_auto_refresh_warning}"
+        return JSONResponse({
+            "status": "ok",
+            "scope": "sleep",
+            "sleep_auth_status": "active",
+            "sleep_auto_refresh_enabled": auth.sleep_auto_refresh_enabled,
+            "message": message,
+        })
 
     @server.custom_route("/api/mfa", methods=["POST"])
     async def api_mfa(request: Request) -> Response:
@@ -1387,6 +1511,14 @@ def register_web_routes(server, user_manager: UserManager, config: Config):
             "token_status": user.token_status,
             "last_sync": user.last_sync,
             "sleep_available": None,
+            "coros_auto_relogin_enabled": False,
+            "training_auth_status": None,
+            "sleep_auth_status": None,
+            "training_auto_refresh_enabled": False,
+            "sleep_auto_refresh_enabled": False,
+            "coros_secure_credential_storage": bool(
+                user_cfg.coros_credential_key
+            ),
             "profile": None,
             "goals": [],
             "preferences": None,
@@ -1395,9 +1527,26 @@ def register_web_routes(server, user_manager: UserManager, config: Config):
         if user.provider == "coros":
             try:
                 from .providers.coros import CorosAuth
-                result["sleep_available"] = CorosAuth(
-                    user_cfg.token_dir
-                ).has_sleep_access()
+                coros_auth = CorosAuth(
+                    user_cfg.token_dir,
+                    credential_key=user_cfg.coros_credential_key,
+                )
+                result["sleep_available"] = coros_auth.has_sleep_access()
+                result["coros_auto_relogin_enabled"] = (
+                    coros_auth.auto_relogin_enabled
+                )
+                result["training_auth_status"] = (
+                    "active" if coros_auth.is_authenticated() else "expired"
+                )
+                result["sleep_auth_status"] = (
+                    "active" if coros_auth.has_sleep_access() else "missing"
+                )
+                result["training_auto_refresh_enabled"] = (
+                    coros_auth.auto_relogin_enabled
+                )
+                result["sleep_auto_refresh_enabled"] = (
+                    coros_auth.sleep_auto_refresh_enabled
+                )
             except Exception as exc:
                 logger.warning("Coros 睡眠授权状态读取失败: %s", exc)
                 result["sleep_available"] = False
@@ -1417,6 +1566,84 @@ def register_web_routes(server, user_manager: UserManager, config: Config):
             result["preferences"] = prefs.front_matter
 
         return JSONResponse(result)
+
+    @server.custom_route(
+        "/api/coros/relogin-credential", methods=["DELETE"],
+    )
+    async def api_coros_relogin_credential_delete(
+        request: Request,
+    ) -> Response:
+        """当前用户关闭 Coros 自动续期并删除加密重登凭据。"""
+        api_key = _get_api_key(request)
+        user = user_manager.get(api_key) if api_key else None
+        if not user:
+            return JSONResponse(
+                {"status": "error", "message": "请先登录应用账号"},
+                status_code=401,
+            )
+        if user.provider != "coros":
+            return JSONResponse(
+                {"status": "error", "message": "当前账号未绑定 Coros"},
+                status_code=409,
+            )
+        from .providers.coros_credentials import CorosReloginCredentialStore
+        try:
+            CorosReloginCredentialStore(
+                config.for_user(api_key).token_dir,
+                config.coros_credential_key,
+            ).delete()
+        except LocalPersistenceError as exc:
+            return JSONResponse(
+                {"status": "error", "message": str(exc)}, status_code=500,
+            )
+        return JSONResponse({
+            "status": "ok", "coros_auto_relogin_enabled": False,
+        })
+
+    @server.custom_route(
+        "/api/coros/auth/{scope}/refresh-credential", methods=["DELETE"],
+    )
+    async def api_coros_refresh_credential_delete(
+        request: Request,
+    ) -> Response:
+        """按认证域关闭 Coros 自动鉴权并删除对应加密凭据。"""
+        api_key = _get_api_key(request)
+        user = user_manager.get(api_key) if api_key else None
+        if not user:
+            return JSONResponse(
+                {"status": "error", "message": "请先登录应用账号"},
+                status_code=401,
+            )
+        if user.provider != "coros":
+            return JSONResponse(
+                {"status": "error", "message": "当前账号未绑定 Coros"},
+                status_code=409,
+            )
+        scope = request.path_params.get("scope")
+        if scope not in {"training", "sleep"}:
+            return JSONResponse(
+                {"status": "error", "message": "未知的 Coros 认证域"},
+                status_code=404,
+            )
+        from .providers.coros_credentials import (
+            CorosMobileCredentialStore, CorosReloginCredentialStore,
+        )
+        user_cfg = config.for_user(api_key)
+        store_class = (
+            CorosReloginCredentialStore
+            if scope == "training" else CorosMobileCredentialStore
+        )
+        try:
+            store_class(
+                user_cfg.token_dir, user_cfg.coros_credential_key,
+            ).delete()
+        except LocalPersistenceError as exc:
+            return JSONResponse(
+                {"status": "error", "message": str(exc)}, status_code=500,
+            )
+        return JSONResponse({
+            "status": "ok", "scope": scope, "auto_refresh_enabled": False,
+        })
 
     @server.custom_route("/api/profile", methods=["POST"])
     async def api_profile(request: Request) -> Response:

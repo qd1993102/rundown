@@ -79,6 +79,15 @@ class TestProviderConfig:
             c = Config()
             assert c.provider_type == "coros"
 
+    def test_coros_credential_key_is_forwarded_to_web_user(self):
+        with mock.patch.dict(os.environ, {
+            "NEURUN_COROS_CREDENTIAL_KEY": "private-fernet-key",
+        }, clear=True):
+            config = Config()
+
+        assert config.coros_credential_key == "private-fernet-key"
+        assert config.for_user("rd_test").coros_credential_key == "private-fernet-key"
+
     def test_huawei_uses_group_pals_token_not_password(self):
         with mock.patch.dict(os.environ, {
             "NEURUN_PROVIDER": "huawei",

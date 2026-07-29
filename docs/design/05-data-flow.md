@@ -168,6 +168,15 @@ sequenceDiagram
 超时、429、5xx、响应解析或 profile 临时异常保持连接为 `active`，任务以可重试错误结束。
 任何失败路径都禁止用 `user_id=0` 或服务级默认凭证继续同步。
 
+Coros Training Hub 没有平台 Refresh Token。服务端支持安全加密时，运动认证页默认开启自动鉴权，Web 将
+密码等价重放对象加密保存到当前用户 Token 目录；明文密码和摘要不进入用户 JSON、日志或 API。
+活动、每日分析或 HRV 请求明确返回 `result=1019` 时，Provider 在单用户锁中重新读取 Token，避免
+并发重复登录；仍是旧 Token 才解密重放对象换取新 Access Token 并重试一次。重登被明确拒绝时
+删除密文并让 Web 标记 `expired`；临时上游失败不改变连接状态。Mobile 睡眠认证使用独立表单，
+把上游生成的重放载荷加密保存到 `coros-mobile-relogin.enc`；Mobile `1019` 时只更新
+`mobile_access_token`，不得复用 Training Hub 重登对象、写入 coros-mcp 全局认证文件，或因
+Training Hub 重登成功而伪装为可用。
+
 认证完成且范围确定后，核心同步函数先将范围内每天的 `neurun_provider_sync` 标记为
 `pending`。全部 Provider 拉取与 SQLite 写入成功后统一更新为 `completed`；异常退出时
 统一更新为 `failed` 并保留截断后的错误信息。Web 日历 API 只聚合这些状态和本地表，

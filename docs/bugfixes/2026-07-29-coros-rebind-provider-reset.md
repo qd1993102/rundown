@@ -32,6 +32,6 @@ Garmin。新增回归契约，禁止初始化区再次出现无条件 `selectPro
 ## 验证
 
 - 单元测试确认初始化区使用 `rebindProvider` 条件表达式，且不存在无条件 Garmin 初始化。
-- 浏览器打开 `/setup?rebind=coros`，确认隐藏 Garmin 区域，账号标签为“邮箱或手机号”，
-  提交平台保持 Coros。
+- 浏览器打开 `/setup?rebind=coros&scope=training`，确认显示 Training Hub 邮箱或手机号与 Coros
+  区域；打开 `scope=sleep`，确认只显示 Coros App 邮箱。两个页面均隐藏 Garmin 区域并固定 Coros。
 - 运行完整 `pytest`，确认零失败。

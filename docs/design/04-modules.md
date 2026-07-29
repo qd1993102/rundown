@@ -81,6 +81,21 @@ graph TD
     EXPIRED --> FIRST
 ```
 
+#### 4.2.1 Coros 分域自动鉴权
+
+Coros Training Hub 没有 Refresh Token。`CorosReloginCredentialStore` 在用户明确同意后，将
+`account`、`region` 和可直接重放的 MD5 密码摘要整体用 Fernet 加密，保存为当前用户
+`tokens/coros-relogin.enc`；服务级 `NEURUN_COROS_CREDENTIAL_KEY` 只从部署环境读取。
+`CorosAuth.run_with_training_relogin()` 包装活动、每日分析和 HRV 请求：仅当响应明确包含
+`result=1019` 或 Access Token 无效时，在按 Token 文件路径隔离的 singleflight 锁内重登；成功后
+原子写回 `coros-auth.json` 并只重试原请求一次。临时网络、429 和 5xx 保持 `active` 与密文；
+凭据被拒绝或重试后仍失效时删除密文并进入人工重新授权。
+
+`CorosMobileCredentialStore` 将 Coros App 返回的 Mobile 登录重放载荷加密保存为
+`tokens/coros-mobile-relogin.enc`。`CorosAuth.run_with_sleep_relogin()` 只在 Mobile 明确返回
+`1019` 时从当前用户目录解密并重放，写回 `mobile_access_token` 后重试一次；它不把载荷写入
+`coros-auth.json`，也不调用 coros-mcp 的全局认证持久化。两个认证域使用不同锁、密文和删除入口。
+
 ---
 
 ### 4.3 数据获取模块 (`fetcher.py`)

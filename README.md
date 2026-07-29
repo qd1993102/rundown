@@ -472,6 +472,7 @@ output/
 | `NEURUN_HOME` | — | (当前目录) | 数据工作目录，设后所有相对路径基于此解析 |
 | `NEURUN_DATA_DIR` | Web | `./data` | Web 用户记录、邀请码、Token、数据库与记忆的持久化根目录 |
 | `NEURUN_INVITE_CODES_FILE` | Web | `<NEURUN_DATA_DIR>/invite-codes.json` | 管理员维护的邀请码 JSON 文件路径 |
+| `NEURUN_COROS_CREDENTIAL_KEY` | Coros Web 自动鉴权 | — | 分别加密保存 Training Hub 与 Mobile 密码等价重放凭据的 Fernet key；必须独立生成且不得进入数据目录或仓库 |
 | `NEURUN_ENABLE_ADMIN_TOOLS` | 本地 MCP | `false` | 仅在 stdio/localhost 注册邀请码管理 tools；公网 Web 模式禁止 |
 | `NEURUN_SYNC_DAYS` | — | `30` | 默认同步天数 |
 | `NEURUN_SYNC_MAX_CONCURRENCY` | Web | `4` | 单进程同时执行的不同用户同步数 |
@@ -482,24 +483,43 @@ output/
 | `DEEPSEEK_API_KEY` | — | — | DeepSeek API Key（AI 洞察） |
 
 Web 模式会按用户注册记录选择 Garmin、Coros 或 Huawei，不受服务级
-`NEURUN_PROVIDER` 默认值影响。Coros 绑定成功后，Training Hub 与 Mobile 访问 token 保存到
-`data/<api_key>/tokens/coros-auth.json`（目录 `0700`、文件 `0600`）；后续同步不保存
-明文密码，而是恢复该用户的 token。token 无效或缺失时，接口会提示重新绑定账号。
+`NEURUN_PROVIDER` 默认值影响。Coros 的运动数据认证使用 Training Hub 账号（邮箱或手机号）、密码和
+账号区域；首次认证默认选择中国大陆（`cn`），用户仍可改为账号实际所属的其他区域，未传区域的
+运动认证 API 也默认按中国大陆处理。睡眠数据认证使用可登录 Coros App 的邮箱和密码，不支持手机号，
+并继承运动认证区域。
+两个入口、状态和刷新链路相互独立。访问 token 保存到
+`data/<api_key>/tokens/coros-auth.json`（目录 `0700`、文件 `0600`）。服务端配置加密密钥时，两个
+“Token 失效后自动鉴权”选项默认开启：Training Hub 的账号、区域和 MD5 密码摘要加密保存为
+`coros-relogin.enc`，Mobile 登录重放载荷加密保存为 `coros-mobile-relogin.enc`。两者都视为密码
+等价物，永不明文写入 token 文件。用户可在“我的”分别关闭并删除对应密文，当前 Access Token
+不受影响；服务端未配置密钥时选项禁用并说明原因，人工授权仍可完成。
 从旧版本升级时，如果系统中恰好只有一个已激活 Coros 用户，会自动把 coros-mcp 的
 旧版全局 token 迁入该用户目录；存在多个 Coros 用户时不会猜测 token 归属。
 
 Coros 活动时长使用 API 的 `workoutTime`（实际运动时间，不包含暂停），缺失时才回退
 `totalTime`。重新执行包含旧活动日期的单日或批量同步，会自动更新数据库中已有活动的
 `duration_seconds`；不需要开启“强制覆盖”。如果 Coros 返回 token 失效，接口会明确
-失败、将连接状态改为 `expired` 并在同步页提供重新绑定入口，不再把空活动列表误报为
-同步成功。
+失败。已启用自动鉴权时，`result=1019` 会在当前用户、当前认证域的 singleflight 内自动重登并只重试原请求
+一次；成功后原子写回新 Token。高驰明确拒绝保存的凭据时删除密文并将连接状态改为 `expired`；
+超时、限流或 5xx 保留密文和 `active` 状态，不再把空活动列表误报为同步成功。
+
+ECS/systemd 部署需要在 `/etc/neurun/neurun.env` 中一次性生成独立密钥。下面命令不会把密钥输出
+到终端；只执行一次，替换密钥会使既有 `coros-relogin.enc` 与 `coros-mobile-relogin.enc` 无法解密：
+
+```bash
+sudo sh -c 'umask 077; key=$(/opt/neurun-current/.venv/bin/python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"); printf "\nNEURUN_COROS_CREDENTIAL_KEY=%s\n" "$key" >> /etc/neurun/neurun.env'
+sudo chmod 600 /etc/neurun/neurun.env
+sudo systemctl restart neurun.service
+```
 
 Coros 睡眠使用 Mobile token 读取总睡眠、深睡、REM、清醒、小睡和平台睡眠评分；
 统一健康表保存总睡眠、深睡、REM 及其占比。Mobile 授权失败不会影响活动、RHR 和 HRV
-同步。升级前已绑定的 Coros 用户可在“我的”点击“重新授权 Coros 睡眠”，按原流程重新
-输入一次账号密码；重新授权页固定为 Coros，不显示 Garmin 区域或平台切换选项。授权后执行
+同步。升级前已绑定的 Coros 用户可在“我的”分别点击“认证 Coros 运动数据”或“认证 Coros 睡眠
+数据”；两个页面固定为 Coros，并明确展示各自所需账号。睡眠授权后执行
 覆盖目标日期的普通批量同步即可补齐历史睡眠，无需勾选
-“强制覆盖”。明文密码不会落盘。
+“强制覆盖”。只有实际取得 Mobile 睡眠凭据后页面才会进入同步页；如果高驰 Mobile 登录
+失败，页面保留并显示脱敏的业务错误码或网络原因，已有活动授权不受影响。Mobile Token 失效时
+只重放加密载荷并更新睡眠 Token，不调用或写入 coros-mcp 的全局认证文件。
 
 Huawei 配置只需要当前用户的 CrewPals token：
 

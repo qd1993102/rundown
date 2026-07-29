@@ -1,6 +1,6 @@
 # 设计方案 — 7. 依赖清单
 
-> 属于 [设计方案索引](../design.md) · 版本 v3.1 · 2026-07-28
+> 属于 [设计方案索引](../design.md) · 版本 v3.2 · 2026-07-29
 
 ---
 
@@ -14,6 +14,7 @@ dependencies = [
     "pyyaml>=6.0",             # YAML Front Matter 解析
     "rich>=13.0.0",            # 终端美化输出（表格、进度条）
     "httpx>=0.27.0",           # Coros/Huawei HTTP API
+    "cryptography>=42.0.0",    # Coros 密码等价重放凭据的 Fernet 加密
     "coros-mcp @ git+https://github.com/cygnusb/coros-mcp.git", # Coros 认证与模型
 ]
 
@@ -32,6 +33,7 @@ dev = [
 | `pyyaml` | 解析和生成记忆文件的 YAML Front Matter |
 | `rich` | 终端表格渲染（活动列表、健康指标）、同步进度条、记忆内容美化展示 |
 | `httpx` | Coros 与 Huawei API 的 HTTP 客户端 |
+| `cryptography` | 使用 Fernet 加密和校验 Coros Training Hub 密码等价重放凭据；密钥由部署环境独立注入 |
 | `coros-mcp` | Coros 登录、Token 模型及 HRV/活动详情能力；Web 绑定 Coros 的必需运行依赖，默认安装，不属于可选 extras |
 
 Docker 镜像执行默认的 `pip install .`，因此所有 Web 页面公开支持的 Provider 依赖都必须位于

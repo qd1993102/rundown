@@ -143,6 +143,16 @@ p.desc{font-size:14px;color:#777;margin-bottom:28px;line-height:1.5}
         <option value="garmin.cn">garmin.cn (中国)</option>
       </select>
     </div>
+    <div id="coros-region-group" class="form-group" style="display:none">
+      <label>Coros 账号区域</label>
+      <select id="coros-region">
+        <option value="cn" selected>中国大陆</option>
+        <option value="eu">欧洲 / 其他地区</option>
+        <option value="us">美国</option>
+        <option value="asia">亚洲（中国大陆以外）</option>
+      </select>
+      <div class="form-hint">请选择这个账号实际注册或使用的区域。</div>
+    </div>
     <div class="form-group">
       <label id="account-label">账号（邮箱）</label>
       <input id="email" type="text" placeholder="your@email.com" autocomplete="email">
@@ -150,6 +160,13 @@ p.desc{font-size:14px;color:#777;margin-bottom:28px;line-height:1.5}
     <div class="form-group">
       <label>密码</label>
       <input id="password" type="password" placeholder="密码" autocomplete="current-password">
+    </div>
+    <div class="form-group" id="coros-auto-relogin-group" style="display:none">
+      <label style="display:flex;align-items:flex-start;gap:9px;text-transform:none;letter-spacing:0;cursor:pointer">
+        <input id="coros-auto-relogin" type="checkbox" checked style="width:auto;margin-top:3px">
+        <span id="coros-auto-relogin-label">允许 Training Hub Token 失效后自动鉴权</span>
+      </label>
+      <div class="form-hint" id="coros-auto-relogin-hint">默认开启。登录重放对象只在本机加密保存，可在「我的」按认证域随时删除；明文密码不会落盘。</div>
     </div>
   </div>
 
@@ -284,6 +301,7 @@ p.desc{font-size:14px;color:#777;margin-bottom:28px;line-height:1.5}
 // ── State ──
 const searchParams = new URLSearchParams(window.location.search);
 const rebindProvider = searchParams.get('rebind');
+const authScope = searchParams.get('scope') || 'training';
 let provider = 'garmin';
 let mfaSession = '';
 let step = 1;
@@ -299,6 +317,25 @@ function markOptionalSaved(sectionId,actionId,statusId,msg){
   showSectionStatus(statusId,msg,'success');$('finish-btn').textContent='完成，进入首页';
 }
 
+async function configureCorosAutoRefresh(){
+  const checkbox=$('coros-auto-relogin');
+  const hint=$('coros-auto-relogin-hint');
+  checkbox.checked=true;checkbox.disabled=true;
+  try{
+    const r=await fetch('/api/profile');const d=await r.json();
+    if(d.coros_secure_credential_storage){
+      checkbox.disabled=false;checkbox.checked=true;
+      hint.textContent='默认开启。登录重放对象只在本机加密保存，可在「我的」按认证域随时删除；明文密码不会落盘。';
+    }else{
+      checkbox.checked=false;
+      hint.textContent='服务端尚未配置凭据加密密钥，自动鉴权不可用；本次仍可完成授权。';
+    }
+  }catch(e){
+    checkbox.checked=false;
+    hint.textContent='暂时无法确认加密存储能力，自动鉴权未开启。';
+  }
+}
+
 // ── Provider ──
 function selectProvider(p){
   provider = p;
@@ -309,16 +346,25 @@ function selectProvider(p){
     $('cred-fields').style.display='none';
     $('huawei-fields').style.display='block';
     $('mfa-section').style.display='none';
+    $('coros-auto-relogin-group').style.display='none';
+    $('coros-region-group').style.display='none';
   }else{
     $('cred-fields').style.display='block';
     $('huawei-fields').style.display='none';
     $('mfa-section').style.display='none';
     if(p==='coros'){
       $('domain-group').style.display='none';
-      $('account-label').textContent='账号（邮箱或手机号）';
+      $('coros-region-group').style.display=authScope==='training'?'block':'none';
+      $('account-label').textContent=authScope==='sleep'?'Coros App 登录邮箱（不支持手机号）':'Coros Training Hub 登录账号（邮箱或手机号）';
+      $('email').placeholder=authScope==='sleep'?'用于登录 Coros App 的邮箱':'Training Hub 邮箱或手机号';
+      $('coros-auto-relogin-label').textContent=authScope==='sleep'?'允许睡眠 Token 失效后自动鉴权':'允许 Training Hub Token 失效后自动鉴权';
+      $('coros-auto-relogin-group').style.display='block';
+      configureCorosAutoRefresh();
     }else{
       $('domain-group').style.display='block';
+      $('coros-region-group').style.display='none';
       $('account-label').textContent='账号（邮箱）';
+      $('coros-auto-relogin-group').style.display='none';
     }
   }
 }
@@ -326,8 +372,8 @@ function selectProvider(p){
 if(rebindProvider==='coros'){
   selectProvider('coros');
   document.querySelector('.provider-list').style.display='none';
-  document.querySelector('#step1 h1').textContent='😴 启用 Coros 睡眠同步';
-  document.querySelector('#step1 .desc').textContent='重新输入一次 Coros 账号和密码，同时更新活动与睡眠授权；neurun 不保存明文密码。';
+  document.querySelector('#step1 h1').textContent=authScope==='sleep'?'😴 认证 Coros 睡眠数据':'🏃 认证 Coros 运动数据';
+  document.querySelector('#step1 .desc').textContent=authScope==='sleep'?'请输入可登录 Coros App 的邮箱和密码；该操作只更新睡眠认证，不影响运动数据认证。':'请输入 Coros Training Hub 的邮箱或手机号、密码，并选择账号区域；该操作只更新运动数据认证。';
   $('step1-btn').textContent='授权并前往同步';
 }
 
@@ -379,11 +425,17 @@ async function doBind(){
 
   const body = {provider,email,password};
   if(rebindProvider==='coros') body.rebind = true;
+  if(provider==='coros'){
+    body.auto_refresh = $('coros-auto-relogin').checked;
+    body.account = email;
+    if(authScope==='training') body.region = $('coros-region').value;
+  }
   if(provider==='garmin') body.domain = $('domain').value;
 
   btn.innerHTML='<span class="spinner"></span>登录中...';
   try{
-    const r = await fetch('/api/setup',{method:'POST',headers:{'Content-Type':'application/json'},
+    const endpoint=provider!=='coros'?'/api/setup':authScope==='sleep'?'/api/coros/auth/sleep':'/api/coros/auth/training';
+    const r = await fetch(endpoint,{method:'POST',headers:{'Content-Type':'application/json'},
       body:JSON.stringify(body)});
     const d = await r.json();
     if(d.status==='needs_mfa'){

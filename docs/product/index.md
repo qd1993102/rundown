@@ -7,7 +7,7 @@
 
 | 产品文档 | 配套技术设计 | 状态 |
 |---|---|---|
-| [data-source-sync.md](data-source-sync.md) — Garmin、Coros、Huawei 绑定、区域一致性与数据同步 | [12-multi-platform.md](../design/12-multi-platform.md) | 已确认并实现 |
+| [data-source-sync.md](data-source-sync.md) — Garmin、Coros、Huawei 绑定、区域一致性与数据同步 | [12-multi-platform.md](../design/12-multi-platform.md) | 已确认并实现；Coros 真实账号与 ECS 验收待完成 |
 | [training-experience.md](training-experience.md) — 训练主界面、训练方案、执行反馈与交互式调整 | [training-system.md](../design/training-system.md) | 产品方向已确认，尚未实现 |
 | [contact-community.md](contact-community.md) — 站内联系我们入口与内测交流群二维码 | [contact-community.md](../design/contact-community.md) | 已确认并实现 |
 

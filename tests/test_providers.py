@@ -208,11 +208,15 @@ class TestProviderRegistry:
         token_dir = tmp_path / "user-a" / "tokens"
         auth = CorosAuth(str(token_dir))
 
-        async def fake_login(*args, **kwargs):
-            assert kwargs["skip_mobile"] is False
-            return stored
-
-        with mock.patch("coros_mcp.coros_api.login", side_effect=fake_login):
+        with (
+            mock.patch.object(
+                auth, "_login_training_password", return_value=stored,
+            ),
+            mock.patch(
+                "coros_mcp.coros_api._mobile_login",
+                new=mock.AsyncMock(return_value=("sleep-token", {"encrypted": "payload"})),
+            ),
+        ):
             assert auth.login("runner@example.com", "password") is True
 
         token_path = token_dir / "coros-auth.json"
@@ -225,6 +229,7 @@ class TestProviderRegistry:
         assert restored.get_user_id() == 12345
 
     def test_coros_auth_persists_mobile_sleep_credentials(self, tmp_path):
+        from cryptography.fernet import Fernet
         from coros_mcp.models import StoredAuth
         from src.providers.coros import CorosAuth
 
@@ -233,19 +238,70 @@ class TestProviderRegistry:
             user_id="12345",
             region="eu",
             timestamp=int(time.time() * 1000),
-            mobile_access_token="sleep-token",
-            mobile_login_payload={"encrypted": "payload"},
         )
+        key = Fernet.generate_key().decode("ascii")
+        auth = CorosAuth(str(tmp_path / "tokens"), credential_key=key)
+
+        with (
+            mock.patch.object(
+                auth, "_login_training_password", return_value=stored,
+            ),
+            mock.patch(
+                "coros_mcp.coros_api._mobile_login",
+                new=mock.AsyncMock(return_value=("sleep-token", {"encrypted": "payload"})),
+            ),
+        ):
+            assert auth.login_training(
+                "runner@example.com", "password", "eu",
+            ) is True
+            assert auth.login_sleep(
+                "runner@example.com", "password",
+            ) is True
+
+        restored = CorosAuth(
+            str(tmp_path / "tokens"), credential_key=key,
+        )
+        assert restored.has_sleep_access() is True
+
+    def test_coros_auth_preserves_training_token_and_reports_mobile_failure(self, tmp_path):
+        from coros_mcp.models import StoredAuth
+        from src.providers.coros import CorosAuth
+
+        stored = StoredAuth(
+            access_token="training-token",
+            user_id="12345",
+            region="cn",
+            timestamp=int(time.time() * 1000),
+        )
+
+        class MobileRejected(ValueError):
+            code = "1001"
+
         auth = CorosAuth(str(tmp_path / "tokens"))
-
-        async def fake_login(*args, **kwargs):
-            return stored
-
-        with mock.patch("coros_mcp.coros_api.login", side_effect=fake_login):
-            assert auth.login("runner@example.com", "password") is True
+        with (
+            mock.patch.object(
+                auth, "_login_training_password", return_value=stored,
+            ),
+            mock.patch(
+                "coros_mcp.coros_api._mobile_login",
+                new=mock.AsyncMock(
+                    side_effect=MobileRejected("Coros mobile login rejected")
+                ),
+            ),
+        ):
+            assert auth.login_training(
+                "13800138000", "password", "cn",
+            ) is True
+            assert auth.login_sleep(
+                "runner@example.com", "password",
+            ) is False
 
         restored = CorosAuth(str(tmp_path / "tokens"))
-        assert restored.has_sleep_access() is True
+        assert restored.is_authenticated() is True
+        assert restored.has_sleep_access() is False
+        assert auth.sleep_auth_error == (
+            "Coros Mobile 授权失败（1001）：Coros mobile login rejected"
+        )
 
     def test_coros_auth_reports_actionable_missing_dependency(self, tmp_path):
         import builtins

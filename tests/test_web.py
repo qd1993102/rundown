@@ -221,9 +221,22 @@ def test_coros_sleep_reauthorization_is_exposed_to_existing_users():
     setup_html = (Path(__file__).parents[1] / "web/templates/setup.html").read_text()
     profile_html = (Path(__file__).parents[1] / "web/templates/profile.html").read_text()
 
-    assert "rebind=coros" in profile_html
+    assert "rebind=coros&scope=training" in profile_html
+    assert "rebind=coros&scope=sleep" in profile_html
+    assert "Coros Training Hub 登录账号（邮箱或手机号）" in setup_html
+    assert "Coros App 登录邮箱（不支持手机号）" in setup_html
+    assert '<option value="cn" selected>中国大陆</option>' in setup_html
+    assert '<option value="eu" selected>' not in setup_html
+    assert "/api/coros/auth/training" in setup_html
+    assert "/api/coros/auth/sleep" in setup_html
     assert "searchParams.get('rebind')" in setup_html
     assert "body.rebind = true" in setup_html
+    assert 'id="coros-auto-relogin"' in setup_html
+    assert "body.auto_refresh" in setup_html
+    assert "加密保存" in setup_html
+    assert 'id="corosReloginRow"' in profile_html
+    assert "/api/coros/auth/training/refresh-credential" in profile_html
+    assert "/api/coros/auth/sleep/refresh-credential" in profile_html
 
     init_script = setup_html.split("// ── Init ──", 1)[1]
     assert "selectProvider(rebindProvider==='coros'?'coros':'garmin');" in init_script
@@ -237,11 +250,12 @@ def test_active_coros_user_can_open_sleep_reauthorization_page(tmp_path):
     register_web_routes(server, manager, Config(data_dir=str(tmp_path)))
 
     response = asyncio.run(server.routes[("/setup", "GET")](_request(
-        "/setup", {}, user.api_key, method="GET", query="rebind=coros",
+        "/setup", {}, user.api_key, method="GET",
+        query="rebind=coros&scope=sleep",
     )))
 
     assert response.status_code == 200
-    assert "启用 Coros 睡眠同步" in response.body.decode()
+    assert "认证 Coros 睡眠数据" in response.body.decode()
 
 
 def test_authenticated_page_attributes_rum_to_pseudonymous_account(tmp_path):

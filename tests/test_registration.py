@@ -180,7 +180,9 @@ class _FakeServer:
         return decorator
 
 
-def _request(path, body=None, cookie=None, scheme="http"):
+def _request(
+    path, body=None, cookie=None, scheme="http", *, path_params=None,
+):
     raw = json.dumps(body or {}).encode()
     headers = [(b"content-type", b"application/json")]
     if cookie:
@@ -201,6 +203,7 @@ def _request(path, body=None, cookie=None, scheme="http"):
         "path": path,
         "raw_path": path.encode(),
         "query_string": b"",
+        "path_params": path_params or {},
         "headers": headers,
         "client": ("127.0.0.1", 12345),
         "server": ("testserver", 80),
@@ -279,29 +282,306 @@ def test_active_coros_account_can_reauthorize_sleep(tmp_path, monkeypatch):
     server = _FakeServer()
     register_web_routes(server, manager, config)
 
-    class FakeCorosProvider:
-        sleep_available = True
+    class FakeCorosAuth:
+        sleep_auth_error = None
+        sleep_auto_refresh_enabled = True
+        sleep_auto_refresh_warning = None
 
-        def __init__(self, user_config):
+        def __init__(self, *args, **kwargs):
             pass
 
-        def authenticate(self):
+        def login_sleep(self, email, password, *, auto_refresh):
+            assert email == "runner@example.com"
+            assert auto_refresh is True
             return True
 
-    monkeypatch.setattr("src.providers.coros.CorosProvider", FakeCorosProvider)
+    monkeypatch.setattr("src.providers.coros.CorosAuth", FakeCorosAuth)
+    response = asyncio.run(server.routes[("/api/coros/auth/sleep", "POST")](_request(
+        "/api/coros/auth/sleep",
+        {
+            "account": "runner@example.com",
+            "password": "platform-password",
+            "auto_refresh": True,
+        },
+        cookie=f"neurun_key={user.api_key}",
+    )))
+
+    assert response.status_code == 200
+    assert _json(response)["sleep_auth_status"] == "active"
+    assert _json(response)["sleep_auto_refresh_enabled"] is True
+    assert manager.get(user.api_key).token_status == "active"
+
+
+def test_coros_sleep_auth_rejects_phone_before_provider_login(tmp_path):
+    manager = UserManager(str(tmp_path))
+    user = manager.register_account("跑者", "runner@example.com", "safe-password")
+    manager.update(user.api_key, provider="coros", token_status="active")
+    server = _FakeServer()
+    register_web_routes(server, manager, Config(data_dir=str(tmp_path)))
+
+    response = asyncio.run(server.routes[("/api/coros/auth/sleep", "POST")](
+        _request(
+            "/api/coros/auth/sleep",
+            {"account": "13800138000", "password": "platform-password"},
+            cookie=f"neurun_key={user.api_key}",
+        )
+    ))
+
+    assert response.status_code == 400
+    assert "不支持手机号" in _json(response)["message"]
+
+
+def test_coros_setup_defaults_to_china_and_enables_encrypted_auto_relogin(
+    tmp_path, monkeypatch,
+):
+    from cryptography.fernet import Fernet
+
+    invite_path = tmp_path / "invite-codes.json"
+    _write_invites(invite_path)
+    key = Fernet.generate_key().decode("ascii")
+    config = Config(
+        data_dir=str(tmp_path), invite_codes_file=str(invite_path),
+        coros_credential_key=key,
+    )
+    manager = UserManager(str(tmp_path))
+    user = manager.register_account("跑者", "runner@example.com", "safe-password")
+    server = _FakeServer()
+    register_web_routes(server, manager, config)
+
+    class FakeCorosAuth:
+        auto_relogin_enabled = True
+        auto_relogin_warning = None
+
+        def __init__(self, token_dir, *, credential_key):
+            assert credential_key == key
+
+        def login_training(self, account, password, region, *, auto_refresh):
+            assert account == "runner@example.com"
+            assert region == "cn"
+            assert auto_refresh is True
+            return True
+
+    monkeypatch.setattr("src.providers.coros.CorosAuth", FakeCorosAuth)
     response = asyncio.run(server.routes[("/api/setup", "POST")](_request(
         "/api/setup",
         {
             "provider": "coros",
             "email": "runner@example.com",
             "password": "platform-password",
-            "rebind": True,
+            "auto_refresh": True,
+        },
+        cookie=f"neurun_key={user.api_key}",
+    )))
+
+    payload = _json(response)
+    assert response.status_code == 200
+    assert payload["coros_auto_relogin_enabled"] is True
+    assert "自动鉴权已启用" in payload["message"]
+
+
+def test_coros_training_auth_defaults_to_china(tmp_path, monkeypatch):
+    config = Config(data_dir=str(tmp_path))
+    manager = UserManager(str(tmp_path))
+    user = manager.register_account("跑者", "runner@example.com", "safe-password")
+    server = _FakeServer()
+    register_web_routes(server, manager, config)
+
+    class FakeCorosAuth:
+        auto_relogin_enabled = False
+        auto_relogin_warning = None
+
+        def __init__(self, token_dir, *, credential_key):
+            pass
+
+        def login_training(self, account, password, region, *, auto_refresh):
+            assert account == "runner@example.com"
+            assert region == "cn"
+            assert auto_refresh is True
+            return True
+
+    monkeypatch.setattr("src.providers.coros.CorosAuth", FakeCorosAuth)
+    response = asyncio.run(server.routes[
+        ("/api/coros/auth/training", "POST")
+    ](_request(
+        "/api/coros/auth/training",
+        {
+            "account": "runner@example.com",
+            "password": "platform-password",
         },
         cookie=f"neurun_key={user.api_key}",
     )))
 
     assert response.status_code == 200
-    assert _json(response)["sleep_available"] is True
+    assert _json(response)["training_auth_status"] == "active"
+
+
+def test_coros_setup_reports_unavailable_auto_relogin_without_key(
+    tmp_path, monkeypatch,
+):
+    invite_path = tmp_path / "invite-codes.json"
+    _write_invites(invite_path)
+    config = Config(data_dir=str(tmp_path), invite_codes_file=str(invite_path))
+    manager = UserManager(str(tmp_path))
+    user = manager.register_account("跑者", "runner@example.com", "safe-password")
+    server = _FakeServer()
+    register_web_routes(server, manager, config)
+
+    class FakeCorosAuth:
+        auto_relogin_enabled = False
+        auto_relogin_warning = "未配置 Coros 自动鉴权加密密钥"
+
+        def __init__(self, token_dir, *, credential_key):
+            assert credential_key == ""
+
+        def login_training(self, account, password, region, *, auto_refresh):
+            assert auto_refresh is True
+            return True
+
+    monkeypatch.setattr("src.providers.coros.CorosAuth", FakeCorosAuth)
+    response = asyncio.run(server.routes[("/api/setup", "POST")](_request(
+        "/api/setup",
+        {
+            "provider": "coros",
+            "email": "runner@example.com",
+            "password": "platform-password",
+            "region": "eu",
+            "auto_refresh": True,
+        },
+        cookie=f"neurun_key={user.api_key}",
+    )))
+
+    payload = _json(response)
+    assert response.status_code == 200
+    assert payload["coros_auto_relogin_enabled"] is False
+    assert "未配置" in payload["message"]
+
+
+def test_coros_user_can_delete_auto_relogin_credential(tmp_path):
+    from cryptography.fernet import Fernet
+    from src.providers.coros_credentials import CorosReloginCredentialStore
+
+    key = Fernet.generate_key().decode("ascii")
+    config = Config(data_dir=str(tmp_path), coros_credential_key=key)
+    manager = UserManager(str(tmp_path))
+    user = manager.register_account("跑者", "runner@example.com", "safe-password")
+    manager.update(user.api_key, provider="coros", token_status="active")
+    token_dir = tmp_path / user.api_key / "tokens"
+    store = CorosReloginCredentialStore(str(token_dir), key)
+    store.save("runner@example.com", "platform-password", "eu")
+    server = _FakeServer()
+    register_web_routes(server, manager, config)
+
+    response = asyncio.run(server.routes[
+        ("/api/coros/relogin-credential", "DELETE")
+    ](_request(
+        "/api/coros/relogin-credential",
+        cookie=f"neurun_key={user.api_key}",
+    )))
+
+    assert response.status_code == 200
+    assert _json(response) == {
+        "status": "ok", "coros_auto_relogin_enabled": False,
+    }
+    assert not store.path.exists()
+
+
+def test_coros_user_can_delete_only_sleep_auto_refresh_credential(tmp_path):
+    from cryptography.fernet import Fernet
+    from src.providers.coros_credentials import (
+        CorosMobileCredentialStore, CorosReloginCredentialStore,
+    )
+
+    key = Fernet.generate_key().decode("ascii")
+    config = Config(data_dir=str(tmp_path), coros_credential_key=key)
+    manager = UserManager(str(tmp_path))
+    user = manager.register_account("跑者", "runner@example.com", "safe-password")
+    manager.update(user.api_key, provider="coros", token_status="active")
+    token_dir = tmp_path / user.api_key / "tokens"
+    training = CorosReloginCredentialStore(str(token_dir), key)
+    sleep = CorosMobileCredentialStore(str(token_dir), key)
+    training.save("runner@example.com", "platform-password", "eu")
+    sleep.save({"opaque": "payload"}, "eu")
+    server = _FakeServer()
+    register_web_routes(server, manager, config)
+
+    route = server.routes[
+        ("/api/coros/auth/{scope}/refresh-credential", "DELETE")
+    ]
+    response = asyncio.run(route(_request(
+        "/api/coros/auth/sleep/refresh-credential",
+        cookie=f"neurun_key={user.api_key}",
+        path_params={"scope": "sleep"},
+    )))
+
+    assert response.status_code == 200
+    assert _json(response)["scope"] == "sleep"
+    assert sleep.enabled is False
+    assert training.enabled is True
+
+
+def test_profile_reports_coros_auto_relogin_status(tmp_path):
+    from cryptography.fernet import Fernet
+    from src.providers.coros_credentials import CorosReloginCredentialStore
+
+    key = Fernet.generate_key().decode("ascii")
+    config = Config(data_dir=str(tmp_path), coros_credential_key=key)
+    manager = UserManager(str(tmp_path))
+    user = manager.register_account("跑者", "runner@example.com", "safe-password")
+    manager.update(user.api_key, provider="coros", token_status="active")
+    CorosReloginCredentialStore(
+        str(tmp_path / user.api_key / "tokens"), key,
+    ).save("runner@example.com", "platform-password", "eu")
+    server = _FakeServer()
+    register_web_routes(server, manager, config)
+
+    response = asyncio.run(server.routes[("/api/profile", "GET")](_request(
+        "/api/profile", cookie=f"neurun_key={user.api_key}",
+    )))
+
+    assert response.status_code == 200
+    assert _json(response)["coros_auto_relogin_enabled"] is True
+
+
+def test_active_coros_sleep_reauthorization_stays_on_form_when_mobile_fails(
+    tmp_path, monkeypatch,
+):
+    invite_path = tmp_path / "invite-codes.json"
+    _write_invites(invite_path)
+    config = Config(data_dir=str(tmp_path), invite_codes_file=str(invite_path))
+    manager = UserManager(str(tmp_path))
+    user = manager.register_account("跑者", "runner@example.com", "safe-password")
+    manager.update(
+        user.api_key, provider="coros", token_status="active",
+        garmin_email="runner@example.com",
+    )
+    server = _FakeServer()
+    register_web_routes(server, manager, config)
+
+    class FakeCorosAuth:
+        sleep_auth_error = "Coros Mobile 授权失败（1001）：账号验证未通过"
+        sleep_auto_refresh_enabled = False
+        sleep_auto_refresh_warning = None
+
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def login_sleep(self, email, password, *, auto_refresh):
+            return False
+
+    monkeypatch.setattr("src.providers.coros.CorosAuth", FakeCorosAuth)
+    response = asyncio.run(server.routes[("/api/coros/auth/sleep", "POST")](_request(
+        "/api/coros/auth/sleep",
+        {
+            "account": "runner@example.com",
+            "password": "platform-password",
+        },
+        cookie=f"neurun_key={user.api_key}",
+    )))
+
+    payload = _json(response)
+    assert response.status_code == 400
+    assert payload["status"] == "error"
+    assert "账号验证未通过" in payload["message"]
     assert manager.get(user.api_key).token_status == "active"
 
 

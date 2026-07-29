@@ -1,6 +1,7 @@
 # 设计方案 — 12. 多平台数据源架构
 
-> 属于 [设计方案索引](../design.md) · 版本 v3.1 · 2026-07-26
+> 属于 [设计方案索引](../design.md) · 版本 v3.4 · 2026-07-29
+> Coros 双认证与默认自动鉴权状态：已实现并通过本地测试，真实账号与 ECS 验收待完成
 
 ---
 
@@ -203,11 +204,12 @@ Huawei API 返回字段存在嵌套差异，Provider 对 ID、名称、类型、
 
 - **运行依赖**：Coros 是 Web 注册后可直接选择的数据源，`coros-mcp` 必须随默认安装和
   Docker 镜像一起安装，不得仅放在可选 extras 中；缺失时绑定接口返回可操作的部署错误
-- **认证**：POST `/account/login`，MD5 密码 + mobile encrypt fallback
+- **认证域**：Training Hub 运动数据使用 POST `/account/login`；Mobile 睡眠使用独立的
+  `/coros/user/login`。两者不得在一个 Web 表单或一次 `/api/setup` 提交中串行执行
 - **Web Token 隔离**：绑定成功后将 `StoredAuth` 保存到
   `data/<api_key>/tokens/coros-auth.json`；目录权限为 `0700`，文件权限为 `0600`。
   后续同步不保存或重用明文密码，而是从当前用户目录恢复 Training Hub token、
-  Mobile token 和加密的 Mobile 刷新载荷
+  Mobile token；两域可重放凭据分别从独立 Fernet 密文恢复，不留在 Token JSON
 - **旧 Token 迁移**：用户目录尚无 token 且系统中只有一个 active Coros 用户时，
   `/api/sync` 可将 coros-mcp 旧版全局 token 一次性迁入该用户目录；多个 Coros
   用户时跳过自动迁移，避免错误共享凭证
@@ -221,18 +223,28 @@ Huawei API 返回字段存在嵌套差异，Provider 对 ID、名称、类型、
   `duration_seconds`，因此重新同步即可修正旧数据，无需删除数据库
 - **HRV 数据**：GET `/dashboard/query`，返回 7 天 HRV
 - **每日指标**：GET `/analyse/query`，返回 RHR/距离/时长/负荷/VO2max
-- **睡眠认证**：Coros 首次绑定或重新授权时，同一次账号密码提交同时申请 Training Hub
-  与 Mobile token；Mobile 失败不撤销已经成功的活动授权，也不保存明文密码
+- **运动认证入口**：`/setup?rebind=coros&scope=training` 只显示 Training Hub 账号、密码和区域。
+  账号允许邮箱或手机号；区域使用 `cn/eu/us/asia`，首次默认 `cn`，用户显式选择其他区域时按其
+  选择提交，重新授权从现有 Token 预填。不得再通过账号是否为纯数字推断
+- **睡眠认证入口**：`/setup?rebind=coros&scope=sleep` 只显示 Coros App 登录邮箱和密码，并说明
+  不是 neurun 登录邮箱、不能以手机号替代；区域继承现有 Training Hub Token，若尚无运动授权则
+  要求用户显式选择。该入口只申请 Mobile token，不重做或覆盖 Training Hub 登录
 - **睡眠数据**：通过 Mobile API `POST /coros/data/statistic/daily` 批量读取日期范围，
   映射总睡眠、深睡、REM 及百分比；睡眠评分、清醒分钟和小睡分钟保留在
   `DailyHealth.extra`
-- **存量用户升级**：已激活的 Coros 用户可从“我的”进入 `/setup?rebind=coros`，仅允许
-  对当前 Coros 平台重新授权，不开放换绑。重新授权后执行包含历史日期的普通批量同步，
-  会合并补齐 SQLite 已有健康记录，无需强制覆盖或删除活动
-- **重新授权页面初始化**：`rebind=coros` 是页面唯一的初始 Provider 真相源。脚本必须先
-  根据该值选择 Coros，再派生字段和按钮状态；通用首次绑定默认值不得在脚本末尾再次选择
-  Garmin。重新授权模式隐藏平台选择和 Garmin 区域，提交体固定包含
-  `provider=coros`、`rebind=true`
+- **存量用户升级**：“我的”分别提供“授权/重新授权运动数据”和“授权/重新授权睡眠数据”；
+  两个链接携带不同 `scope`，页面初始化以 `provider=coros + scope` 为真相源，不开放换绑。
+  睡眠授权后执行普通批量同步即可合并补齐历史健康记录，无需强制覆盖或删除活动
+- **API 拆分**：新增 `POST /api/coros/auth/training` 与 `POST /api/coros/auth/sleep`，请求都包含
+  `account`、`password`、`region`、`auto_refresh`；前者更新 Training Hub token 和运动账号展示，
+  后者只更新 Mobile token。旧 `/api/setup` 仅保留首次平台选择和向新端点过渡的兼容逻辑
+- **区域默认值**：运动认证页面的 `<select>` 默认选中 `cn`；兼容 `/api/setup` 与
+  `/api/coros/auth/training` 在 `region` 缺失或为空时也归一化为 `cn`。显式传入合法区域不被覆盖；
+  睡眠认证继续继承已有 Training Hub 区域，不独立猜测区域
+- **Mobile 授权结果**：不要使用上游组合登录中“捕获并静默忽略 Mobile 异常”的结果作为
+  睡眠授权成功依据。睡眠端点只执行 Mobile 登录并单独捕获业务错误码；仅当 Mobile token 与
+  可刷新登录载荷都已安全持久化时返回成功。Mobile 失败返回 `coros_mobile_auth_failed`，前端
+  停留在当前页显示脱敏原因，既有 Training Hub token 不变
 - **睡眠降级**：缺少 Mobile token 或睡眠接口失败时记录可操作日志，并继续同步活动、
   RHR 与 HRV；重同步不会以默认零值清空此前已保存的睡眠
 
@@ -242,12 +254,84 @@ Huawei API 返回字段存在嵌套差异，Provider 对 ID、名称、类型、
 - Coros 虽然会在构造时恢复 `StoredAuth`，仍必须先执行统一的 `authenticate()` 契约，
   不得在 Token 缺失时以 `user_id=0` 继续初始化本地同步
 - `/activity/query` 日期参数必须 `YYYYMMDD` 格式
-- Coros token 失效或活动接口返回非 `0000` 时同步必须失败并提示重新绑定，禁止把
-  空活动列表误报为同步成功；`result=1019` 会把 `UserRecord.token_status` 更新为
-  `expired`，使 `/setup` 可以在原用户目录中重新完成绑定
+- Coros token 失效或活动接口返回非 `0000` 时禁止把空活动列表误报为同步成功；
+  `result=1019` 在用户已启用自动续期时先执行一次 singleflight 重登并重试。没有可用重登凭据、
+  高驰明确拒绝或重试后仍失效时，才把 `UserRecord.token_status` 更新为 `expired`，使 `/setup`
+  可以在原用户目录中重新完成绑定
 - Mobile 睡眠接口来自 `coros-mcp` 对 Coros App 协议的适配，不属于稳定的公开 Web API；
   必须保持独立降级，不能让接口变化阻断活动同步
 - Mobile 请求需要携带访问 token；应用日志和反向代理不得记录完整查询参数或凭据
 - 身体电量和训练准备仅 Garmin 已映射；Coros `tiredRate` 只近似放入压力字段
+
+### 12.7 Coros 双认证与自动鉴权
+
+#### 12.7.1 当前缺口与边界
+
+`coros-mcp.StoredAuth` 同时承载 Training Hub 与 Mobile 字段，但两个认证域使用不同端点、Token 和
+重放材料。Training Hub 没有 Refresh Token，只能在 `result=1019` 后重放登录；Mobile 可以重放
+`mobile_login_payload` 换取新 token。共享模型不得导致共享授权入口或共享失败状态。
+
+两个认证域都只处理明确的认证失效，不按 Token 年龄猜测，不把超时、429、5xx 或响应格式异常
+转换为重新登录。自动鉴权选项在安全存储可用时默认开启，但仍由用户在对应表单提交时确认。
+
+#### 12.7.2 凭据模型与密钥边界
+
+- 两个新认证端点都接受 `auto_refresh: boolean`，前端在服务端报告
+  `coros_secure_credential_storage=true` 时默认传 `true`；用户可在提交前取消。存量账号不静默生成
+  缺失凭据，需在对应表单重新授权一次。
+- Training Hub 重放对象包含 `account`、按账号类型确定的 `accountType`、`pwd=MD5(password)` 和
+  `region`；Mobile 重放对象使用上游生成的 AES 登录载荷。两者都是可直接重放的密码等价物，必须
+  分域整体加密，不得出现在 `UserRecord`、`coros-auth.json`、日志、异常或 API 响应中。
+- 使用 `cryptography.fernet.Fernet` 对重放对象做带完整性校验的加密，Training Hub 与 Mobile
+  密文分别保存为 `coros-relogin.enc` 和 `coros-mobile-relogin.enc`，目录 `0700`、文件 `0600`，
+  并使用既有原子写入工具。
+- 服务级 `NEURUN_COROS_CREDENTIAL_KEY` 提供 URL-safe 32-byte Fernet key，只能由部署环境注入；
+  ECS 放入 `/etc/neurun/neurun.env` 并限制服务用户读取，不写入仓库、用户数据目录、备份或日志。
+  服务启动不得自动生成替代密钥，否则重启或多实例会使既有密文不可解。
+- 密钥缺失或密文不可解时，普通 Coros 绑定和现有 Token 复用仍可工作，但自动续期保持关闭并返回
+  脱敏警告；不得回退为明文落盘。丢失密钥后的恢复方式是用户重新授权并生成新密文。
+- Training Hub 继续使用 `coros-relogin.enc`；Mobile 新增 `coros-mobile-relogin.enc`。迁移时从
+  既有 `coros-auth.json.mobile_login_payload` 读取后加密写入新文件，并从 Token JSON 移除可重放
+  载荷。若部署缺少密钥或旧载荷无法安全迁移，保留当前 Mobile Access Token，但删除明文重放载荷
+  并要求用户在睡眠认证页重新确认，不能继续把密码等价物留在 Token JSON。
+- “我的”分别展示 `training_auto_refresh_enabled` 与 `sleep_auto_refresh_enabled`。幂等删除接口为
+  `DELETE /api/coros/auth/{scope}/refresh-credential`；只删除对应密文，不删除当前 Access Token。
+
+#### 12.7.3 自动重登状态机
+
+1. Training Hub 请求使用 `StoredAuth.access_token`；Mobile 睡眠请求使用
+   `StoredAuth.mobile_access_token`，两者分别分类错误。
+2. 只有对应响应明确表示 `result=1019` 或等价 Access Token 无效时，进入当前用户、当前认证域的
+   singleflight；
+   HTTP 超时、429、5xx 和非认证业务错误原样作为可重试失败返回。
+3. 获得锁后再次比较 Token 版本；若另一请求已写入新 Token，直接复用并跳过登录。
+4. 否则解密该域重放对象并请求同区域登录接口。Training Hub 成功后校验 `user_id` 与原账号一致，
+   只更新 `access_token`；Mobile 成功后只更新 `mobile_access_token`。均原子写回
+   `coros-auth.json`。
+5. 原业务请求最多重试一次。重试仍返回认证失效时停止，删除该域重登凭据并更新该域状态；
+   Training Hub 进入 `expired`，Mobile 进入 `sleep_auth_status=expired`，不得循环登录或继续写入
+   对应域数据。
+6. 登录接口明确拒绝账号凭据时执行同样的分域删除与状态更新；登录超时、429 或 5xx 保留该域
+   密文和既有状态，本次同步以可重试错误结束。
+
+Training Hub 重登与 Mobile 睡眠刷新保持两条独立状态机、锁和凭据文件。Training Hub 成功不得
+改变 `has_sleep_access()`；Mobile 失败也不得删除可用的 Training Hub 重登凭据或把运动连接标记
+为失效。
+
+#### 12.7.4 实现与测试影响
+
+- `CorosReloginCredentialStore` 保存 Training Hub 重放对象，`CorosMobileCredentialStore` 保存
+  Mobile 重放对象；`CorosAuth` 只在对应刷新调用中取得一次性内存对象。
+- Coros Training Hub 活动、每日分析和 HRV 请求统一经过认证失效分类与一次重试包装；当前吞掉
+  健康接口异常的路径必须让明确的 `1019` 进入重登流程，其他健康数据失败仍可按既有规则降级。
+- `UserRecord` 不新增密码或密文字段；启用状态由两个凭据文件分别推导。状态接口返回
+  `training_auth_status`、`sleep_auth_status`、`training_auto_refresh_enabled`、
+  `sleep_auto_refresh_enabled` 和 `coros_secure_credential_storage`。
+- 已新增 `cryptography` 运行依赖，并同步更新 `pyproject.toml`、部署文档和 README 的环境变量说明；
+  项目当前没有依赖锁文件。Web API 变化不新增 CLI 参数，因此本期不新增 MCP tool；如果后续增加
+  CLI 开关，必须同步 MCP inputSchema。
+- 单元测试已覆盖：两个按钮和 scope 不重复、表单账号说明、显式区域与区域继承、支持安全存储时
+  默认开启、密钥缺失时禁用、两域加密文件和权限、旧 Mobile payload 原子迁移、两域 `1019`
+  刷新、分域并发去重、重试上限、独立关闭，以及 Training Hub/Mobile 状态互不污染。
 
 ---

@@ -6,7 +6,10 @@ pip install git+https://github.com/cygnusb/coros-mcp.git
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import logging
+import threading
+import time
 from collections.abc import Callable
 from datetime import date, datetime, timedelta
 from pathlib import Path
@@ -23,6 +26,11 @@ from .base import (
     ActivityData, DailyHealth,
     AuthProvider, ActivityProvider, HealthProvider, DataProvider,
 )
+from .coros_credentials import (
+    CorosCredentialError,
+    CorosMobileCredentialStore,
+    CorosReloginCredentialStore,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -35,6 +43,53 @@ _BASE_URLS = {
 
 class CorosDependencyError(RuntimeError):
     """Coros 运行依赖未随应用安装。"""
+
+
+class CorosAuthenticationError(RuntimeError):
+    """Coros Training Hub 凭据已明确失效。"""
+
+
+class CorosReloginRejected(CorosAuthenticationError):
+    """Coros 明确拒绝保存的重登凭据。"""
+
+
+_RELOGIN_LOCKS: dict[str, threading.Lock] = {}
+_RELOGIN_LOCKS_GUARD = threading.Lock()
+
+
+def _relogin_lock(path: Path | None) -> threading.Lock:
+    key = str(path) if path is not None else "unconfigured"
+    with _RELOGIN_LOCKS_GUARD:
+        return _RELOGIN_LOCKS.setdefault(key, threading.Lock())
+
+
+def _is_training_auth_error(exc: Exception) -> bool:
+    message = str(exc).lower()
+    return "result=1019" in message or "access token is invalid" in message
+
+
+def _is_mobile_auth_error(exc: Exception) -> bool:
+    code = str(getattr(exc, "code", "") or "")
+    message = str(exc).lower()
+    return (
+        code == "1019"
+        or "result=1019" in message
+        or "token invalid" in message
+        or "no mobile api token available" in message
+    )
+
+
+def _format_mobile_auth_error(exc: Exception) -> str:
+    """把上游 Mobile 登录异常转换为不包含凭据的用户可见原因。"""
+    code = str(getattr(exc, "code", "") or "").strip()
+    message = " ".join(str(exc).split())
+    if code:
+        return f"Coros Mobile 授权失败（{code}）：{message or '高驰拒绝了登录请求'}"
+    if "No accessToken" in message:
+        return "Coros Mobile 授权失败：高驰未返回睡眠访问凭据"
+    if type(exc).__module__.startswith("httpx"):
+        return "Coros Mobile 授权失败：无法连接高驰 Mobile 服务，请稍后重试"
+    return "Coros Mobile 授权失败：高驰未完成 Mobile 登录"
 
 
 def _base_for_auth(auth) -> str:
@@ -125,23 +180,27 @@ def _fetch_activity_items(
     size = 100
     with httpx.Client(timeout=30) as client:
         while True:
-            response = client.get(
-                f"{_base_for_auth(auth)}/activity/query",
-                params={
-                    "startDay": start.strftime("%Y%m%d"),
-                    "endDay": end.strftime("%Y%m%d"),
-                    "pageNumber": page,
-                    "size": size,
-                },
-                headers=auth.get_headers(),
-            )
-            response.raise_for_status()
-            body = response.json()
-            if body.get("result") != "0000":
-                raise RuntimeError(
-                    f"{body.get('message', 'unknown error')} "
-                    f"(result={body.get('result', 'unknown')})"
+            def load_page() -> dict:
+                response = client.get(
+                    f"{_base_for_auth(auth)}/activity/query",
+                    params={
+                        "startDay": start.strftime("%Y%m%d"),
+                        "endDay": end.strftime("%Y%m%d"),
+                        "pageNumber": page,
+                        "size": size,
+                    },
+                    headers=auth.get_headers(),
                 )
+                response.raise_for_status()
+                body = response.json()
+                if body.get("result") != "0000":
+                    raise RuntimeError(
+                        f"{body.get('message', 'unknown error')} "
+                        f"(result={body.get('result', 'unknown')})"
+                    )
+                return body
+
+            body = auth.run_with_training_relogin(load_page)
             data = body.get("data") or {}
             page_items = data.get("dataList", data.get("list", [])) or []
             items.extend(page_items)
@@ -181,11 +240,27 @@ class CorosAuth(AuthProvider):
 
     _TOKEN_FILENAME = "coros-auth.json"
 
-    def __init__(self, token_dir: str | None = None):
+    def __init__(
+        self,
+        token_dir: str | None = None,
+        *,
+        credential_key: str = "",
+        remember_credentials: bool | None = None,
+    ):
         self._auth: Any = None
+        self._sleep_auth_error: str | None = None
+        self._auto_relogin_warning: str | None = None
+        self._sleep_auto_refresh_warning: str | None = None
+        self._remember_credentials = remember_credentials
         self._token_path = (
             Path(token_dir).expanduser() / self._TOKEN_FILENAME
             if token_dir else None
+        )
+        self.credential_store = CorosReloginCredentialStore(
+            token_dir, credential_key,
+        )
+        self.mobile_credential_store = CorosMobileCredentialStore(
+            token_dir, credential_key,
         )
         self._restore()
 
@@ -200,6 +275,18 @@ class CorosAuth(AuthProvider):
                 self._auth = StoredAuth.model_validate_json(raw)
             else:  # pragma: no cover - pydantic v1 compatibility
                 self._auth = StoredAuth.parse_raw(raw)
+            legacy_mobile_payload = getattr(
+                self._auth, "mobile_login_payload", None,
+            )
+            if legacy_mobile_payload:
+                try:
+                    self.mobile_credential_store.save(
+                        legacy_mobile_payload, str(self._auth.region),
+                    )
+                except CorosCredentialError as exc:
+                    self._sleep_auto_refresh_warning = str(exc)
+                self._auth.mobile_login_payload = None
+                self._save()
             return True
         except LocalPersistenceError:
             raise
@@ -213,10 +300,17 @@ class CorosAuth(AuthProvider):
         if self._token_path is None or self._auth is None:
             return
         ensure_private_dir(self._token_path.parent)
-        if hasattr(self._auth, "model_dump_json"):
-            raw = self._auth.model_dump_json()
+        serializable = self._auth
+        if hasattr(self._auth, "model_copy"):
+            serializable = self._auth.model_copy(update={
+                "mobile_login_payload": None,
+            })
+        elif hasattr(self._auth, "copy"):  # pragma: no cover - pydantic v1
+            serializable = self._auth.copy(update={"mobile_login_payload": None})
+        if hasattr(serializable, "model_dump_json"):
+            raw = serializable.model_dump_json()
         else:  # pragma: no cover - pydantic v1 compatibility
-            raw = self._auth.json()
+            raw = serializable.json()
         atomic_write_private(self._token_path, raw)
 
     def migrate_legacy_token(self) -> bool:
@@ -240,9 +334,17 @@ class CorosAuth(AuthProvider):
             logger.warning("Coros 旧版 token 迁移失败: %s", exc)
             return False
 
-    def login(self, email: str, password: str) -> bool:
+    def login_training(
+        self,
+        account: str,
+        password: str,
+        region: str,
+        *,
+        auto_refresh: bool = True,
+    ) -> bool:
+        """只认证 Training Hub；不触发 Coros Mobile 登录。"""
         try:
-            from coros_mcp.coros_api import login as _login
+            import coros_mcp.models  # noqa: F401
         except ModuleNotFoundError as exc:
             if exc.name == "coros_mcp" or "coros_mcp" in str(exc):
                 raise CorosDependencyError(
@@ -250,15 +352,39 @@ class CorosAuth(AuthProvider):
                     "Docker 部署请重新构建镜像"
                 ) from exc
             raise
-        region = "cn" if (email.isdigit() and len(email) >= 10) else "eu"
-        logger.info("Coros: 登录 (region=%s, account=%s...)", region, email[:3])
+        account = account.strip()
+        region = region.strip().lower()
+        if not account or not password or region not in _BASE_URLS:
+            return False
+        logger.info(
+            "Coros: Training Hub 登录 (region=%s, account=%s...)",
+            region, account[:3],
+        )
         try:
-            # 同一次绑定同时获取 Training Hub 与 Mobile token。上游会在
-            # Mobile 登录失败时保留 Training Hub 登录结果，因此睡眠能力不会
-            # 阻断活动同步。
-            self._auth = _run(_login(email, password, region, skip_mobile=False))
+            previous_mobile_token = getattr(
+                self._auth, "mobile_access_token", None,
+            )
+            self._auth = self._login_training_password(
+                account, password, region,
+            )
+            self._auth.mobile_access_token = previous_mobile_token
             self._save()
-            logger.info("Coros: 登录成功 (user_id=%s)", self._auth.user_id)
+            self._auto_relogin_warning = None
+            if auto_refresh:
+                try:
+                    self.credential_store.save(account, password, region)
+                except CorosCredentialError as exc:
+                    self._auto_relogin_warning = str(exc)
+                    logger.warning(
+                        "Coros 自动续期未启用: error_type=%s",
+                        type(exc).__name__,
+                    )
+            else:
+                self.credential_store.delete()
+            logger.info(
+                "Coros: Training Hub 登录成功 (user_id=%s)",
+                self._auth.user_id,
+            )
             return True
         except LocalPersistenceError:
             raise
@@ -266,8 +392,112 @@ class CorosAuth(AuthProvider):
             logger.error("Coros 登录失败: %s", e)
             return False
 
+    def _login_training_password(
+        self, account: str, password: str, region: str,
+    ):
+        """直接登录 Training Hub，避免上游 `_save_auth` 写全局 Token。"""
+        import httpx
+        from coros_mcp.coros_api import USER_AGENT
+        from coros_mcp.models import StoredAuth
+
+        response = httpx.post(
+            f"{_BASE_URLS[region]}/account/login",
+            json={
+                "account": account,
+                "accountType": 2,
+                "pwd": hashlib.md5(
+                    password.encode("utf-8"), usedforsecurity=False,
+                ).hexdigest(),
+            },
+            headers={"Content-Type": "application/json", "User-Agent": USER_AGENT},
+            timeout=30,
+        )
+        response.raise_for_status()
+        body = response.json()
+        if str(body.get("result") or "") != "0000":
+            raise CorosAuthenticationError(
+                f"Coros Training Hub 登录失败 (result={body.get('result') or 'unknown'})"
+            )
+        data = body.get("data") or {}
+        if not data.get("accessToken") or not data.get("userId"):
+            raise ValueError("Coros Training Hub 登录响应缺少必要字段")
+        return StoredAuth(
+            access_token=str(data["accessToken"]),
+            user_id=str(data["userId"]),
+            region=region,
+            timestamp=int(time.time() * 1000),
+        )
+
+    def login_sleep(
+        self,
+        email: str,
+        password: str,
+        *,
+        auto_refresh: bool = True,
+    ) -> bool:
+        """只认证 Coros App Mobile；保留现有 Training Hub Token。"""
+        if self._auth is None or "@" not in email or not password:
+            self._sleep_auth_error = "Coros App 睡眠认证需要登录邮箱和密码"
+            return False
+        try:
+            from coros_mcp.coros_api import _mobile_login
+        except ModuleNotFoundError as exc:
+            if exc.name == "coros_mcp" or "coros_mcp" in str(exc):
+                raise CorosDependencyError(
+                    "Coros 运行依赖未安装；请重新安装依赖并重启服务"
+                ) from exc
+            raise
+        region = str(getattr(self._auth, "region", "eu"))
+        self._sleep_auth_error = None
+        self._sleep_auto_refresh_warning = None
+        try:
+            mobile_token, mobile_payload = _run(
+                _mobile_login(email.strip(), password, region)
+            )
+            self._auth.mobile_access_token = mobile_token
+            self._auth.mobile_login_payload = None
+            if auto_refresh:
+                try:
+                    self.mobile_credential_store.save(mobile_payload, region)
+                except CorosCredentialError as exc:
+                    self._sleep_auto_refresh_warning = str(exc)
+            else:
+                self.mobile_credential_store.delete()
+            self._save()
+            return True
+        except LocalPersistenceError:
+            raise
+        except Exception as exc:
+            self._sleep_auth_error = _format_mobile_auth_error(exc)
+            logger.warning("Coros: %s", self._sleep_auth_error)
+            return False
+
+    def login(self, email: str, password: str) -> bool:
+        """兼容旧调用：只绑定 Training Hub。"""
+        region = "cn" if (email.isdigit() and len(email) >= 10) else "eu"
+        return self.login_training(
+            email, password, region,
+            auto_refresh=self._remember_credentials is True,
+        )
+
     def is_authenticated(self) -> bool:
         return self._auth is not None
+
+    @property
+    def auto_relogin_enabled(self) -> bool:
+        return self.credential_store.enabled
+
+    @property
+    def auto_relogin_warning(self) -> str | None:
+        return self._auto_relogin_warning
+
+    @property
+    def sleep_auto_refresh_enabled(self) -> bool:
+        return self.mobile_credential_store.enabled
+
+    @property
+    def sleep_auto_refresh_warning(self) -> str | None:
+        return self._sleep_auto_refresh_warning
 
     def has_sleep_access(self) -> bool:
         """当前用户是否已持久化 Coros Mobile 睡眠凭据。"""
@@ -275,9 +505,14 @@ class CorosAuth(AuthProvider):
             self._auth is not None
             and (
                 getattr(self._auth, "mobile_access_token", None)
-                or getattr(self._auth, "mobile_login_payload", None)
+                or self.mobile_credential_store.enabled
             )
         )
+
+    @property
+    def sleep_auth_error(self) -> str | None:
+        """本次登录的脱敏 Mobile 授权错误；不持久化账号、密码或 token。"""
+        return self._sleep_auth_error
 
     def get_user_id(self) -> int:
         return int(self._auth.user_id) if self._auth else 0
@@ -290,6 +525,182 @@ class CorosAuth(AuthProvider):
             "accessToken": self._auth.access_token,
             "yfheader": _json.dumps({"userId": self._auth.user_id}),
         }
+
+    def _login_with_replay(self, payload: dict[str, object]):
+        """使用解密后的密码等价重放对象换取新的 Training Hub Token。"""
+        import httpx
+        from coros_mcp.coros_api import USER_AGENT
+        from coros_mcp.models import StoredAuth
+
+        region = str(payload["region"])
+        login_payload = {
+            "account": str(payload["account"]),
+            "accountType": int(payload["accountType"]),
+            "pwd": str(payload["pwd"]),
+        }
+        response = httpx.post(
+            f"{_BASE_URLS.get(region, _BASE_URLS['us'])}/account/login",
+            json=login_payload,
+            headers={"Content-Type": "application/json", "User-Agent": USER_AGENT},
+            timeout=30,
+        )
+        if response.status_code in (401, 403):
+            raise CorosReloginRejected("Coros access token is invalid；自动重登凭据被拒绝")
+        response.raise_for_status()
+        body = response.json()
+        result = str(body.get("result") or "")
+        if result in {"1001", "1019"}:
+            raise CorosReloginRejected("Coros access token is invalid；自动重登凭据被拒绝")
+        if result != "0000":
+            raise RuntimeError(f"Coros 自动重登暂时失败 (result={result or 'unknown'})")
+        data = body.get("data") or {}
+        access_token = str(data.get("accessToken") or "")
+        user_id = str(data.get("userId") or "")
+        if not access_token or not user_id:
+            raise ValueError("Coros 自动重登响应缺少必要字段")
+        previous_user_id = str(getattr(self._auth, "user_id", ""))
+        if previous_user_id and user_id != previous_user_id:
+            raise CorosReloginRejected("Coros access token is invalid；自动重登账号不一致")
+        return StoredAuth(
+            access_token=access_token,
+            user_id=user_id,
+            region=region,
+            timestamp=int(time.time() * 1000),
+            mobile_access_token=getattr(self._auth, "mobile_access_token", None),
+            mobile_login_payload=getattr(self._auth, "mobile_login_payload", None),
+        )
+
+    def _reload_if_token_changed(self, failed_token: str) -> bool:
+        if self._token_path is None or not self._token_path.exists():
+            return False
+        previous = self._auth
+        if self._restore():
+            current = str(getattr(self._auth, "access_token", ""))
+            if current and current != failed_token:
+                return True
+        if self._auth is None:
+            self._auth = previous
+        return False
+
+    def _refresh_after_invalid(self, failed_token: str) -> None:
+        with _relogin_lock(self._token_path):
+            current = str(getattr(self._auth, "access_token", ""))
+            if current and current != failed_token:
+                return
+            if self._reload_if_token_changed(failed_token):
+                return
+            try:
+                payload = self.credential_store.load()
+            except CorosCredentialError as exc:
+                raise CorosAuthenticationError(
+                    "Coros access token is invalid，且没有可用的自动续期凭据"
+                ) from exc
+            try:
+                refreshed = self._login_with_replay(payload)
+            except CorosReloginRejected:
+                self.credential_store.delete()
+                raise
+            self._auth = refreshed
+            self._save()
+            logger.info("Coros: Training Hub Token 已自动更新")
+
+    def run_with_training_relogin(self, operation: Callable[[], Any]) -> Any:
+        """执行 Training Hub 请求，明确失效时自动重登并最多重试一次。"""
+        failed_token = str(getattr(self._auth, "access_token", ""))
+        try:
+            return operation()
+        except Exception as exc:
+            if not _is_training_auth_error(exc):
+                raise
+        self._refresh_after_invalid(failed_token)
+        try:
+            return operation()
+        except Exception as exc:
+            if not _is_training_auth_error(exc):
+                raise
+            self.credential_store.delete()
+            raise CorosAuthenticationError(
+                "Coros access token 自动重登后仍然失效，请重新授权"
+            ) from exc
+
+    def _refresh_mobile_with_replay(self) -> None:
+        """在 neurun 用户域内重放 Mobile 登录，不写 coros-mcp 全局凭据。"""
+        import httpx
+        from coros_mcp.coros_api import (
+            MOBILE_BASE_URLS, MOBILE_LOGIN_ENDPOINT,
+        )
+
+        stored = self.mobile_credential_store.load()
+        region = str(stored["region"])
+        response = httpx.post(
+            f"{MOBILE_BASE_URLS[region]}{MOBILE_LOGIN_ENDPOINT}",
+            json=stored["login_payload"],
+            headers={
+                "content-type": "application/json",
+                "accept-encoding": "gzip",
+                "user-agent": "okhttp/4.12.0",
+                "request-time": str(int(time.time() * 1000)),
+            },
+            timeout=30,
+        )
+        if response.status_code in {401, 403}:
+            raise CorosReloginRejected("Coros Mobile 自动鉴权凭据被拒绝")
+        response.raise_for_status()
+        body = response.json()
+        result = str(body.get("result") or "")
+        if result in {"1001", "1019"}:
+            raise CorosReloginRejected("Coros Mobile 自动鉴权凭据被拒绝")
+        if result != "0000":
+            raise RuntimeError(
+                f"Coros Mobile 自动鉴权暂时失败 (result={result or 'unknown'})"
+            )
+        token = str((body.get("data") or {}).get("accessToken") or "")
+        if not token:
+            raise ValueError("Coros Mobile 自动鉴权响应缺少 accessToken")
+        self._auth.mobile_access_token = token
+        self._auth.mobile_login_payload = None
+        self._save()
+
+    def run_with_sleep_relogin(self, operation: Callable[[], Any]) -> Any:
+        """执行 Mobile 请求，失效时在用户域内自动鉴权并重试一次。"""
+        failed_token = str(getattr(self._auth, "mobile_access_token", ""))
+        try:
+            result = operation()
+            self._save()
+            return result
+        except Exception as exc:
+            if not _is_mobile_auth_error(exc):
+                raise
+
+        lock_path = (
+            self._token_path.with_name("coros-mobile-auth")
+            if self._token_path else None
+        )
+        with _relogin_lock(lock_path):
+            if self._token_path is not None and self._token_path.exists():
+                self._restore()
+            current = str(getattr(self._auth, "mobile_access_token", ""))
+            if current == failed_token:
+                try:
+                    self._refresh_mobile_with_replay()
+                except CorosReloginRejected:
+                    self.mobile_credential_store.delete()
+                    self._auth.mobile_access_token = None
+                    self._save()
+                    raise
+        try:
+            result = operation()
+            self._save()
+            return result
+        except Exception as exc:
+            if not _is_mobile_auth_error(exc):
+                raise
+            self.mobile_credential_store.delete()
+            self._auth.mobile_access_token = None
+            self._save()
+            raise CorosAuthenticationError(
+                "Coros Mobile 自动鉴权后仍然失效，请重新认证睡眠数据"
+            ) from exc
 
 
 class CorosActivity(ActivityProvider):
@@ -342,14 +753,29 @@ class CorosHealth(HealthProvider):
             return self._analyse_cache
         import httpx
         try:
-            r = httpx.get(
-                f"{_base_for_auth(self._auth)}/analyse/query",
-                headers=self._auth.get_headers(),
-                timeout=15,
+            def load_analyse() -> dict:
+                response = httpx.get(
+                    f"{_base_for_auth(self._auth)}/analyse/query",
+                    headers=self._auth.get_headers(),
+                    timeout=15,
+                )
+                response.raise_for_status()
+                body = response.json()
+                if body.get("result") != "0000":
+                    raise RuntimeError(
+                        f"{body.get('message', 'unknown error')} "
+                        f"(result={body.get('result', 'unknown')})"
+                    )
+                return body.get("data") or {}
+
+            self._analyse_cache = self._auth.run_with_training_relogin(
+                load_analyse,
             )
-            if r.status_code == 200 and r.json().get("result") == "0000":
-                self._analyse_cache = r.json().get("data", {})
-        except Exception:
+        except Exception as exc:
+            if _is_training_auth_error(exc) or isinstance(
+                exc, CorosAuthenticationError,
+            ):
+                raise
             self._analyse_cache = {}
         return self._analyse_cache or {}
 
@@ -359,8 +785,14 @@ class CorosHealth(HealthProvider):
             return self._hrv_cache
         try:
             from coros_mcp.coros_api import fetch_hrv
-            self._hrv_cache = _run(fetch_hrv(self._auth._auth))
-        except Exception:
+            self._hrv_cache = self._auth.run_with_training_relogin(
+                lambda: _run(fetch_hrv(self._auth._auth)),
+            )
+        except Exception as exc:
+            if _is_training_auth_error(exc) or isinstance(
+                exc, CorosAuthenticationError,
+            ):
+                raise
             self._hrv_cache = []
         return self._hrv_cache or []
 
@@ -383,9 +815,11 @@ class CorosHealth(HealthProvider):
 
         try:
             from coros_mcp.coros_api import fetch_sleep
-            records = _run(fetch_sleep(self._auth._auth, start_day, end_day))
-            # fetch_sleep 可能刷新 Mobile token，回写到当前 neurun 用户目录。
-            self._auth._save()
+            records = self._auth.run_with_sleep_relogin(
+                lambda: _run(fetch_sleep(
+                    self._auth._auth, start_day, end_day,
+                )),
+            )
         except LocalPersistenceError:
             raise
         except Exception as exc:
@@ -526,7 +960,11 @@ class CorosHealth(HealthProvider):
 class CorosProvider(DataProvider):
     def __init__(self, config):
         self._config = config
-        self.auth = CorosAuth(getattr(config, "token_dir", None))
+        self.auth = CorosAuth(
+            getattr(config, "token_dir", None),
+            credential_key=getattr(config, "coros_credential_key", ""),
+            remember_credentials=getattr(config, "coros_auto_relogin", None),
+        )
         self._activities = CorosActivity(self.auth)
         self._health = CorosHealth(self.auth)
 
@@ -543,6 +981,27 @@ class CorosProvider(DataProvider):
     def sleep_available(self) -> bool:
         """当前 Coros 绑定是否具备 Mobile 睡眠读取能力。"""
         return self.auth.has_sleep_access()
+
+    @property
+    def sleep_auth_error(self) -> str | None:
+        """本次 Coros Mobile 授权失败的可操作原因。"""
+        return self.auth.sleep_auth_error
+
+    @property
+    def sleep_auto_refresh_enabled(self) -> bool:
+        return self.auth.sleep_auto_refresh_enabled
+
+    @property
+    def sleep_auto_refresh_warning(self) -> str | None:
+        return self.auth.sleep_auto_refresh_warning
+
+    @property
+    def auto_relogin_enabled(self) -> bool:
+        return self.auth.auto_relogin_enabled
+
+    @property
+    def auto_relogin_warning(self) -> str | None:
+        return self.auth.auto_relogin_warning
 
     @property
     def user_id(self) -> int:

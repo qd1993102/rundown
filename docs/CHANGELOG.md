@@ -15,11 +15,28 @@ neurun 项目变更日志，按日期倒序。
 - **关联文档**: [数据源同步产品方案](product/data-source-sync.md), [模块设计](design/04-modules.md), [数据流](design/05-data-flow.md), [Web 部署设计](design/13-sae-deployment.md), [开发过程](process/2026-07-29-web-async-sync-tasks.md), [README](../README.md)
 
 ### Changed
+- **Coros 运动认证默认区域改为中国大陆**: 首次认证页面默认选中中国大陆，兼容绑定接口和独立
+  Training Hub 认证接口在未传区域时也统一使用 `cn`；用户显式选择其他区域及重新授权继承区域的
+  行为保持不变。
+- **影响范围**: src/web.py, web/templates/setup.html, tests/test_registration.py, tests/test_web.py, README.md, docs/product/, docs/design/
+- **关联文档**: [数据源同步产品方案](product/data-source-sync.md), [多平台设计](design/12-multi-platform.md), [README](../README.md)
+- **Coros 运动与睡眠分域认证**: 将 Training Hub 运动数据与 Mobile 睡眠数据调整为
+  独立按钮、独立账号说明、独立授权接口和独立刷新状态；安全加密可用时两个自动鉴权选项默认开启，
+  缺少密钥时禁用并解释。Mobile 重放载荷从 token JSON 迁入独立 Fernet 密文，`1019` 只刷新
+  Mobile Token，不写 coros-mcp 全局认证文件。
+- **影响范围**: src/providers/coros_credentials.py, src/providers/coros.py, src/web.py, web/templates/setup.html, web/templates/profile.html, tests/test_coros_credentials.py, tests/test_providers.py, tests/test_registration.py, tests/test_web.py, README.md, docs/product/, docs/design/
+- **关联文档**: [数据源同步产品方案](product/data-source-sync.md), [多平台设计](design/12-multi-platform.md), [Mobile Bug 记录](bugfixes/2026-07-29-coros-mobile-auth-failure-hidden.md), [开发过程](process/2026-07-29-coros-training-token-auto-relogin.md), [README](../README.md)
 - **Coros 同步增加真实阶段内进度**: 活动同步按 Training Hub 分页已返回记录数推进，健康同步按已聚合日期推进，并复用 `progress.items` 持久化、轮询和刷新恢复；第三方请求未返回时不按耗时伪造百分比，Garmin 国际区和中国区行为不变。
 - **影响范围**: src/providers/coros.py, src/main.py, tests/test_providers.py, tests/test_main.py, README.md, docs/product/, docs/design/
 - **关联文档**: [数据源同步产品方案](product/data-source-sync.md), [模块设计](design/04-modules.md), [数据流](design/05-data-flow.md), [Web 部署设计](design/13-sae-deployment.md), [开发过程](process/2026-07-29-web-async-sync-tasks.md), [README](../README.md)
 
 ### Fixed
+- **Coros Training Hub 短期 Token 到期后反复要求重新输入密码**: 安全存储可用时默认开启加密自动鉴权；服务端只保存 Fernet 加密的密码等价重放凭据，`result=1019` 后按用户和认证域 singleflight 自动重登并仅重试一次。用户可随时分域删除密文；凭据被拒绝时只删除对应域，临时上游错误保留 `active`。
+- **影响范围**: src/providers/coros_credentials.py, src/providers/coros.py, src/config.py, src/web.py, web/templates/setup.html, web/templates/profile.html, pyproject.toml, docker-compose.yml, .env.example, tests/test_coros_credentials.py, tests/test_config.py, tests/test_registration.py, tests/test_web.py
+- **关联文档**: [数据源同步产品方案](product/data-source-sync.md), [Bug 记录](bugfixes/2026-07-29-coros-training-token-auto-relogin.md), [模块设计](design/04-modules.md), [数据流](design/05-data-flow.md), [多平台设计](design/12-multi-platform.md), [部署设计](design/13-sae-deployment.md), [依赖清单](design/07-dependencies.md), [开发过程](process/2026-07-29-coros-training-token-auto-relogin.md), [README](../README.md)
+- **Coros Mobile 授权失败被误显示为重新授权成功**: Training Hub 与 Mobile 改为两个独立认证入口；睡眠页只接受 Coros App 邮箱并继承运动区域，失败时返回脱敏原因并停留在对应表单，活动 token 继续可用。
+- **影响范围**: src/providers/coros.py, src/providers/coros_credentials.py, src/web.py, web/templates/setup.html, web/templates/profile.html, tests/test_coros_credentials.py, tests/test_providers.py, tests/test_registration.py, tests/test_web.py
+- **关联文档**: [数据源同步产品方案](product/data-source-sync.md), [Bug 记录](bugfixes/2026-07-29-coros-mobile-auth-failure-hidden.md), [多平台设计](design/12-multi-platform.md), [README](../README.md)
 - **Garmin 批量同步进度长时间停在 2/4**: 接入 garmy 逐日期/逐指标完成、跳过和失败事件，在四阶段总进度下持久化真实的已处理项数、总项数、日期和指标；同步页使用独立细进度条展示并在刷新后恢复，不再因长阶段缺少更新时间而误判假死。
 - **影响范围**: src/storage.py, src/main.py, src/sync_tasks.py, src/web.py, web/templates/sync.html, tests/test_storage.py, tests/test_main.py, tests/test_sync_tasks.py, tests/test_web.py
 - **关联文档**: [数据源同步产品方案](product/data-source-sync.md), [Bug 记录](bugfixes/2026-07-29-sync-progress-stale-after-refresh.md), [模块设计](design/04-modules.md), [数据流](design/05-data-flow.md), [Web 部署设计](design/13-sae-deployment.md), [README](../README.md)
@@ -29,7 +46,7 @@ neurun 项目变更日志，按日期倒序。
 - **ECS Web 同步阻塞与文件描述符耗尽**: 阻塞式平台同步和 SQLite 写入移入受控工作线程，单进程默认同时执行 4 个、接纳 100 个不同用户；同用户 singleflight 与容量超限分别返回 409/503。同步、MFA 和临时 SQLite/HTTP 客户端显式释放资源，systemd 服务增加 `LimitNOFILE=8192` 防线。
 - **影响范围**: src/sync_coordinator.py, src/resource_lifecycle.py, src/web.py, src/main.py, src/storage.py, src/auth.py, src/config.py, scripts/deploy-ecs.sh, tests/
 - **关联文档**: [数据源同步产品方案](product/data-source-sync.md), [Bug 记录](bugfixes/2026-07-29-ecs-sync-event-loop-fd-exhaustion.md), [Web 部署设计](design/13-sae-deployment.md), [开发过程](process/2026-07-29-web-sync-capacity.md), [README](../README.md)
-- **Coros 睡眠重新授权被重置为 Garmin**: 重新授权页面的最终 Provider 初始化改为由 `rebind=coros` 决定，不再被脚本末尾的 Garmin 默认值覆盖；页面保持隐藏 Garmin 区域、使用邮箱或手机号标签，并固定提交当前 Coros 平台。
+- **Coros 睡眠重新授权被重置为 Garmin**: 重新授权页面的最终 Provider 初始化改为由 `rebind=coros` 与 `scope` 决定，不再被脚本末尾的 Garmin 默认值覆盖；页面固定提交当前 Coros 认证域，运动页显示邮箱或手机号及区域，睡眠页只显示 Coros App 邮箱。
 - **影响范围**: web/templates/setup.html, tests/test_web.py
 - **关联文档**: [数据源同步产品方案](product/data-source-sync.md), [Bug 记录](bugfixes/2026-07-29-coros-rebind-provider-reset.md), [多平台设计](design/12-multi-platform.md), [README](../README.md)
 - **ECS 候选发布失败不再影响在线版本**: 阿里云控制台入口先验证 Git 下载结果再执行仓库发布脚本；候选 release 使用独立虚拟环境，依赖或导入失败时不切换当前软链接、不调用 systemd 且不删除旧 release，新版本健康失败时继续回滚旧版本。

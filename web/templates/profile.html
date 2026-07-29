@@ -148,8 +148,18 @@ button,input,select{font:inherit}
     <div class="info-row"><span class="info-label">账号</span><span class="info-val" id="accEmail">—</span></div>
     <div class="info-row"><span class="info-label">状态</span><span class="info-val" id="accStatus">—</span></div>
     <div class="info-row"><span class="info-label">上次同步</span><span class="info-val" id="accSync">—</span></div>
-    <div class="info-row" id="corosSleepRow" style="display:none"><span class="info-label">睡眠权限</span><span class="info-val" id="corosSleepStatus">—</span></div>
-    <div class="account-actions" id="corosSleepAction" style="display:none"><a class="btn" href="/setup?rebind=coros">重新授权 Coros 睡眠</a></div>
+    <div class="info-row" id="corosTrainingRow" style="display:none"><span class="info-label">运动数据认证（Training Hub）</span><span class="info-val" id="corosTrainingStatus">—</span></div>
+    <div class="info-row" id="corosReloginRow" style="display:none"><span class="info-label">运动自动鉴权</span><span class="info-val" id="corosReloginStatus">—</span></div>
+    <div class="account-actions" id="corosTrainingAction" style="display:none;gap:8px">
+      <a class="btn" href="/setup?rebind=coros&scope=training">认证 Coros 运动数据</a>
+      <button class="btn danger" id="corosReloginDisable" onclick="disableCorosAutoRefresh('training')">关闭运动自动鉴权</button>
+    </div>
+    <div class="info-row" id="corosSleepRow" style="display:none"><span class="info-label">睡眠数据认证（Coros App）</span><span class="info-val" id="corosSleepStatus">—</span></div>
+    <div class="info-row" id="corosSleepRefreshRow" style="display:none"><span class="info-label">睡眠自动鉴权</span><span class="info-val" id="corosSleepRefreshStatus">—</span></div>
+    <div class="account-actions" id="corosSleepAction" style="display:none;gap:8px">
+      <a class="btn" href="/setup?rebind=coros&scope=sleep">认证 Coros 睡眠数据</a>
+      <button class="btn danger" id="corosSleepRefreshDisable" onclick="disableCorosAutoRefresh('sleep')">关闭睡眠自动鉴权</button>
+    </div>
   </div>
 
   <!-- Profile -->
@@ -245,9 +255,18 @@ async function load(){
     document.getElementById('accStatus').textContent=d.token_status==='active'?'✅ 已连接':'⚠ 未连接';
     document.getElementById('accSync').textContent=d.last_sync||'—';
     if(d.provider==='coros'){
+      document.getElementById('corosTrainingRow').style.display='flex';
+      document.getElementById('corosTrainingStatus').textContent=d.training_auth_status==='active'?'✅ 已认证':'⚠ 需重新认证';
+      document.getElementById('corosTrainingAction').style.display='flex';
       document.getElementById('corosSleepRow').style.display='flex';
-      document.getElementById('corosSleepStatus').textContent=d.sleep_available?'✅ 已启用':'⚠ 需重新授权';
-      document.getElementById('corosSleepAction').style.display=d.sleep_available?'none':'flex';
+      document.getElementById('corosSleepStatus').textContent=d.sleep_auth_status==='active'?'✅ 已认证':'⚠ 需认证';
+      document.getElementById('corosSleepAction').style.display='flex';
+      document.getElementById('corosReloginRow').style.display='flex';
+      document.getElementById('corosReloginStatus').textContent=d.training_auto_refresh_enabled?'✅ 已启用':'未启用';
+      document.getElementById('corosReloginDisable').style.display=d.training_auto_refresh_enabled?'inline-block':'none';
+      document.getElementById('corosSleepRefreshRow').style.display='flex';
+      document.getElementById('corosSleepRefreshStatus').textContent=d.sleep_auto_refresh_enabled?'✅ 已启用':'未启用';
+      document.getElementById('corosSleepRefreshDisable').style.display=d.sleep_auto_refresh_enabled?'inline-block':'none';
     }
 
     // Profile
@@ -287,6 +306,20 @@ async function load(){
   }catch(e){
     document.getElementById('loading').innerHTML='<p style="color:var(--danger)">加载失败: '+e.message+'</p>';
   }
+}
+
+async function disableCorosAutoRefresh(scope){
+  if(!confirm('关闭后将立即删除该认证域保存的加密重放凭据，当前 Token 不受影响。是否继续？'))return;
+  var isTraining=scope==='training';
+  var btn=document.getElementById(isTraining?'corosReloginDisable':'corosSleepRefreshDisable');btn.disabled=true;
+  try{
+    var endpoint=isTraining?'/api/coros/auth/training/refresh-credential':'/api/coros/auth/sleep/refresh-credential';
+    var r=await fetch(endpoint,{method:'DELETE'});
+    var d=await r.json();
+    if(!r.ok||d.status!=='ok')throw new Error(d.message||'删除失败');
+    document.getElementById(isTraining?'corosReloginStatus':'corosSleepRefreshStatus').textContent='未启用';
+    btn.style.display='none';
+  }catch(e){alert(e.message||'删除失败');btn.disabled=false}
 }
 
 async function saveProfile(){

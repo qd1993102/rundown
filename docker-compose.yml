@@ -8,5 +8,6 @@ services:
     environment:
       - NEURUN_DATA_DIR=/app/data
       - NEURUN_INVITE_CODES_FILE=/app/data/invite-codes.json
+      - NEURUN_COROS_CREDENTIAL_KEY=${NEURUN_COROS_CREDENTIAL_KEY:-}
       - DEEPSEEK_API_KEY=${DEEPSEEK_API_KEY}
     restart: unless-stopped

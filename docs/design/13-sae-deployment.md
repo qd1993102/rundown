@@ -342,6 +342,9 @@ async def api_logout(request): ...
 
 - `NEURUN_SYNC_MAX_CONCURRENCY` 默认为 `4`，控制同时在工作线程执行的不同用户同步；
 - `NEURUN_SYNC_MAX_PENDING` 默认为 `100`，控制执行中与等待中的不同用户总数；
+- `NEURUN_COROS_CREDENTIAL_KEY` 为可选但启用 Coros Training Hub 与 Mobile 自动鉴权所必需的 Fernet key；
+  ECS 通过 `/etc/neurun/neurun.env` 注入，文件权限 `0600`，不得放入 `/var/lib/neurun`、源码、
+  release 或数据备份。部署不得自动生成或轮换该值；密钥丢失时只能由用户重新授权生成新密文；
 - 用户从准入开始到请求结束始终占用一个 singleflight 名额，重复请求不进入工作线程；
 - 容量不足时快速失败，不在事件循环中忙等待；
 - 工作函数在 `finally` 中关闭 Provider HTTP Session、`Storage` 及 SQLAlchemy engine，
@@ -673,6 +676,7 @@ CLB 通过 ECS 私网地址访问后端，因此 Web 服务必须监听所有网
 ```ini
 Environment=MCP_HOST=0.0.0.0
 Environment=MCP_PORT=8080
+EnvironmentFile=-/etc/neurun/neurun.env
 Restart=on-failure
 RestartSec=5
 TimeoutStopSec=30
