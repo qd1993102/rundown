@@ -685,6 +685,7 @@ def test_sync_template_contains_accessible_calendar_contract():
     assert 'id="syncTaskItemBar"' in html
     assert "progress.items" in html
     assert "已处理" in html
+    assert "daily_health:'每日健康'" in html
 
 
 def test_daily_templates_are_mobile_first_and_support_local_png_export():

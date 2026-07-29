@@ -1,6 +1,6 @@
 # 设计方案 — 4. 模块设计
 
-> 属于 [设计方案索引](../design.md) · 版本 v3.5 · 2026-07-29
+> 属于 [设计方案索引](../design.md) · 版本 v3.6 · 2026-07-29
 
 ---
 
@@ -352,3 +352,9 @@ Cookie、API Key、账号和平台 Token；完整状态机、响应 Schema、重
 指标和结果回传给 Web 任务。适配器保留原日志行为，并按日期变化、时间间隔或最终项节流持久化；
 CLI/MCP 未传回调时仍使用 garmy 默认 Reporter。顶层 `progress.current/total` 始终表示四个阶段，
 阶段内明细存入 `progress.items`，避免前端把数百个指标项误画成数百个阶段块。
+
+Coros 不经过 garmy Reporter。`CorosActivity.fetch_activities()` 接受内部可选回调，在每页活动响应
+成功解析后上报已返回记录数和平台总数；`CorosHealth.fetch_health_range()` 在 Mobile 睡眠批量请求
+结束后逐日构造标准健康数据，并为每个日期上报 `completed` 或 `skipped`。`main._sync_provider()`
+仅在 `provider_name == "coros"` 时注入这些回调，并将它们映射到活动阶段 2/4 和健康阶段 3/4。
+回调仍是内部 Python 接口，不改变 CLI 参数或 MCP tool 合同。

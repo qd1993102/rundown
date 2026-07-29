@@ -217,6 +217,55 @@ def test_non_garmin_resync_merges_sleep_into_existing_health(tmp_path):
     assert row.resting_heart_rate == 48
 
 
+def test_coros_sync_maps_provider_item_progress_to_web_stages(tmp_path):
+    """Coros 活动分页和逐日健康进度应映射到各自四阶段。"""
+    from src.config import Config
+    from src.main import _sync_provider
+    from src.storage import Storage
+
+    target = date(2026, 7, 27)
+
+    class Activities:
+        def fetch_activities(self, start, end, *, progress_callback=None):
+            progress_callback({
+                "current": 2, "total": 2, "date": None,
+                "metric": "activities", "outcome": "completed",
+            })
+            return []
+
+    class Health:
+        def fetch_health_range(self, start, end, *, progress_callback=None):
+            progress_callback({
+                "current": 1, "total": 1, "date": "2026-07-27",
+                "metric": "daily_health", "outcome": "skipped",
+            })
+            return []
+
+    class Provider:
+        activities = Activities()
+        health = Health()
+
+    updates = []
+    storage = Storage(Config(db_path=str(tmp_path / "data.db")))
+    _sync_provider(
+        Provider(), storage, 1, target, target, "coros",
+        progress_callback=lambda *args: updates.append(args),
+    )
+
+    assert updates == [
+        ("syncing_activities", 2, 4, "正在同步运动记录"),
+        ("syncing_activities", 2, 4, "正在同步运动记录", {
+            "current": 2, "total": 2, "date": None,
+            "metric": "activities", "outcome": "completed",
+        }),
+        ("syncing_metrics", 3, 4, "正在同步健康指标"),
+        ("syncing_metrics", 3, 4, "正在同步健康指标", {
+            "current": 1, "total": 1, "date": "2026-07-27",
+            "metric": "daily_health", "outcome": "skipped",
+        }),
+    ]
+
+
 def test_get_local_user_id_reads_unique_id_without_remote_provider(tmp_path):
     from sqlalchemy import text
 

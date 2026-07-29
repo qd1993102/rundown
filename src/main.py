@@ -19,6 +19,7 @@ import json
 import logging
 import os
 import sys
+import time
 from collections.abc import Callable
 from datetime import date, datetime, timedelta
 from pathlib import Path
@@ -88,6 +89,34 @@ def _report_sync_progress(
             callback(stage, current, total, label, items)
     except Exception as exc:
         logger.warning("同步进度上报失败: error_type=%s", type(exc).__name__)
+
+
+def _throttled_item_progress_callback(
+    callback: SyncProgressCallback | None,
+    stage: str,
+    current: int,
+    total: int,
+    label: str,
+    *,
+    min_interval: float = 1.0,
+) -> Callable[[dict[str, Any]], None]:
+    """按首次、时间间隔和最终项节流 Provider 的逐项进度。"""
+    last_emit_at = float("-inf")
+
+    def report(items: dict[str, Any]) -> None:
+        nonlocal last_emit_at
+        now = time.monotonic()
+        item_current = max(0, int(items.get("current") or 0))
+        item_total = max(0, int(items.get("total") or 0))
+        is_final = item_total > 0 and item_current >= item_total
+        if now - last_emit_at < min_interval and not is_final:
+            return
+        _report_sync_progress(
+            callback, stage, current, total, label, items,
+        )
+        last_emit_at = now
+
+    return report
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -348,7 +377,16 @@ def _sync_provider(provider, storage, user_id: int, start: date, end: date,
         progress_callback, "syncing_activities", 2, 4, "正在同步运动记录",
     )
     console.print("[dim]📥 拉取活动数据...[/]")
-    activities = provider.activities.fetch_activities(start, end)
+    if provider_name == "coros" and progress_callback is not None:
+        activity_progress = _throttled_item_progress_callback(
+            progress_callback, "syncing_activities", 2, 4,
+            "正在同步运动记录",
+        )
+        activities = provider.activities.fetch_activities(
+            start, end, progress_callback=activity_progress,
+        )
+    else:
+        activities = provider.activities.fetch_activities(start, end)
     session = storage.db.get_session()
     stored_act = 0
     updated_act = 0
@@ -407,7 +445,16 @@ def _sync_provider(provider, storage, user_id: int, start: date, end: date,
     console.print("[dim]📥 拉取健康数据...[/]")
     stored_health = 0
     updated_health = 0
-    health_records = provider.health.fetch_health_range(start, end)
+    if provider_name == "coros" and progress_callback is not None:
+        health_progress = _throttled_item_progress_callback(
+            progress_callback, "syncing_metrics", 3, 4,
+            "正在同步健康指标",
+        )
+        health_records = provider.health.fetch_health_range(
+            start, end, progress_callback=health_progress,
+        )
+    else:
+        health_records = provider.health.fetch_health_range(start, end)
     for health in health_records:
         d = health.metric_date
         if d < start or d > end:

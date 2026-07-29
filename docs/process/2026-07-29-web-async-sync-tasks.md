@@ -50,14 +50,20 @@ CLI 和 MCP 保持同步等待合同；本次只改变 Web API 和页面，避�
 - 真实 Garmin 验收发现四阶段边界不足以表达数分钟的指标同步，因此复用 garmy 已有逐日期/指标事件，
   在 `progress.items` 中保存阶段内快照；顶层仍固定四段，避免前端生成数百个阶段块。快速事件按换日、
   一秒间隔和最终项节流，兼顾可见推进与原子文件 `fsync` 成本。
+- Coros 不经过 garmy，因此在现有 Provider 内部接口增加可选回调：活动只在分页响应成功后推进，
+  健康只在逐日聚合完成后推进。主流程统一映射到 `progress.items` 并节流，保留 Mobile 睡眠失败不
+  阻塞活动、RHR 和 HRV 的既有降级边界。
 
 ## 验证
 
 - 单元测试覆盖任务文件权限、阶段/终态、重启中断、202/Location、运行轮询、409 找回、503
   不创建任务、跨用户 404、认证失败和前端轮询合同。
 - 前端脚本通过 JavaScript 语法检查。
-- 完整 `pytest`：`182 passed`；`compileall`、同步页 JavaScript 语法检查和 `git diff --check`
+- 完整 `pytest`：`187 passed`；`compileall`、同步页 JavaScript 语法检查和 `git diff --check`
   均通过。本地浏览器验收见本次任务交付；ECS 真实 Garmin 验收仍需发布后单独完成。
+- 本地现有注册 Coros 账号的三天真实任务已验证 POST 202、认证阶段、活动阶段和结构化失败轮询；
+  Coros 返回 `result=1019`（Training Hub Token 已失效），任务正确进入 `failed/reauthorize` 且没有
+  伪造逐项进度。成功路径的真实逐项快照仍需用户重新授权后复验，不能以单元测试替代该结论。
 
 ## 关联文档
 

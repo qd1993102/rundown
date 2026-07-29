@@ -319,6 +319,61 @@ class TestProviderRegistry:
         assert activity.duration_seconds == 1800
         assert activity.extra["paused_seconds"] == 0
 
+    def test_coros_activity_reports_real_pagination_progress(self, monkeypatch):
+        import httpx
+
+        from src.providers.coros import CorosAuth, _fetch_activity_items
+
+        class Response:
+            def __init__(self, items):
+                self._items = items
+
+            def raise_for_status(self):
+                return None
+
+            def json(self):
+                return {
+                    "result": "0000",
+                    "data": {"dataList": self._items, "totalCount": 101},
+                }
+
+        class Client:
+            def __init__(self, *args, **kwargs):
+                self.calls = 0
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *args):
+                return None
+
+            def get(self, *args, **kwargs):
+                self.calls += 1
+                return Response(
+                    [{"labelId": str(i)} for i in range(100)]
+                    if self.calls == 1 else [{"labelId": "last"}]
+                )
+
+        monkeypatch.setattr(httpx, "Client", Client)
+        auth = CorosAuth()
+        auth._auth = mock.Mock(access_token="token", user_id="user", region="eu")
+        updates = []
+
+        result = _fetch_activity_items(
+            auth,
+            date(2026, 7, 1),
+            date(2026, 7, 31),
+            progress_callback=updates.append,
+        )
+
+        assert len(result) == 101
+        assert updates == [
+            {"current": 100, "total": 101, "date": None,
+             "metric": "activities", "outcome": "completed"},
+            {"current": 101, "total": 101, "date": None,
+             "metric": "activities", "outcome": "completed"},
+        ]
+
     def test_coros_health_maps_sleep_stages_for_range(self):
         from coros_mcp.models import SleepPhases, SleepRecord
         from src.providers.coros import CorosAuth, CorosHealth
@@ -376,6 +431,41 @@ class TestProviderRegistry:
 
         assert result[0].resting_heart_rate == 48
         assert result[0].sleep_duration_hours == 0
+
+    def test_coros_health_reports_each_processed_date(self):
+        from src.providers.coros import CorosAuth, CorosHealth
+
+        auth = CorosAuth()
+        auth._auth = mock.Mock(mobile_access_token=None)
+        health = CorosHealth(auth)
+        health._get_analyse_data = mock.Mock(return_value={
+            "dayList": [{"happenDay": "20260727", "rhr": 48}],
+        })
+        health._get_hrv_data = mock.Mock(return_value=[])
+        updates = []
+
+        result = health.fetch_health_range(
+            date(2026, 7, 27), date(2026, 7, 28),
+            progress_callback=updates.append,
+        )
+
+        assert len(result) == 1
+        assert updates == [
+            {"current": 1, "total": 2, "date": "2026-07-27",
+             "metric": "daily_health", "outcome": "completed"},
+            {"current": 2, "total": 2, "date": "2026-07-28",
+             "metric": "daily_health", "outcome": "skipped"},
+        ]
+
+    def test_coros_progress_callback_failure_does_not_break_sync(self, caplog):
+        from src.providers.coros import _emit_progress
+
+        def broken_callback(_payload):
+            raise OSError("progress storage unavailable")
+
+        _emit_progress(broken_callback, {"current": 1, "total": 1})
+
+        assert "Coros 同步进度上报失败" in caplog.text
 
     def test_huawei_provider_creation(self, tmp_path):
         from src.providers import get_provider

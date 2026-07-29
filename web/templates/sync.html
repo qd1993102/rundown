@@ -506,7 +506,7 @@ function renderSyncTask(task){
   itemBox.hidden=!(task.status==='running'&&itemTotal>0);
   if(!itemBox.hidden){
     var percent=Math.round(itemCurrent/itemTotal*100);
-    var metricLabels={daily_summary:'每日概览',sleep:'睡眠',activities:'活动',body_battery:'身体电量',stress:'压力',heart_rate:'心率',training_readiness:'训练准备度',hrv:'HRV',respiration:'呼吸',steps:'步数',calories:'卡路里'};
+    var metricLabels={daily_summary:'每日概览',daily_health:'每日健康',sleep:'睡眠',activities:'活动',body_battery:'身体电量',stress:'压力',heart_rate:'心率',training_readiness:'训练准备度',hrv:'HRV',respiration:'呼吸',steps:'步数',calories:'卡路里'};
     var outcomeLabels={completed:'完成',skipped:'跳过',failed:'失败',started:'准备中'};
     document.getElementById('syncTaskItemCount').textContent='已处理 '+itemCurrent+' / '+itemTotal+' 项（'+percent+'%）';
     document.getElementById('syncTaskItemContext').textContent=[items.date,metricLabels[items.metric]||items.metric,outcomeLabels[items.outcome]||''].filter(Boolean).join(' · ');

@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from collections.abc import Callable
 from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -94,7 +95,28 @@ def _parse_activity_item(item: dict[str, Any]) -> ActivityData:
     )
 
 
-def _fetch_activity_items(auth: CorosAuth, start: date, end: date) -> list[dict[str, Any]]:
+def _emit_progress(
+    callback: Callable[[dict[str, Any]], None] | None,
+    payload: dict[str, Any],
+) -> None:
+    """进度回调失败不得掩盖 Coros 主同步结果。"""
+    if callback is None:
+        return
+    try:
+        callback(payload)
+    except Exception as exc:
+        logger.warning(
+            "Coros 同步进度上报失败: error_type=%s", type(exc).__name__,
+        )
+
+
+def _fetch_activity_items(
+    auth: CorosAuth,
+    start: date,
+    end: date,
+    *,
+    progress_callback: Callable[[dict[str, Any]], None] | None = None,
+) -> list[dict[str, Any]]:
     """直接读取 Coros 活动列表原始字段，保留 coros-mcp 丢弃的 workoutTime。"""
     import httpx
 
@@ -124,7 +146,20 @@ def _fetch_activity_items(auth: CorosAuth, start: date, end: date) -> list[dict[
             page_items = data.get("dataList", data.get("list", [])) or []
             items.extend(page_items)
             total = _int_value(data.get("totalCount") or data.get("count"))
-            if not page_items or len(page_items) < size or (total and len(items) >= total):
+            finished = (
+                not page_items
+                or len(page_items) < size
+                or (total and len(items) >= total)
+            )
+            if page_items and (total or finished):
+                _emit_progress(progress_callback, {
+                    "current": len(items),
+                    "total": total or len(items),
+                    "date": None,
+                    "metric": "activities",
+                    "outcome": "completed",
+                })
+            if finished:
                 break
             page += 1
     return items
@@ -261,11 +296,20 @@ class CorosActivity(ActivityProvider):
     def __init__(self, auth: CorosAuth):
         self._auth = auth
 
-    def fetch_activities(self, start: date, end: date) -> list[ActivityData]:
+    def fetch_activities(
+        self,
+        start: date,
+        end: date,
+        *,
+        progress_callback: Callable[[dict[str, Any]], None] | None = None,
+    ) -> list[ActivityData]:
         if not self._auth.is_authenticated():
             return []
         try:
-            raw = _fetch_activity_items(self._auth, start, end)
+            raw = _fetch_activity_items(
+                self._auth, start, end,
+                progress_callback=progress_callback,
+            )
         except Exception as e:
             logger.error("Coros 获取活动失败: %s", e)
             raise RuntimeError(f"Coros 获取活动失败，请重新绑定账号或稍后重试: {e}") from e
@@ -441,14 +485,40 @@ class CorosHealth(HealthProvider):
 
         return None
 
-    def fetch_health_range(self, start: date, end: date) -> list[DailyHealth]:
+    def fetch_health_range(
+        self,
+        start: date,
+        end: date,
+        *,
+        progress_callback: Callable[[dict[str, Any]], None] | None = None,
+    ) -> list[DailyHealth]:
         self._load_sleep_range(start, end)
         result = []
         d = start
+        total = (end - start).days + 1
+        current = 0
         while d <= end:
-            h = self.fetch_daily_health(d)
+            current += 1
+            try:
+                h = self.fetch_daily_health(d)
+            except Exception:
+                _emit_progress(progress_callback, {
+                    "current": current,
+                    "total": total,
+                    "date": d.isoformat(),
+                    "metric": "daily_health",
+                    "outcome": "failed",
+                })
+                raise
             if h:
                 result.append(h)
+            _emit_progress(progress_callback, {
+                "current": current,
+                "total": total,
+                "date": d.isoformat(),
+                "metric": "daily_health",
+                "outcome": "completed" if h else "skipped",
+            })
             d += timedelta(days=1)
         return result
 

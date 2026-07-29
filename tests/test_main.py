@@ -258,6 +258,27 @@ def test_garmin_data_sync_injects_regional_api_client(monkeypatch):
     ]
 
 
+def test_provider_item_progress_is_throttled_but_keeps_final(monkeypatch):
+    import src.main as main
+
+    ticks = iter([0.0, 0.1, 0.2])
+    monkeypatch.setattr(main.time, "monotonic", lambda: next(ticks))
+    updates = []
+    report = main._throttled_item_progress_callback(
+        lambda *args: updates.append(args),
+        "syncing_metrics", 3, 4, "正在同步健康指标",
+    )
+
+    report({"current": 1, "total": 3, "date": "2026-07-27",
+            "metric": "daily_health", "outcome": "completed"})
+    report({"current": 2, "total": 3, "date": "2026-07-28",
+            "metric": "daily_health", "outcome": "skipped"})
+    report({"current": 3, "total": 3, "date": "2026-07-29",
+            "metric": "daily_health", "outcome": "completed"})
+
+    assert [args[4]["current"] for args in updates] == [1, 3]
+
+
 def test_daily_report_rerenders_body_with_coach_insight(monkeypatch):
     import src.main as main
 

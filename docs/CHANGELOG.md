@@ -14,6 +14,11 @@ neurun 项目变更日志，按日期倒序。
 - **影响范围**: src/sync_tasks.py, src/sync_coordinator.py, src/main.py, src/web.py, src/users.py, web/templates/sync.html, tests/test_sync_tasks.py, tests/test_sync_coordinator.py, tests/test_main.py, tests/test_web.py, README.md, docs/product/, docs/design/
 - **关联文档**: [数据源同步产品方案](product/data-source-sync.md), [模块设计](design/04-modules.md), [数据流](design/05-data-flow.md), [Web 部署设计](design/13-sae-deployment.md), [开发过程](process/2026-07-29-web-async-sync-tasks.md), [README](../README.md)
 
+### Changed
+- **Coros 同步增加真实阶段内进度**: 活动同步按 Training Hub 分页已返回记录数推进，健康同步按已聚合日期推进，并复用 `progress.items` 持久化、轮询和刷新恢复；第三方请求未返回时不按耗时伪造百分比，Garmin 国际区和中国区行为不变。
+- **影响范围**: src/providers/coros.py, src/main.py, tests/test_providers.py, tests/test_main.py, README.md, docs/product/, docs/design/
+- **关联文档**: [数据源同步产品方案](product/data-source-sync.md), [模块设计](design/04-modules.md), [数据流](design/05-data-flow.md), [Web 部署设计](design/13-sae-deployment.md), [开发过程](process/2026-07-29-web-async-sync-tasks.md), [README](../README.md)
+
 ### Fixed
 - **Garmin 批量同步进度长时间停在 2/4**: 接入 garmy 逐日期/逐指标完成、跳过和失败事件，在四阶段总进度下持久化真实的已处理项数、总项数、日期和指标；同步页使用独立细进度条展示并在刷新后恢复，不再因长阶段缺少更新时间而误判假死。
 - **影响范围**: src/storage.py, src/main.py, src/sync_tasks.py, src/web.py, web/templates/sync.html, tests/test_storage.py, tests/test_main.py, tests/test_sync_tasks.py, tests/test_web.py
