@@ -1,6 +1,6 @@
 # 设计方案 — 文档索引
 
-> 版本: v3.0 · 日期: 2026-06-24 · 基于 [garmy](https://github.com/bes-dev/garmy) v1.0.0
+> 版本: v3.1 · 日期: 2026-07-28 · 基于 [garmy](https://github.com/bes-dev/garmy) v1.0.0
 
 ---
 
@@ -23,6 +23,8 @@
 |------|------|
 | [memory-system.md](memory-system.md) | 记忆系统设计 — 分类体系、模板规范、自动生成器、日报格式 |
 | [ai-coaching.md](ai-coaching.md) | AI 教练对话设计 — System Prompt、对话原则、OpenClaw 配置、典型场景 |
+| [training-system.md](training-system.md) | 交互式训练方案系统 — 实时训练首页、周计划、反馈、调整提案、版本与活动匹配 |
+| [contact-community.md](contact-community.md) | 联系入口与可更新群二维码 — 统一注入、权限、响应式交互与运维替换 |
 | [13-sae-deployment.md](13-sae-deployment.md) | §13 SAE 部署方案 — 小程序 + 多用户 + OSS，架构、数据隔离、API 设计 |
 
 ## 规划与备忘
@@ -37,4 +39,5 @@
 ---
 
 > **维护规则**: 代码变更后，根据变更范围更新对应的子文档（而非单个大文件）。
+> 产品行为、用户流程和验收标准由 [产品文档索引](../product/index.md) 中的原始用户旅程文档维护。
 > 详见 [CLAUDE.md](../../CLAUDE.md) — Documentation Sync Rule。

@@ -64,6 +64,40 @@ def test_setup_stops_before_user_id_when_authentication_fails(monkeypatch):
         ))
 
 
+def test_setup_memory_api_client_keeps_garmin_region(monkeypatch):
+    import src.main as main
+    import src.providers as providers
+
+    api_client = object()
+    auth = SimpleNamespace(
+        _client=object(),
+        create_api_client=mock.Mock(return_value=api_client),
+    )
+    provider = SimpleNamespace(
+        auth=auth,
+        authenticate=lambda: True,
+        user_id=123,
+    )
+    captured = {}
+
+    monkeypatch.setattr(providers, "get_provider", lambda config: provider)
+    monkeypatch.setattr(main, "Storage", lambda config: object())
+
+    def fake_memory_store(*args, **kwargs):
+        captured.update(kwargs)
+        return object()
+
+    monkeypatch.setattr(main, "MemoryStore", fake_memory_store)
+
+    main._setup(SimpleNamespace(
+        provider_type="garmin",
+        memory_dir="/tmp/memory",
+    ))
+
+    assert captured["api_client_getter"]() is api_client
+    auth.create_api_client.assert_called_once_with()
+
+
 def test_setup_preserves_actionable_local_persistence_error(monkeypatch):
     import src.main as main
     import src.providers as providers
@@ -141,6 +175,46 @@ def test_data_sync_marks_calendar_range_failed(monkeypatch):
         ("pending", None),
         ("failed", "provider timeout"),
     ]
+
+
+def test_garmin_data_sync_injects_regional_api_client(monkeypatch):
+    import src.main as main
+
+    api_client = object()
+    auth = SimpleNamespace(
+        _client=object(),
+        create_api_client=mock.Mock(return_value=api_client),
+    )
+    provider = SimpleNamespace(auth=auth)
+
+    class FakeStorage:
+        def reset_pending_metrics(self, *args, **kwargs):
+            pass
+
+        def mark_sync_calendar_range(self, *args, **kwargs):
+            pass
+
+        def set_api_client(self, value):
+            self.api_client = value
+
+        def sync_range(self, *args, **kwargs):
+            pass
+
+    storage = FakeStorage()
+    monkeypatch.setattr(main, "_setup", lambda config: (
+        config, provider, storage, SimpleNamespace(), 42,
+    ))
+    monkeypatch.setattr(main, "_sync_garmin_activities", lambda *args: None)
+
+    main._do_data_sync(
+        SimpleNamespace(provider_type="garmin"),
+        target=date(2026, 7, 26),
+        sync_days=0,
+        quiet=True,
+    )
+
+    assert storage.api_client is api_client
+    auth.create_api_client.assert_called_once_with()
 
 
 def test_daily_report_rerenders_body_with_coach_insight(monkeypatch):

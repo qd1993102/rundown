@@ -148,6 +148,8 @@ button,input,select{font:inherit}
     <div class="info-row"><span class="info-label">账号</span><span class="info-val" id="accEmail">—</span></div>
     <div class="info-row"><span class="info-label">状态</span><span class="info-val" id="accStatus">—</span></div>
     <div class="info-row"><span class="info-label">上次同步</span><span class="info-val" id="accSync">—</span></div>
+    <div class="info-row" id="corosSleepRow" style="display:none"><span class="info-label">睡眠权限</span><span class="info-val" id="corosSleepStatus">—</span></div>
+    <div class="account-actions" id="corosSleepAction" style="display:none"><a class="btn" href="/setup?rebind=coros">重新授权 Coros 睡眠</a></div>
   </div>
 
   <!-- Profile -->
@@ -242,6 +244,11 @@ async function load(){
     document.getElementById('accEmail').textContent=d.email||'—';
     document.getElementById('accStatus').textContent=d.token_status==='active'?'✅ 已连接':'⚠ 未连接';
     document.getElementById('accSync').textContent=d.last_sync||'—';
+    if(d.provider==='coros'){
+      document.getElementById('corosSleepRow').style.display='flex';
+      document.getElementById('corosSleepStatus').textContent=d.sleep_available?'✅ 已启用':'⚠ 需重新授权';
+      document.getElementById('corosSleepAction').style.display=d.sleep_available?'none':'flex';
+    }
 
     // Profile
     var p=d.profile||{},pi=p.personal_info||{},pbs=p.personal_bests||{};

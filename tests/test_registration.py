@@ -266,6 +266,70 @@ def test_active_account_cannot_rebind_platform(tmp_path):
     assert "暂不支持换绑" in _json(response)["message"]
 
 
+def test_active_coros_account_can_reauthorize_sleep(tmp_path, monkeypatch):
+    invite_path = tmp_path / "invite-codes.json"
+    _write_invites(invite_path)
+    config = Config(data_dir=str(tmp_path), invite_codes_file=str(invite_path))
+    manager = UserManager(str(tmp_path))
+    user = manager.register_account("跑者", "runner@example.com", "safe-password")
+    manager.update(
+        user.api_key, provider="coros", token_status="active",
+        garmin_email="runner@example.com",
+    )
+    server = _FakeServer()
+    register_web_routes(server, manager, config)
+
+    class FakeCorosProvider:
+        sleep_available = True
+
+        def __init__(self, user_config):
+            pass
+
+        def authenticate(self):
+            return True
+
+    monkeypatch.setattr("src.providers.coros.CorosProvider", FakeCorosProvider)
+    response = asyncio.run(server.routes[("/api/setup", "POST")](_request(
+        "/api/setup",
+        {
+            "provider": "coros",
+            "email": "runner@example.com",
+            "password": "platform-password",
+            "rebind": True,
+        },
+        cookie=f"neurun_key={user.api_key}",
+    )))
+
+    assert response.status_code == 200
+    assert _json(response)["sleep_available"] is True
+    assert manager.get(user.api_key).token_status == "active"
+
+
+def test_active_coros_reauthorization_cannot_switch_provider(tmp_path):
+    invite_path = tmp_path / "invite-codes.json"
+    _write_invites(invite_path)
+    config = Config(data_dir=str(tmp_path), invite_codes_file=str(invite_path))
+    manager = UserManager(str(tmp_path))
+    user = manager.register_account("跑者", "runner@example.com", "safe-password")
+    manager.update(user.api_key, provider="coros", token_status="active")
+    server = _FakeServer()
+    register_web_routes(server, manager, config)
+
+    response = asyncio.run(server.routes[("/api/setup", "POST")](_request(
+        "/api/setup",
+        {
+            "provider": "garmin",
+            "email": "runner@example.com",
+            "password": "platform-password",
+            "rebind": True,
+        },
+        cookie=f"neurun_key={user.api_key}",
+    )))
+
+    assert response.status_code == 409
+    assert "暂不支持换绑" in _json(response)["message"]
+
+
 def test_expired_connection_can_only_rebind_same_platform(tmp_path):
     invite_path = tmp_path / "invite-codes.json"
     _write_invites(invite_path)

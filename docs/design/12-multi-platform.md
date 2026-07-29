@@ -40,7 +40,7 @@ graph TD
         C_ACT["CorosActivity<br/>activity_id/name/type<br/>duration/distance/hr/load"]
         H_ACT["HuaweiActivity<br/>activityRecords<br/>列表 + 原始详情"]
         G_HEALTH["GarminHealth<br/>睡眠/HRV/RHR<br/>压力/Body Battery<br/>训练准备/步数"]
-        C_HEALTH["CorosHealth<br/>analyse/query → RHR<br/>dashboard/query → HRV"]
+        C_HEALTH["CorosHealth<br/>analyse/query → RHR<br/>dashboard/query → HRV<br/>Mobile API → 睡眠"]
         H_HEALTH["HuaweiHealth<br/>sampleSets<br/>待字段口径确认"]
     end
 
@@ -90,9 +90,9 @@ graph TD
 | 统一字段 | 类型 / 标准单位 | Garmin | Coros | Huawei | 对齐规则 |
 |----------|-----------------|:------:|:-----:|:------:|----------|
 | `metric_date` | 本地自然日 | ✅ | ✅ | 🚧 | 以用户时区切日，禁止直接按 UTC 日期聚合 |
-| `sleep_duration_hours` | float, h | ✅ | — | 🚧 | 只计主睡眠；小睡未来放入 `extra` |
-| `deep_sleep_hours` / `deep_sleep_pct` | h / % | ✅ | — | 🚧 | 百分比以总睡眠为分母 |
-| `rem_sleep_hours` / `rem_sleep_pct` | h / % | ✅ | — | 🚧 | 平台无 REM 分类时保持未知，不推算 |
+| `sleep_duration_hours` | float, h | ✅ | ✅ | 🚧 | Coros 使用主睡眠 `totalSleepTime`；小睡分钟数保留在 `extra` |
+| `deep_sleep_hours` / `deep_sleep_pct` | h / % | ✅ | ✅ | 🚧 | Coros `deepTime` 转换为小时，百分比以总睡眠为分母 |
+| `rem_sleep_hours` / `rem_sleep_pct` | h / % | ✅ | ✅ | 🚧 | Coros `eyeTime` 作为 REM；平台无 REM 分类时保持未知，不推算 |
 | `resting_heart_rate` | integer, bpm / null | ✅ | ✅ | 🚧 | 使用平台每日静息心率，不用活动最低心率替代 |
 | `hrv_last_night_avg` | float, ms / null | ✅ | ✅ | 🚧 | 统一表达昨夜平均 HRV；需在 `extra` 标注 RMSSD/SDNN 口径 |
 | `hrv_weekly_avg` | float, ms / null | ✅ | ◐ | 🚧 | Coros 当前以当日睡眠 HRV 同值填充，不能视为真实 7 日均值 |
@@ -173,6 +173,12 @@ JSON，而是原子写入该用户的 `huawei-tokens/group-pals-token`，目录�
 禁止把 `user_id=0`、服务级凭证或尚未初始化的认证客户端作为同步降级值。Garmin 的
 `AuthClient`、Coros 的 `StoredAuth` 和 Huawei 的本地 AT 都必须先通过各自认证检查。
 
+Garmin 的区域是认证与数据请求的共同边界。创建 `garmy.APIClient` 时必须同时传入当前
+`UserConfig.domain`（Web）或 `Config.domain`（CLI），不能只传 `AuthClient` 后依赖 garmy
+默认的 `garmin.com`。profile、活动、健康同步及记忆补全使用的每个 APIClient 都必须与
+创建 Token 的 `AuthClient.domain` 一致；`garmin.cn` Token 不得请求 `connectapi.garmin.com`。
+有效 Token 的 profile 返回空对象不能直接证明 Token 失效，应先确认 APIClient 区域是否一致。
+
 ### 12.5 Huawei 数据 API 接入细节
 
 通过 Huawei 云端接口的真实参数校验确认：
@@ -195,7 +201,8 @@ Huawei API 返回字段存在嵌套差异，Provider 对 ID、名称、类型、
 - **认证**：POST `/account/login`，MD5 密码 + mobile encrypt fallback
 - **Web Token 隔离**：绑定成功后将 `StoredAuth` 保存到
   `data/<api_key>/tokens/coros-auth.json`；目录权限为 `0700`，文件权限为 `0600`。
-  后续同步不保存或重用明文密码，而是从当前用户目录恢复 token
+  后续同步不保存或重用明文密码，而是从当前用户目录恢复 Training Hub token、
+  Mobile token 和加密的 Mobile 刷新载荷
 - **旧 Token 迁移**：用户目录尚无 token 且系统中只有一个 active Coros 用户时，
   `/api/sync` 可将 coros-mcp 旧版全局 token 一次性迁入该用户目录；多个 Coros
   用户时跳过自动迁移，避免错误共享凭证
@@ -209,7 +216,16 @@ Huawei API 返回字段存在嵌套差异，Provider 对 ID、名称、类型、
   `duration_seconds`，因此重新同步即可修正旧数据，无需删除数据库
 - **HRV 数据**：GET `/dashboard/query`，返回 7 天 HRV
 - **每日指标**：GET `/analyse/query`，返回 RHR/距离/时长/负荷/VO2max
-- **睡眠**：依赖库可访问 Mobile API，但当前 `CorosHealth` 尚未映射到 `DailyHealth`
+- **睡眠认证**：Coros 首次绑定或重新授权时，同一次账号密码提交同时申请 Training Hub
+  与 Mobile token；Mobile 失败不撤销已经成功的活动授权，也不保存明文密码
+- **睡眠数据**：通过 Mobile API `POST /coros/data/statistic/daily` 批量读取日期范围，
+  映射总睡眠、深睡、REM 及百分比；睡眠评分、清醒分钟和小睡分钟保留在
+  `DailyHealth.extra`
+- **存量用户升级**：已激活的 Coros 用户可从“我的”进入 `/setup?rebind=coros`，仅允许
+  对当前 Coros 平台重新授权，不开放换绑。重新授权后执行包含历史日期的普通批量同步，
+  会合并补齐 SQLite 已有健康记录，无需强制覆盖或删除活动
+- **睡眠降级**：缺少 Mobile token 或睡眠接口失败时记录可操作日志，并继续同步活动、
+  RHR 与 HRV；重同步不会以默认零值清空此前已保存的睡眠
 
 已知限制：
 - Web 同步必须将 `UserRecord.provider` 注入 `UserConfig.provider`，用户级 provider
@@ -220,7 +236,9 @@ Huawei API 返回字段存在嵌套差异，Provider 对 ID、名称、类型、
 - Coros token 失效或活动接口返回非 `0000` 时同步必须失败并提示重新绑定，禁止把
   空活动列表误报为同步成功；`result=1019` 会把 `UserRecord.token_status` 更新为
   `expired`，使 `/setup` 可以在原用户目录中重新完成绑定
-- 睡眠数据即使已取得 mobile token，当前 neurun 仍不会写入统一健康模型
+- Mobile 睡眠接口来自 `coros-mcp` 对 Coros App 协议的适配，不属于稳定的公开 Web API；
+  必须保持独立降级，不能让接口变化阻断活动同步
+- Mobile 请求需要携带访问 token；应用日志和反向代理不得记录完整查询参数或凭据
 - 身体电量和训练准备仅 Garmin 已映射；Coros `tiredRate` 只近似放入压力字段
 
 ---

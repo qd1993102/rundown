@@ -3,6 +3,7 @@
 import asyncio
 import json
 from datetime import date
+from pathlib import Path
 from types import SimpleNamespace
 from unittest import mock
 
@@ -110,6 +111,14 @@ def test_html_response_injects_aliyun_arms_rum_before_body_end():
     account_digest = hashlib.sha256(user.api_key.encode()).hexdigest()[:24]
     assert f'user: {{ name: "account_{account_digest}" }}' in html
     assert "rd_private-session-key" not in html
+    assert html.count('data-neurun-contact-widget=""') == 1
+    assert 'aria-controls="neurunContactPanel"' in html
+    assert 'aria-expanded="false"' in html
+    assert "(hover:hover) and (pointer:fine)" in html
+    assert "calc(92px + env(safe-area-inset-bottom))" in html
+    assert "event.key === 'Escape'" in html
+    assert "suppressFocusPreview" in html
+    assert "二维码暂不可用，请稍后重试" in html
     assert html.index("https://sdk.rum.aliyuncs.com/v2/browser-sdk.js") < html.index(
         "</body>"
     )
@@ -120,7 +129,97 @@ def test_html_response_keeps_anonymous_rum_identity_for_logged_out_pages():
 
     response = _html_response("<!doctype html><html><body>login</body></html>")
 
-    assert "user: {" not in response.body.decode()
+    html = response.body.decode()
+
+    assert "user: {" not in html
+    assert 'data-neurun-contact-widget=""' not in html
+
+
+def test_html_response_does_not_duplicate_contact_widget():
+    from src.web import _html_response
+
+    user = SimpleNamespace(api_key="rd_contact")
+    first = _html_response("<html><body>neurun</body></html>", user).body.decode()
+    second = _html_response(first, user).body.decode()
+
+    assert second.count('data-neurun-contact-widget=""') == 1
+    assert second.count("https://sdk.rum.aliyuncs.com/v2/browser-sdk.js") == 1
+
+
+def test_contact_qr_requires_login_and_serves_default_asset(tmp_path):
+    manager, user = _active_user(tmp_path)
+    server = _FakeServer()
+    register_web_routes(server, manager, Config(data_dir=str(tmp_path)))
+
+    anonymous = asyncio.run(server.routes[("/contact/qr", "GET")](_request(
+        "/contact/qr", {}, "", method="GET",
+    )))
+    response = asyncio.run(server.routes[("/contact/qr", "GET")](_request(
+        "/contact/qr", {}, user.api_key, method="GET",
+    )))
+
+    assert anonymous.status_code == 401
+    assert anonymous.headers["cache-control"] == "no-store"
+    assert response.status_code == 200
+    assert Path(response.path).name == "contact-wechat.jpg"
+    assert response.media_type == "image/jpeg"
+    assert response.headers["cache-control"] == "no-store"
+    assert response.headers["content-disposition"] == (
+        'inline; filename="neurun-wechat-group.jpg"'
+    )
+
+
+def test_contact_qr_prefers_persistent_override(tmp_path):
+    manager, user = _active_user(tmp_path)
+    override = tmp_path / "contact-wechat.jpg"
+    override.write_bytes(b"new qr")
+    server = _FakeServer()
+    register_web_routes(server, manager, Config(data_dir=str(tmp_path)))
+
+    response = asyncio.run(server.routes[("/contact/qr", "GET")](_request(
+        "/contact/qr", {}, user.api_key, method="GET",
+    )))
+
+    assert Path(response.path) == override
+
+
+def test_contact_qr_returns_404_when_no_asset_exists(tmp_path, monkeypatch):
+    import src.web as web
+
+    manager, user = _active_user(tmp_path)
+    monkeypatch.setattr(web, "_ASSET_DIR", tmp_path / "missing-assets")
+    server = _FakeServer()
+    register_web_routes(server, manager, Config(data_dir=str(tmp_path)))
+
+    response = asyncio.run(server.routes[("/contact/qr", "GET")](_request(
+        "/contact/qr", {}, user.api_key, method="GET",
+    )))
+
+    assert response.status_code == 404
+    assert response.headers["cache-control"] == "no-store"
+
+
+def test_coros_sleep_reauthorization_is_exposed_to_existing_users():
+    setup_html = (Path(__file__).parents[1] / "web/templates/setup.html").read_text()
+    profile_html = (Path(__file__).parents[1] / "web/templates/profile.html").read_text()
+
+    assert "rebind=coros" in profile_html
+    assert "searchParams.get('rebind')" in setup_html
+    assert "body.rebind = true" in setup_html
+
+
+def test_active_coros_user_can_open_sleep_reauthorization_page(tmp_path):
+    manager, user = _active_user(tmp_path)
+    manager.update(user.api_key, provider="coros", token_status="active")
+    server = _FakeServer()
+    register_web_routes(server, manager, Config(data_dir=str(tmp_path)))
+
+    response = asyncio.run(server.routes[("/setup", "GET")](_request(
+        "/setup", {}, user.api_key, method="GET", query="rebind=coros",
+    )))
+
+    assert response.status_code == 200
+    assert "启用 Coros 睡眠同步" in response.body.decode()
 
 
 def test_authenticated_page_attributes_rum_to_pseudonymous_account(tmp_path):

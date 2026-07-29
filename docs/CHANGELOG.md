@@ -4,9 +4,24 @@ neurun 项目变更日志，按日期倒序。
 
 ---
 
+## 2026-07-29
+
+### Added
+- **联系我们与内测交流群入口**: 登录后的所有 Web 页面新增统一浮动联系按钮；桌面支持 hover/focus 预览与点击锁定，移动端支持点击、长按或保存二维码，包含外部点击、关闭按钮、Escape、焦点返回和图片不可用状态。群二维码端点受应用会话保护，优先读取持久化覆盖文件并禁用缓存，后续换图无需修改页面代码。
+- **影响范围**: src/web.py, web/assets/contact-wechat.jpg, tests/test_web.py, README.md, docs/product/, docs/design/
+- **关联文档**: [联系入口产品方案](product/contact-community.md), [联系入口技术设计](design/contact-community.md), [README](../README.md)
+
+### Fixed
+- **Garmin 中国区同步误报认证失败**: Garmin APIClient 现在显式继承绑定时选择的 `garmin.com` 或 `garmin.cn`，profile、活动、健康同步和记忆补全不再把中国区 Token 发往国际区；真正的 Token 失效仍保持 401 与重新绑定流程。
+- **影响范围**: src/auth.py, src/providers/garmin.py, src/main.py, src/fetcher.py, tests/test_auth.py, tests/test_providers.py, tests/test_main.py, tests/test_fetcher.py
+- **关联文档**: [数据源同步产品方案](product/data-source-sync.md), [Bug 记录](bugfixes/2026-07-29-garmin-cn-api-client-domain.md), [多平台设计](design/12-multi-platform.md), [README](../README.md)
+
 ## 2026-07-28
 
 ### Added
+- **训练体验产品真相源与配套技术设计**: 新增 `docs/product/` 产品文档层，沉淀训练主界面、今日训练、本周安排、执行反馈、AI 调整提案、用户确认和方案版本的完整产品方案；新增配套目标架构、数据模型、API、MCP、迁移、安全与测试设计，并明确这些能力尚未实现。
+- **影响范围**: docs/product/, docs/design/, CONTEXT.md, docs/adr/0011-require-confirmation-for-training-plan-adjustments.md, AGENTS.md, CLAUDE.md, README.md
+- **关联文档**: [训练体验产品方案](product/training-experience.md), [交互式训练方案系统](design/training-system.md), [产品文档索引](product/index.md), [ADR-0011](adr/0011-require-confirmation-for-training-plan-adjustments.md)
 - **阿里云 ARMS Web RUM 与账户归因**: 所有 HTML 页面统一接入 Browser SDK v2，采集 PV/UV、性能、Web Vitals、API、静态资源、JS/Console 错误和用户行为；保留 SDK 生成的访客 ID 作为原生 UV 口径，登录后仅以 API Key 的不可逆摘要设置 `user.name`，支持按业务账户归因且不暴露 Cookie、API Key、邮箱或昵称。
 - **影响范围**: src/web.py, tests/test_web.py
 - **关联文档**: [依赖清单](design/07-dependencies.md), [Web 部署设计](design/13-sae-deployment.md)
@@ -26,6 +41,12 @@ neurun 项目变更日志，按日期倒序。
 - **关联文档**: [MVP ADR](adr/0010-cost-first-invitation-registration-mvp.md), [数据流](design/05-data-flow.md), [Web 部署设计](design/13-sae-deployment.md), [README](../README.md)
 
 ### Fixed
+- **Coros 睡眠无法同步**: Coros 绑定现在同时获取用户隔离的 Training Hub 与 Mobile token，并将 Mobile API 返回的总睡眠、深睡和 REM 映射到每日健康数据；存量 Coros 用户可从“我的”执行同平台重新授权，普通批量同步会合并补齐已有日期，睡眠接口失败不会阻断活动、RHR 或 HRV。
+- **影响范围**: src/providers/coros.py, src/main.py, src/web.py, web/templates/setup.html, web/templates/profile.html, tests/test_providers.py, tests/test_storage.py, tests/test_registration.py, tests/test_web.py
+- **关联文档**: [Bug 记录](bugfixes/2026-07-28-coros-sleep-mobile-auth.md), [多平台设计](design/12-multi-platform.md), [开发过程](process/2026-07-28-coros-sleep-mobile-auth.md), [README](../README.md)
+- **ECS Git 下载失败保留在线版本**: 原生部署将平台下载目录与 systemd 运行目录分离；新代码先复制到独立 release，在独立虚拟环境完成安装和导入检查后才原子切换并重启。Git 未拉取或构建失败时不删除、停止或覆盖当前应用，新版本健康检查失败时自动恢复旧 release。
+- **影响范围**: scripts/deploy-ecs.sh, tests/test_packaging.py
+- **关联文档**: [Bug 记录](bugfixes/2026-07-28-ecs-deploy-preserve-current-release.md), [Web 部署设计](design/13-sae-deployment.md), [README](../README.md)
 - **移动端日报评分被挤到第二行**: 日报列表卡片改为“日期 / 可收缩摘要 / 固定评分”单行 Grid，训练摘要超长时使用省略号，睡眠和恢复评分在 320px 起保持稳定宽度且不换行。
 - **影响范围**: web/templates/reports.html, tests/test_web.py
 - **关联文档**: [Bug 记录](bugfixes/2026-07-28-report-scores-mobile-wrap.md), [模块设计](design/04-modules.md), [Web 部署设计](design/13-sae-deployment.md), [开发过程](process/2026-07-28-mobile-daily-image-export.md), [README](../README.md)

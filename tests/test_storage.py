@@ -46,8 +46,8 @@ def test_non_garmin_resync_updates_existing_activity_duration(tmp_path):
             return [activity]
 
     class Health:
-        def fetch_daily_health(self, target):
-            return None
+        def fetch_health_range(self, start, end):
+            return []
 
     class Provider:
         activities = Activities()
@@ -68,6 +68,58 @@ def test_non_garmin_resync_updates_existing_activity_duration(tmp_path):
     session.close()
     assert row.duration_seconds == 3600
     assert row.activity_type == "running"
+
+
+def test_non_garmin_resync_merges_sleep_into_existing_health(tmp_path):
+    """Coros 重新授权后，普通批量同步应补齐睡眠且保留已有 RHR。"""
+    from sqlalchemy import text
+
+    from src.config import Config
+    from src.main import _sync_provider
+    from src.providers.base import DailyHealth
+    from src.storage import Storage
+
+    target = date(2026, 7, 27)
+
+    class Activities:
+        def fetch_activities(self, start, end):
+            return []
+
+    class Health:
+        records = [DailyHealth(metric_date=target, resting_heart_rate=48)]
+
+        def fetch_health_range(self, start, end):
+            return self.records
+
+    class Provider:
+        activities = Activities()
+        health = Health()
+
+    storage = Storage(Config(db_path=str(tmp_path / "data.db")))
+    _sync_provider(Provider(), storage, 1, target, target, "coros")
+
+    Provider.health.records = [DailyHealth(
+        metric_date=target,
+        sleep_duration_hours=7.5,
+        deep_sleep_hours=1.5,
+        rem_sleep_hours=1.25,
+        deep_sleep_pct=20.0,
+        rem_sleep_pct=16.67,
+    )]
+    _sync_provider(Provider(), storage, 1, target, target, "coros")
+
+    session = storage.db.get_session()
+    row = session.execute(text("""
+        SELECT sleep_duration_hours, deep_sleep_hours, rem_sleep_hours,
+               resting_heart_rate
+        FROM daily_health_metrics
+        WHERE user_id = 1 AND metric_date = '2026-07-27'
+    """)).one()
+    session.close()
+    assert row.sleep_duration_hours == 7.5
+    assert row.deep_sleep_hours == 1.5
+    assert row.rem_sleep_hours == 1.25
+    assert row.resting_heart_rate == 48
 
 
 def test_get_local_user_id_reads_unique_id_without_remote_provider(tmp_path):

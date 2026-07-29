@@ -96,8 +96,7 @@ def _setup(config=None):
     # Memory store（Garmin 需要 api_client_getter 补全距离）
     def _make_api_client():
         if config.provider_type == "garmin":
-            from garmy import APIClient
-            return APIClient(auth_client=provider.auth._client)
+            return provider.auth.create_api_client()
         return None
 
     memory_store = MemoryStore(
@@ -115,8 +114,7 @@ def _get_user_id(auth: AuthManager) -> int:
     通过 APIClient.profile 获取真实 user_id。
     """
     try:
-        from garmy import APIClient
-        api = APIClient(auth_client=auth.client)
+        api = auth.create_api_client()
         profile = api.profile
         if isinstance(profile, dict):
             uid = profile.get("id")
@@ -367,10 +365,13 @@ def _sync_provider(provider, storage, user_id: int, start: date, end: date,
     )
 
     console.print("[dim]📥 拉取健康数据...[/]")
-    d = start
     stored_health = 0
-    while d <= end:
-        health = provider.health.fetch_daily_health(d)
+    updated_health = 0
+    health_records = provider.health.fetch_health_range(start, end)
+    for health in health_records:
+        d = health.metric_date
+        if d < start or d > end:
+            continue
         if health and any((
             health.sleep_duration_hours > 0,
             health.resting_heart_rate is not None,
@@ -414,10 +415,48 @@ def _sync_provider(provider, storage, user_id: int, start: date, end: date,
                     "trl": health.training_readiness_level,
                 })
                 stored_health += 1
+            else:
+                # 普通重同步只用本次实际取得的值补齐或更新字段；Mobile
+                # 睡眠暂时不可用时不得用默认 0/null 清空已有健康数据。
+                session.execute(text("""
+                    UPDATE daily_health_metrics
+                    SET sleep_duration_hours = CASE WHEN :sl > 0 THEN :sl ELSE sleep_duration_hours END,
+                        deep_sleep_hours = CASE WHEN :sl > 0 THEN :ds ELSE deep_sleep_hours END,
+                        rem_sleep_hours = CASE WHEN :sl > 0 THEN :rs ELSE rem_sleep_hours END,
+                        deep_sleep_percentage = CASE WHEN :sl > 0 THEN :dp ELSE deep_sleep_percentage END,
+                        rem_sleep_percentage = CASE WHEN :sl > 0 THEN :rp ELSE rem_sleep_percentage END,
+                        resting_heart_rate = COALESCE(:rhr, resting_heart_rate),
+                        hrv_weekly_avg = COALESCE(:hw, hrv_weekly_avg),
+                        hrv_last_night_avg = COALESCE(:hn, hrv_last_night_avg),
+                        hrv_status = CASE WHEN :hw IS NOT NULL OR :hn IS NOT NULL THEN :hs ELSE hrv_status END,
+                        avg_stress_level = COALESCE(:as, avg_stress_level),
+                        body_battery_high = COALESCE(:bh, body_battery_high),
+                        body_battery_low = COALESCE(:bl, body_battery_low),
+                        total_steps = CASE WHEN :ts > 0 THEN :ts ELSE total_steps END,
+                        total_distance_meters = CASE WHEN :td > 0 THEN :td ELSE total_distance_meters END,
+                        total_calories = CASE WHEN :tc > 0 THEN :tc ELSE total_calories END,
+                        active_calories = CASE WHEN :ac > 0 THEN :ac ELSE active_calories END,
+                        training_readiness_score = COALESCE(:trs, training_readiness_score),
+                        training_readiness_level = CASE WHEN :trl != '' THEN :trl ELSE training_readiness_level END,
+                        updated_at = datetime('now')
+                    WHERE user_id = :uid AND metric_date = :md
+                """), {
+                    "uid": user_id, "md": str(d),
+                    "sl": health.sleep_duration_hours, "ds": health.deep_sleep_hours,
+                    "rs": health.rem_sleep_hours, "dp": health.deep_sleep_pct,
+                    "rp": health.rem_sleep_pct, "rhr": health.resting_heart_rate,
+                    "hw": health.hrv_weekly_avg, "hn": health.hrv_last_night_avg,
+                    "hs": health.hrv_status, "as": health.avg_stress_level,
+                    "bh": health.body_battery_high, "bl": health.body_battery_low,
+                    "ts": health.total_steps, "td": health.total_distance_meters,
+                    "tc": health.total_calories, "ac": health.active_calories,
+                    "trs": health.training_readiness_score,
+                    "trl": health.training_readiness_level,
+                })
+                updated_health += 1
             session.commit()
             session.close()
-        d += timedelta(days=1)
-    console.print(f"  ✅ 健康: {stored_health} 天")
+    console.print(f"  ✅ 健康: {stored_health} 天新增, {updated_health} 天更新")
 
     console.print(f"[green]✅ {provider_name} 同步完成[/]")
 
@@ -467,8 +506,7 @@ def _do_data_sync(config, target: date | None = None,
             if config.provider_type == "garmin":
                 # Web 多用户模式：每用户隔离 token_dir，需注入已认证 APIClient
                 if hasattr(provider, 'auth') and hasattr(provider.auth, '_client'):
-                    from garmy import APIClient
-                    storage.set_api_client(APIClient(auth_client=provider.auth._client))
+                    storage.set_api_client(provider.auth.create_api_client())
                 storage.sync_range(user_id, from_day, to_day)
                 _sync_garmin_activities(provider, storage, user_id, from_day, to_day)
             elif config.provider_type in ("coros", "huawei"):

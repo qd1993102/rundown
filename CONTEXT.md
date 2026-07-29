@@ -29,3 +29,37 @@ _Avoid_: neurun account, application account
 **Platform Connection**:
 一个 neurun Account 获得持续读取某个 Platform Account 数据授权的关系；第一版每个 neurun Account 最多一个活跃连接。
 _Avoid_: Login, provider field, token directory
+
+## Training Planning
+
+**Training Goal**:
+运动者希望通过训练达到的明确结果，可包含目标距离、成绩、赛事或一般运动目的；它定义方向，但不包含具体训练安排。
+_Avoid_: Training Scheme, weekly target, workout
+
+**Training Scheme**:
+为达成一个 Training Goal 而生效的长期训练策略，包含阶段、周结构、负荷方向、约束和安全边界；用户界面称为“训练方案”。
+_Avoid_: 运动大纲, Weekly Plan, Daily Workout, generic advice
+
+**Weekly Plan**:
+Training Scheme 在一个自然周内的具体安排，包含每天的计划训练、休息日和周目标。
+_Avoid_: Training Scheme, weekly summary
+
+**Daily Workout**:
+Weekly Plan 中某一天可执行的训练处方，包含训练目的、类型、距离或时长和强度范围；用户界面称为“今日训练”。
+_Avoid_: Daily report, generic recommendation, actual activity
+
+**Execution Record**:
+一项 Daily Workout 与实际运动数据及用户完成反馈之间的关联判断，允许完成、部分完成、替代完成、跳过或暂未匹配。
+_Avoid_: Activity, completion guess
+
+**Training Feedback**:
+运动者提交的主观感受或现实约束，例如疲劳、疼痛、时间不足和日程冲突；它是调整方案的输入，不是已经生效的修改。
+_Avoid_: Adjustment Proposal, Execution Record
+
+**Adjustment Proposal**:
+基于当前方案版本和 Training Feedback 生成、尚未生效的候选修改，包含差异、原因、影响和风险；只有用户确认后才能产生新版本。
+_Avoid_: active plan, direct AI write, feedback
+
+**Scheme Version**:
+一次用户确认后形成的不可变 Training Scheme 快照，用于确定当前生效内容并解释历史安排。
+_Avoid_: draft, proposal, edit timestamp

@@ -1,6 +1,6 @@
 # 设计方案 — 13. Web Chat 部署方案（多用户）
 
-> 版本: v2.7 · 更新日期: 2026-07-28 · 状态: 已实现
+> 版本: v2.8 · 更新日期: 2026-07-28 · 状态: 已实现
 
 ---
 
@@ -459,6 +459,26 @@ docker compose exec neurun neurun invite create --output json
 ```
 
 ### ECS + CLB 原生部署
+
+阿里云部署任务会把 Git 仓库下载到工作目录的 `code_deploy_application/`，该目录只是
+本次发布的暂存区，不得直接作为 systemd 的 `WorkingDirectory` 或可编辑安装目录。原生发布
+统一使用 `scripts/deploy-ecs.sh`，目录职责为：
+
+```text
+/opt/neurun-deploy/code_deploy_application/  # 平台下载暂存区，不是在线版本
+/opt/neurun-releases/<release-id>/           # 不可变发布副本，内含独立 .venv
+/opt/neurun-current -> <release-id>/          # systemd 使用的当前版本软链接
+/var/lib/neurun/                              # 跨版本持久化的用户数据
+```
+
+发布必须先确认暂存区存在 `pyproject.toml`，将源码复制到新 release，在该 release 的独立
+虚拟环境中完成依赖安装和导入检查，然后才允许切换 `neurun-current` 并重启服务。Git 下载
+失败、暂存区不完整、Python 版本不合格或依赖安装失败时，脚本必须在修改当前软链接和
+调用 `systemctl restart` 之前退出，不删除、停止或覆盖旧应用。新版本重启后若未通过
+`/healthz` 检查，有旧 release 时必须恢复软链接并重启旧版本。
+控制台的启动脚本只需从当前工作目录定位
+`code_deploy_application/scripts/deploy-ecs.sh`；文件不存在时直接返回非零，不得尝试
+`systemctl stop/restart` 或清理任何 release。完整入口示例见 README。
 
 CLB 通过 ECS 私网地址访问后端，因此 Web 服务必须监听所有网卡，而不是仅监听回环地址：
 

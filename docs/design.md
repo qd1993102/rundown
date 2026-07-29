@@ -1,6 +1,6 @@
 # Garmin 国际区运动数据获取应用 — 设计方案
 
-> 版本: v3.0 · 日期: 2026-06-24 · 基于 [garmy](https://github.com/bes-dev/garmy) v1.0.0
+> 版本: v3.1 · 日期: 2026-07-28 · 基于 [garmy](https://github.com/bes-dev/garmy) v1.0.0
 
 ---
 
@@ -27,6 +27,7 @@
 |------|------|
 | [memory-system.md](design/memory-system.md) | 记忆系统设计 — 分类体系、模板规范、自动生成器、日报格式 |
 | [ai-coaching.md](design/ai-coaching.md) | AI 教练对话设计 — System Prompt、对话原则、OpenClaw 配置、典型场景 |
+| [training-system.md](design/training-system.md) | 交互式训练方案系统 — 实时训练首页、周计划、反馈、调整提案、版本与活动匹配 |
 
 ### 规划与备忘
 
@@ -42,8 +43,9 @@
 ### 完整索引
 
 所有子文档的详细说明见 [docs/design/index.md](design/index.md)。
+产品行为与验收标准见 [docs/product/index.md](product/index.md)。
 
 ---
 
 > **维护规则**: 代码变更后，根据变更范围更新对应的子文档。
-> 详见 [CLAUDE.md](CLAUDE.md) — Documentation Sync Rule。
+> 详见 [CLAUDE.md](../CLAUDE.md) — Documentation Sync Rule。

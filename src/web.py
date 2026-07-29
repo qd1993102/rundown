@@ -18,7 +18,13 @@ from pathlib import Path
 from typing import Any
 
 from starlette.requests import Request
-from starlette.responses import HTMLResponse, JSONResponse, Response, StreamingResponse
+from starlette.responses import (
+    FileResponse,
+    HTMLResponse,
+    JSONResponse,
+    Response,
+    StreamingResponse,
+)
 
 from .auth import AuthManager, cleanup_expired_mfa_states, get_mfa_state
 from .coach import chat_stream
@@ -35,6 +41,9 @@ logger = logging.getLogger(__name__)
 _COOKIE_NAME = "neurun_key"
 _COOKIE_MAX_AGE = 30 * 24 * 3600  # 固定 30 天
 _TEMPLATE_DIR = Path(__file__).parent.parent / "web" / "templates"
+_ASSET_DIR = Path(__file__).parent.parent / "web" / "assets"
+_CONTACT_QR_FILENAME = "contact-wechat.jpg"
+_CONTACT_WIDGET_MARKER = 'data-neurun-contact-widget=""'
 _EMAIL_PATTERN = re.compile(r"^[^\s@]+@[^\s@]+\.[^\s@]+$")
 _MONTH_PATTERN = re.compile(r"^\d{4}-\d{2}$")
 _INVITE_UNAVAILABLE = "邀请码无效、已停用或已经使用"
@@ -106,16 +115,141 @@ def _arms_rum_script(user: UserRecord | None = None) -> str:
 </script>"""
 
 
+def _contact_widget() -> str:
+    """构建登录后页面统一使用的联系入口。"""
+    return """<style data-neurun-contact-widget-style>
+.neurun-contact{position:fixed;z-index:70;right:12px;bottom:calc(92px + env(safe-area-inset-bottom));font-family:-apple-system,BlinkMacSystemFont,'SF Pro Display','Segoe UI',Roboto,sans-serif;color:var(--text,#17211b)}
+.neurun-contact *{box-sizing:border-box}
+.neurun-contact [hidden]{display:none!important}
+.neurun-contact-trigger{display:flex;align-items:center;justify-content:center;gap:7px;min-height:44px;padding:9px 14px;border:1px solid color-mix(in srgb,var(--accent,#2d9d6f) 78%,#fff);border-radius:999px;background:var(--accent,#2d9d6f);color:#fff;box-shadow:0 10px 30px rgba(0,0,0,.2);font:inherit;font-size:13px;font-weight:750;line-height:1;cursor:pointer;-webkit-tap-highlight-color:transparent;touch-action:manipulation;transition:transform .18s ease,box-shadow .18s ease,opacity .18s ease}
+.neurun-contact-trigger svg{width:18px;height:18px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+.neurun-contact-trigger:focus-visible,.neurun-contact-close:focus-visible,.neurun-contact-save:focus-visible{outline:3px solid color-mix(in srgb,var(--accent,#2d9d6f) 34%,transparent);outline-offset:3px}
+.neurun-contact-panel{position:absolute;right:0;bottom:calc(100% + 10px);width:min(320px,calc(100vw - 24px));max-height:calc(100vh - 160px - env(safe-area-inset-bottom));overflow:auto;padding:18px;border:1px solid var(--border-subtle,#dbe5df);border-radius:20px;background:var(--bg-card,#fff);color:var(--text,#17211b);box-shadow:0 18px 54px rgba(0,0,0,.24);overscroll-behavior:contain}
+.neurun-contact-head{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;margin-bottom:12px}
+.neurun-contact-eyebrow{margin:0 0 3px;color:var(--accent,#2d9d6f);font-size:10px;font-weight:800;letter-spacing:1.2px;text-transform:uppercase}
+.neurun-contact-title{margin:0;font-size:17px;line-height:1.35;letter-spacing:-.2px}
+.neurun-contact-close{display:grid;place-items:center;flex:0 0 36px;width:36px;height:36px;margin:-7px -7px 0 0;padding:0;border:0;border-radius:50%;background:transparent;color:var(--text-muted,#718078);font:inherit;font-size:24px;line-height:1;cursor:pointer}
+.neurun-contact-qr{display:block;width:100%;height:auto;aspect-ratio:1;border:1px solid var(--border-subtle,#dbe5df);border-radius:14px;background:#fff;object-fit:contain}
+.neurun-contact-help{margin:11px 0 0;color:var(--text-secondary,#53665c);font-size:12px;line-height:1.6}
+.neurun-contact-status{margin:12px 0;padding:18px 12px;border-radius:12px;background:var(--bg-subtle,#f3f6f4);color:var(--text-secondary,#53665c);font-size:13px;text-align:center}
+.neurun-contact-save{display:flex;align-items:center;justify-content:center;min-height:44px;margin-top:12px;padding:9px 14px;border:1px solid var(--accent,#2d9d6f);border-radius:12px;background:transparent;color:var(--accent,#2d9d6f);font-size:13px;font-weight:750;text-decoration:none}
+@media(min-width:641px){.neurun-contact{right:24px;bottom:24px}.neurun-contact-panel{max-height:calc(100vh - 92px)}}
+@media(hover:hover) and (pointer:fine){.neurun-contact-trigger:hover{transform:translateY(-2px);box-shadow:0 14px 38px rgba(0,0,0,.24)}.neurun-contact-close:hover{background:var(--bg-subtle,#f3f6f4);color:var(--text,#17211b)}.neurun-contact-save:hover{background:var(--accent,#2d9d6f);color:#fff}}
+@media(prefers-reduced-motion:reduce){.neurun-contact-trigger{transition:none}}
+</style>
+<aside class="neurun-contact" data-neurun-contact-widget="">
+  <button class="neurun-contact-trigger" type="button" aria-expanded="false" aria-controls="neurunContactPanel" aria-haspopup="dialog">
+    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M21 11.5a8.4 8.4 0 0 1-9 8.5 9.6 9.6 0 0 1-4-.9L3 21l1.8-4.6A8.2 8.2 0 0 1 3 11.5a8.4 8.4 0 0 1 9-8.5 8.4 8.4 0 0 1 9 8.5Z"/><path d="M8 11.5h.01M12 11.5h.01M16 11.5h.01"/></svg>
+    <span>联系我们</span>
+  </button>
+  <section class="neurun-contact-panel" id="neurunContactPanel" role="dialog" aria-modal="false" aria-labelledby="neurunContactTitle" hidden>
+    <div class="neurun-contact-head">
+      <div><p class="neurun-contact-eyebrow">WeChat Community</p><h2 class="neurun-contact-title" id="neurunContactTitle">加入 NeuRun 内测交流群</h2></div>
+      <button class="neurun-contact-close" type="button" aria-label="关闭联系我们">×</button>
+    </div>
+    <img class="neurun-contact-qr" src="/contact/qr" alt="NeuRun 内测交流群二维码" decoding="async" draggable="false">
+    <p class="neurun-contact-status" role="status" hidden>二维码暂不可用，请稍后重试</p>
+    <p class="neurun-contact-help">电脑端可直接使用微信扫码；手机端请长按或保存图片，再从微信“扫一扫”的相册中识别。二维码会定期更新，识别失败时请刷新页面。</p>
+    <a class="neurun-contact-save" href="/contact/qr" download="neurun-wechat-group.jpg">保存二维码</a>
+  </section>
+</aside>
+<script data-neurun-contact-widget-script>
+(() => {
+  const root = document.querySelector('[data-neurun-contact-widget]');
+  if (!root || root.dataset.ready === 'true') return;
+  root.dataset.ready = 'true';
+  const trigger = root.querySelector('.neurun-contact-trigger');
+  const panel = root.querySelector('.neurun-contact-panel');
+  const close = root.querySelector('.neurun-contact-close');
+  const image = root.querySelector('.neurun-contact-qr');
+  const status = root.querySelector('.neurun-contact-status');
+  const save = root.querySelector('.neurun-contact-save');
+  const finePointer = window.matchMedia('(hover:hover) and (pointer:fine)');
+  let preview = false;
+  let pinned = false;
+  let suppressFocusPreview = false;
+
+  function render() {
+    const open = preview || pinned;
+    panel.hidden = !open;
+    trigger.setAttribute('aria-expanded', String(open));
+  }
+
+  function dismiss(returnFocus = false) {
+    preview = false;
+    pinned = false;
+    render();
+    if (returnFocus) {
+      suppressFocusPreview = true;
+      trigger.focus({ preventScroll: true });
+      window.setTimeout(() => { suppressFocusPreview = false; }, 0);
+    }
+  }
+
+  trigger.addEventListener('click', () => {
+    pinned = !pinned;
+    preview = false;
+    render();
+  });
+  close.addEventListener('click', () => dismiss(true));
+  root.addEventListener('pointerenter', () => {
+    if (finePointer.matches) { preview = true; render(); }
+  });
+  root.addEventListener('pointerleave', () => {
+    if (finePointer.matches) { preview = false; render(); }
+  });
+  root.addEventListener('focusin', () => {
+    if (!suppressFocusPreview) { preview = true; render(); }
+  });
+  root.addEventListener('focusout', () => {
+    window.setTimeout(() => {
+      if (!root.contains(document.activeElement)) { preview = false; render(); }
+    }, 0);
+  });
+  document.addEventListener('pointerdown', event => {
+    if (!root.contains(event.target)) dismiss(false);
+  });
+  document.addEventListener('keydown', event => {
+    if (event.key === 'Escape' && !panel.hidden) dismiss(true);
+  });
+  image.addEventListener('error', () => {
+    image.hidden = true;
+    save.hidden = true;
+    status.hidden = false;
+  });
+  image.addEventListener('load', () => {
+    image.hidden = false;
+    save.hidden = false;
+    status.hidden = true;
+  });
+})();
+</script>"""
+
+
+def _contact_qr_path(config: Config) -> Path | None:
+    """返回持久化覆盖图片或随版本发布的默认二维码。"""
+    candidates = (
+        Path(config.data_dir) / _CONTACT_QR_FILENAME,
+        _ASSET_DIR / _CONTACT_QR_FILENAME,
+    )
+    return next((path for path in candidates if path.is_file()), None)
+
+
 def _html_response(html: str, user: UserRecord | None = None) -> HTMLResponse:
-    """返回统一注入 ARMS RUM 的 HTML 页面响应。"""
-    if _ALIYUN_ARMS_RUM_SDK in html:
+    """返回统一注入联系入口与 ARMS RUM 的 HTML 页面响应。"""
+    injections = []
+    if user is not None and _CONTACT_WIDGET_MARKER not in html:
+        injections.append(_contact_widget())
+    if _ALIYUN_ARMS_RUM_SDK not in html:
+        injections.append(_arms_rum_script(user))
+    if not injections:
         return HTMLResponse(html)
-    script = _arms_rum_script(user)
+    injected = "\n".join(injections)
     body_end = re.search(r"</body\s*>", html, flags=re.IGNORECASE)
     if body_end is None:
-        logger.warning("HTML 页面缺少 </body>，ARMS RUM 脚本追加到文末")
-        return HTMLResponse(f"{html}\n{script}")
-    monitored_html = f"{html[:body_end.start()]}{script}\n{html[body_end.start():]}"
+        logger.warning("HTML 页面缺少 </body>，平台注入内容追加到文末")
+        return HTMLResponse(f"{html}\n{injected}")
+    monitored_html = f"{html[:body_end.start()]}{injected}\n{html[body_end.start():]}"
     return HTMLResponse(monitored_html)
 
 
@@ -381,6 +515,27 @@ def register_web_routes(server, user_manager: UserManager, config: Config):
             return Response(status_code=200, headers=headers)
         return JSONResponse({"status": "ok"}, headers=headers)
 
+    @server.custom_route("/contact/qr", methods=["GET"])
+    async def contact_qr(request: Request) -> Response:
+        """返回登录用户可读取、可由运维覆盖的微信群二维码。"""
+        api_key = _get_api_key(request)
+        user = user_manager.get(api_key) if api_key else None
+        if user is None:
+            return Response(status_code=401, headers={"Cache-Control": "no-store"})
+        path = _contact_qr_path(config)
+        if path is None:
+            return Response(status_code=404, headers={"Cache-Control": "no-store"})
+        return FileResponse(
+            path,
+            media_type="image/jpeg",
+            headers={
+                "Cache-Control": "no-store",
+                "Content-Disposition": (
+                    'inline; filename="neurun-wechat-group.jpg"'
+                ),
+            },
+        )
+
     # ═══ 页面路由 ═══
 
     @server.custom_route("/", methods=["GET"])
@@ -416,13 +571,18 @@ def register_web_routes(server, user_manager: UserManager, config: Config):
 
     @server.custom_route("/setup", methods=["GET"])
     async def setup_page(request: Request) -> Response:
-        """Garmin 绑定页面。已绑定用户跳回首页。"""
+        """数据源绑定页面；已绑定 Coros 用户可进入睡眠重新授权。"""
         api_key = _get_api_key(request)
         user = user_manager.get(api_key) if api_key else None
 
         if user is None:
             return _redirect("/login")
-        if user.token_status == "active":
+        is_coros_rebind = (
+            user.token_status == "active"
+            and user.provider == "coros"
+            and request.query_params.get("rebind") == "coros"
+        )
+        if user.token_status == "active" and not is_coros_rebind:
             return _redirect("/")
 
         html = _read_template("setup.html")
@@ -552,13 +712,18 @@ def register_web_routes(server, user_manager: UserManager, config: Config):
         user = user_manager.get(api_key) if api_key else None
         if user is None:
             return JSONResponse({"status": "error", "message": "请先登录应用账号"}, status_code=401)
-        if user.token_status == "active":
+        provider = body.get("provider", "garmin").strip()
+        rebind = body.get("rebind") is True
+        is_coros_rebind = (
+            rebind and user.token_status == "active"
+            and user.provider == "coros" and provider == "coros"
+        )
+        if user.token_status == "active" and not is_coros_rebind:
             return JSONResponse(
                 {"status": "error", "message": "当前账号已绑定运动平台，MVP 暂不支持换绑"},
                 status_code=409,
             )
 
-        provider = body.get("provider", "garmin").strip()
         email = body.get("email", "").strip()
         password = body.get("password", "").strip()
         domain = body.get("domain", "garmin.com").strip()
@@ -608,7 +773,18 @@ def register_web_routes(server, user_manager: UserManager, config: Config):
                 if cp.authenticate():
                     user_manager.update(api_key, garmin_email=email,
                                        provider="coros", token_status="active")
-                    return JSONResponse({"status": "ok"})
+                    sleep_available = cp.sleep_available
+                    return JSONResponse({
+                        "status": "ok",
+                        "sleep_available": sleep_available,
+                        "message": (
+                            "Coros 活动与睡眠授权成功，请执行批量同步补齐历史睡眠"
+                            if sleep_available and is_coros_rebind else
+                            "Coros 活动与睡眠绑定成功"
+                            if sleep_available else
+                            "Coros 活动授权成功，但睡眠授权未取得；可稍后重新授权"
+                        ),
+                    })
                 else:
                     return JSONResponse({"status": "error", "message": "Coros 登录失败，请检查账号密码"}, status_code=400)
             except Exception as exc:
@@ -976,10 +1152,21 @@ def register_web_routes(server, user_manager: UserManager, config: Config):
             "email": user.garmin_email,
             "token_status": user.token_status,
             "last_sync": user.last_sync,
+            "sleep_available": None,
             "profile": None,
             "goals": [],
             "preferences": None,
         }
+
+        if user.provider == "coros":
+            try:
+                from .providers.coros import CorosAuth
+                result["sleep_available"] = CorosAuth(
+                    user_cfg.token_dir
+                ).has_sleep_access()
+            except Exception as exc:
+                logger.warning("Coros 睡眠授权状态读取失败: %s", exc)
+                result["sleep_available"] = False
 
         # 竞技档案
         profile = memory_store.get("fitness-assessment")

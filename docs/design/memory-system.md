@@ -1,6 +1,6 @@
 # 设计方案 — 记忆系统设计
 
-> 属于 [设计方案索引](../design.md) · 版本 v3.0 · 2026-06-24
+> 属于 [设计方案索引](../design.md) · 版本 v3.1 · 2026-07-28
 
 ---
 
@@ -611,6 +611,8 @@ tags: [5k, sub20, spring-2025]
 ```
 
 ##### 训练计划 (`plans/`)
+
+> 本节记录现行训练计划记忆格式。训练主界面、周计划、反馈、调整提案、版本和活动匹配的目标模型由 [交互式训练方案系统](training-system.md) 维护；实现迁移完成前不得将目标模型描述为当前运行行为。
 
 ```yaml
 ---
@@ -1253,7 +1255,7 @@ stateDiagram-v2
 不同记忆类型的状态流转：
 - 日报 (daily):     每日生成即 active，保留 30 天，超过 30 天自动 stale，超过 90 天归档
 - 目标 (goal):     draft → active → done/archived
-- 训练计划 (plan):  draft → active → done/archived
+- 训练计划 (plan):  现行 `draft → active → done/archived`；交互式训练方案目标状态及迁移见 [training-system.md](training-system.md)
 - 案例 (case):     draft → active → archived (一般不删除，长期保留)
 - 摘要 (summary):  自动生成即 active，旧周期自动 stale
 - 执行跟踪:        关联的计划 active 时自动 active，计划完结时 done

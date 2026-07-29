@@ -73,6 +73,35 @@ class TestProviderRegistry:
         except Exception:
             pass  # Expected without real creds
 
+    def test_garmin_auth_api_client_uses_bound_region(self, monkeypatch):
+        from src.providers.garmin import GarminAuth
+
+        auth_client = object()
+        auth = GarminAuth(domain="garmin.cn", token_dir="/tmp/tokens")
+        auth._client = auth_client
+        api_client = object()
+        constructor = mock.Mock(return_value=api_client)
+        monkeypatch.setattr("garmy.APIClient", constructor)
+
+        assert auth.create_api_client() is api_client
+        constructor.assert_called_once_with(
+            auth_client=auth_client,
+            domain="garmin.cn",
+        )
+
+    def test_garmin_activity_reuses_auth_regional_api_client(self):
+        from src.providers.garmin import GarminActivity
+
+        api_client = object()
+        auth = mock.Mock()
+        auth.create_api_client.return_value = api_client
+
+        activity = GarminActivity(auth)
+
+        assert activity._get_api() is api_client
+        assert activity._get_api() is api_client
+        auth.create_api_client.assert_called_once_with()
+
     def test_coros_provider_creation(self):
         from src.providers import get_provider
 
@@ -101,6 +130,7 @@ class TestProviderRegistry:
         auth = CorosAuth(str(token_dir))
 
         async def fake_login(*args, **kwargs):
+            assert kwargs["skip_mobile"] is False
             return stored
 
         with mock.patch("coros_mcp.coros_api.login", side_effect=fake_login):
@@ -114,6 +144,29 @@ class TestProviderRegistry:
         restored = CorosAuth(str(token_dir))
         assert restored.is_authenticated() is True
         assert restored.get_user_id() == 12345
+
+    def test_coros_auth_persists_mobile_sleep_credentials(self, tmp_path):
+        from coros_mcp.models import StoredAuth
+        from src.providers.coros import CorosAuth
+
+        stored = StoredAuth(
+            access_token="training-token",
+            user_id="12345",
+            region="eu",
+            timestamp=int(time.time() * 1000),
+            mobile_access_token="sleep-token",
+            mobile_login_payload={"encrypted": "payload"},
+        )
+        auth = CorosAuth(str(tmp_path / "tokens"))
+
+        async def fake_login(*args, **kwargs):
+            return stored
+
+        with mock.patch("coros_mcp.coros_api.login", side_effect=fake_login):
+            assert auth.login("runner@example.com", "password") is True
+
+        restored = CorosAuth(str(tmp_path / "tokens"))
+        assert restored.has_sleep_access() is True
 
     def test_coros_auth_reports_actionable_missing_dependency(self, tmp_path):
         import builtins
@@ -186,6 +239,64 @@ class TestProviderRegistry:
 
         assert activity.duration_seconds == 1800
         assert activity.extra["paused_seconds"] == 0
+
+    def test_coros_health_maps_sleep_stages_for_range(self):
+        from coros_mcp.models import SleepPhases, SleepRecord
+        from src.providers.coros import CorosAuth, CorosHealth
+
+        auth = CorosAuth()
+        auth._auth = mock.Mock(mobile_access_token="sleep-token")
+        health = CorosHealth(auth)
+        health._get_analyse_data = mock.Mock(return_value={})
+        health._get_hrv_data = mock.Mock(return_value=[])
+
+        records = [SleepRecord(
+            date="20260727",
+            total_duration_minutes=450,
+            phases=SleepPhases(
+                deep_minutes=90,
+                light_minutes=240,
+                rem_minutes=90,
+                awake_minutes=30,
+                nap_minutes=20,
+            ),
+            quality_score=86,
+        )]
+        fetch_sleep = mock.AsyncMock(return_value=records)
+        with mock.patch("coros_mcp.coros_api.fetch_sleep", new=fetch_sleep):
+            result = health.fetch_health_range(date(2026, 7, 27), date(2026, 7, 27))
+
+        assert len(result) == 1
+        daily = result[0]
+        assert daily.sleep_duration_hours == 7.5
+        assert daily.deep_sleep_hours == 1.5
+        assert daily.rem_sleep_hours == 1.5
+        assert daily.deep_sleep_pct == 20.0
+        assert daily.rem_sleep_pct == 20.0
+        assert daily.extra["sleep_quality_score"] == 86
+        assert daily.extra["awake_minutes"] == 30
+        assert daily.extra["nap_minutes"] == 20
+        assert fetch_sleep.await_count == 1
+
+    def test_coros_health_keeps_other_metrics_when_sleep_is_unavailable(self):
+        from src.providers.coros import CorosAuth, CorosHealth
+
+        auth = CorosAuth()
+        auth._auth = mock.Mock(mobile_access_token=None)
+        health = CorosHealth(auth)
+        health._get_analyse_data = mock.Mock(return_value={
+            "dayList": [{"happenDay": "20260727", "rhr": 48}],
+        })
+        health._get_hrv_data = mock.Mock(return_value=[])
+
+        with mock.patch(
+            "coros_mcp.coros_api.fetch_sleep",
+            new=mock.AsyncMock(side_effect=ValueError("No mobile API token available")),
+        ):
+            result = health.fetch_health_range(date(2026, 7, 27), date(2026, 7, 27))
+
+        assert result[0].resting_heart_rate == 48
+        assert result[0].sleep_duration_hours == 0
 
     def test_huawei_provider_creation(self, tmp_path):
         from src.providers import get_provider

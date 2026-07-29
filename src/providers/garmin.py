@@ -4,7 +4,10 @@ from __future__ import annotations
 
 import logging
 from datetime import date, timedelta
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from garmy import APIClient
 
 from .base import (
     ActivityData, DailyHealth,
@@ -67,12 +70,20 @@ class GarminAuth(AuthProvider):
     def get_user_id(self) -> int:
         if self._user_id is not None:
             return self._user_id
-        from garmy import APIClient
-        api = APIClient(auth_client=self._client)
+        api = self.create_api_client()
         profile = api.profile
         if isinstance(profile, dict):
             self._user_id = int(profile.get("id", 0))
         return self._user_id or 0
+
+    def create_api_client(self) -> APIClient:
+        """创建与 Token 所属 Garmin 区域一致的数据 APIClient。"""
+        from garmy import APIClient
+
+        return APIClient(
+            auth_client=self._client,
+            domain=self._domain,
+        )
 
     def get_headers(self) -> dict[str, str]:
         return self._client.get_auth_headers() if self._client else {}
@@ -87,8 +98,7 @@ class GarminActivity(ActivityProvider):
 
     def _get_api(self):
         if self._api is None:
-            from garmy import APIClient
-            self._api = APIClient(auth_client=self._auth._client)
+            self._api = self._auth.create_api_client()
         return self._api
 
     def fetch_activities(self, start: date, end: date) -> list[ActivityData]:

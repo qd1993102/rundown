@@ -182,6 +182,26 @@ curl -fsS http://<ECS_PRIVATE_IP>:8080/healthz
 若第二条返回 `Connection refused`，请求尚未进入 neurun 路由，应先检查 systemd
 中的 `MCP_HOST` 和实际监听地址，而不是调整登录接口权限。
 
+阿里云原生部署任务请执行 `scripts/deploy-ecs.sh`。平台自动下载的
+`/opt/neurun-deploy/code_deploy_application` 只是暂存区；在线服务运行于独立的
+`/opt/neurun-releases/<release-id>`，并通过 `/opt/neurun-current` 切换。如果 Git 未下载成功或
+新版本依赖安装失败，脚本会在重启 systemd 前退出，保留当前应用继续运行。
+阿里云控制台的“启动脚本”使用：
+
+```bash
+set -Eeuo pipefail
+WORK_DIR="$(pwd)"
+DEPLOY_SCRIPT="${WORK_DIR}/code_deploy_application/scripts/deploy-ecs.sh"
+
+if [ ! -f "${DEPLOY_SCRIPT}" ]; then
+  echo "错误：Git 仓库未成功下载，当前应用保持运行" >&2
+  exit 1
+fi
+
+export WORK_DIR
+exec bash "${DEPLOY_SCRIPT}"
+```
+
 ### Web 同步页面
 
 `/sync` 将同步分为两个独立入口：
@@ -222,6 +242,8 @@ Garmin 遗留的 `activities=pending` 或个别健康指标失败显示为“部
 同步开始时 Garmin、Coros、Huawei 都会先恢复并验证当前用户凭据，再读取平台
 `user_id` 和打开 SQLite；认证失败会返回 HTTP 401、将连接标记为 `expired` 并提示重新绑定，
 不会用 `user_id=0` 或未认证客户端继续写本地数据。
+Garmin 用户绑定时选择的国际区 `garmin.com` 或中国区 `garmin.cn` 会同时用于登录、profile、
+活动和健康数据请求；后续同步不会回退到服务级默认区域。
 `GET /api/sync/calendar?month=YYYY-MM` 返回当前用户该月的逐日状态、活动数量、健康数据
 存在性、跑步记录数量及月份摘要；该接口只读取用户本地 SQLite，不访问运动平台。
 未提供 `mode` 时继续兼容原来的 `date`、`sync_days`、`full` 请求格式。
@@ -252,6 +274,20 @@ Garmin 遗留的 `activities=pending` 或个别健康指标失败显示为“部
 不会把训练数据上传到第三方服务，也不要求服务器安装 Playwright 或连接 CDN。支持文件分享的
 手机浏览器会打开系统分享面板，可继续保存到相册；其他浏览器会下载
 `neurun-daily-YYYY-MM-DD.png`。该能力只影响 Web 展示，不新增 CLI 参数或 MCP tool。
+
+### 联系我们与内测交流群
+
+登录后的所有 Web 页面右下方都提供“联系我们”入口。桌面端可 hover/focus 预览并点击保持展开，
+手机端点击后可长按或保存二维码，再从微信“扫一扫”的相册中识别。入口会避开手机底部主导航，
+也支持点击外部、关闭按钮和 `Escape` 关闭；登录、注册等匿名页面不会暴露群二维码。
+
+二维码通过受登录态保护的 `/contact/qr` 返回。运行时优先读取
+`<data_dir>/contact-wechat.jpg`，文件不存在时回退到随版本发布的
+`web/assets/contact-wechat.jpg`。运营更新群二维码时只需原子替换持久化文件并确认服务账号可读，
+无需修改页面代码；响应使用 `Cache-Control: no-store`，刷新页面即可读取新图。
+
+> 当前仓库内置二维码来自 2026-07-28 的截图，图片注明 2026-08-04 前有效；正式部署应在到期前
+> 将新二维码放入 `<data_dir>/contact-wechat.jpg`。
 
 ---
 
@@ -399,7 +435,7 @@ output/
 | `DEEPSEEK_API_KEY` | — | — | DeepSeek API Key（AI 洞察） |
 
 Web 模式会按用户注册记录选择 Garmin、Coros 或 Huawei，不受服务级
-`NEURUN_PROVIDER` 默认值影响。Coros 绑定成功后，访问 token 保存到
+`NEURUN_PROVIDER` 默认值影响。Coros 绑定成功后，Training Hub 与 Mobile 访问 token 保存到
 `data/<api_key>/tokens/coros-auth.json`（目录 `0700`、文件 `0600`）；后续同步不保存
 明文密码，而是恢复该用户的 token。token 无效或缺失时，接口会提示重新绑定账号。
 从旧版本升级时，如果系统中恰好只有一个已激活 Coros 用户，会自动把 coros-mcp 的
@@ -410,6 +446,12 @@ Coros 活动时长使用 API 的 `workoutTime`（实际运动时间，不包含�
 `duration_seconds`；不需要开启“强制覆盖”。如果 Coros 返回 token 失效，接口会明确
 失败、将连接状态改为 `expired` 并在同步页提供重新绑定入口，不再把空活动列表误报为
 同步成功。
+
+Coros 睡眠使用 Mobile token 读取总睡眠、深睡、REM、清醒、小睡和平台睡眠评分；
+统一健康表保存总睡眠、深睡、REM 及其占比。Mobile 授权失败不会影响活动、RHR 和 HRV
+同步。升级前已绑定的 Coros 用户可在“我的”点击“重新授权 Coros 睡眠”，按原流程重新
+输入一次账号密码；授权后执行覆盖目标日期的普通批量同步即可补齐历史睡眠，无需勾选
+“强制覆盖”。明文密码不会落盘。
 
 Huawei 配置只需要当前用户的 CrewPals token：
 
@@ -533,7 +575,8 @@ neurun/
 │       └── execution/   训练执行跟踪
 ├── output/              HTML 日报输出目录
 ├── data/                SQLite 数据库
-├── docs/design/          技术设计文档 v3.0（模块化拆分）
+├── docs/product/         产品行为、用户旅程与验收标准
+├── docs/design/          技术设计文档 v3.1（模块化拆分）
 └── pyproject.toml
 ```
 
@@ -547,4 +590,4 @@ pip install -e ".[dev]"
 pytest
 ```
 
-> **Documentation Sync Rule**: 每次代码变更后，必须同步更新 `docs/design/` 下的对应子文档和 `README.md`。
+> **Documentation Sync Rule**: 新功能实现前先确认 `docs/product/` 中的产品真相源和配套技术设计；代码变更后同步更新对应产品/设计文档和 `README.md`。Proposed 能力不得作为已上线功能写入用户说明。

@@ -3,11 +3,29 @@
 ## Project Overview
 
 neurun is a Python CLI app for Garmin data sync, AI coaching, and training knowledge base.
-Built on the `garmy` library. See [README.md](README.md) and [docs/design/](docs/design/) for full context.
+Built on the `garmy` library. See [README.md](README.md), [docs/product/](docs/product/) and [docs/design/](docs/design/) for full context.
+
+## Product Documentation Gate (MANDATORY)
+
+**新功能或新的用户旅程，在实现代码前必须先确认产品文档和配套技术设计：**
+
+1. 先在 `docs/product/` 查找该用户旅程的产品真相源；已有所有者时更新原文档，不创建平行方案。
+2. 没有现有所有者时，创建一份产品文档，并在 `docs/design/` 创建配套技术设计。
+3. 产品文档维护用户问题、范围、流程、状态、交互规则和验收标准；技术设计维护架构、接口、数据模型、迁移和测试方案。
+4. 产品方案和技术设计经用户确认后方可开始实现；文档中的 Proposed 能力不得写入 README 作为已上线功能。
+5. 后续优化和 Bug 修复必须回写原产品/设计文档的规范行为与验收标准；`docs/process/` 和 `docs/bugfixes/` 不能替代真相源。
 
 ## Documentation Sync Rule (MANDATORY)
 
 **每次代码变更后，必须同步更新文档，这是一条硬性规则：**
+
+### 0. 产品文档 — [docs/product/](docs/product/)
+
+以下情况必须更新对应产品文档：
+- 用户目标、用户旅程或产品范围变化
+- 页面职责、信息架构或交互流程变化
+- 用户可见状态、权限边界或异常行为变化
+- 产品验收标准变化
 
 ### 1. 技术设计文档 — [docs/design/](docs/design/)
 
@@ -172,20 +190,22 @@ Built on the `garmy` library. See [README.md](README.md) and [docs/design/](docs
 
 ## Post-Update Review (MANDATORY)
 
-**每次改动完成后、commit 前，必须执行以下 5 项一致性检查：**
+**每次改动完成后、commit 前，必须执行以下 6 项一致性检查：**
 
-1. **Design 同步检查**: 改动涉及的技术决策、接口变更、数据模型变更是否已在 `docs/design/` 对应子文档中反映？如有出入，先更新 design 再 commit。
-2. **README 同步检查**: 改动是否影响用户可见行为（CLI 命令、环境变量、输出格式、目录结构）？若是，README 是否已对应更新？
-3. **CHANGELOG 检查**: 本次改动是否已按分类（Added/Changed/Fixed/Removed）追加到 `docs/CHANGELOG.md`？
-4. **测试检查**: 是否为新代码编写了测试？`pytest` 是否零失败？
-5. **过程记录检查**: 若为大型改动，是否创建了 `docs/process/` 过程记录？
+1. **Product 同步检查**: 改动是否影响用户目标、流程、状态、交互或验收标准？若是，是否已更新 `docs/product/` 中的原始真相源？
+2. **Design 同步检查**: 改动涉及的技术决策、接口变更、数据模型变更是否已在 `docs/design/` 对应子文档中反映？如有出入，先更新 design 再 commit。
+3. **README 同步检查**: 改动是否影响用户可见行为（CLI 命令、环境变量、输出格式、目录结构）？若是，README 是否已对应更新？
+4. **CHANGELOG 检查**: 本次改动是否已按分类（Added/Changed/Fixed/Removed）追加到 `docs/CHANGELOG.md`？
+5. **测试检查**: 是否为新代码编写了测试？`pytest` 是否零失败？
+6. **过程记录检查**: 若为大型改动，是否创建了 `docs/process/` 过程记录？
 
-> 上述 5 项全部通过后，方可 commit。
+> 上述 6 项全部通过后，方可 commit。
 
 ## Pre-Commit Checklist
 
-每次提交前确认（Post-Update Review 5 项 + 补充项）：
+每次提交前确认（Post-Update Review 6 项 + 补充项）：
 
+- [ ] **Product 同步**: `docs/product/` 下的原始用户旅程文档已同步更新（如有产品行为变化）
 - [ ] **Design 同步**: `docs/design/` 下的对应子文档已同步更新（无出入）
 - [ ] **README 同步**: `README.md` 相关部分已更新（如有用户可见变更）
 - [ ] **CHANGELOG**: `docs/CHANGELOG.md` 已按分类追加条目

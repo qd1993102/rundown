@@ -9,9 +9,10 @@ from __future__ import annotations
 
 import logging
 from datetime import date, timedelta
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-from garmy import APIClient
+if TYPE_CHECKING:
+    from garmy import APIClient
 
 from .auth import AuthManager
 
@@ -47,9 +48,7 @@ class Fetcher:
     def client(self) -> APIClient:
         """获取已认证的 APIClient（懒初始化）。"""
         if self._client is None:
-            auth_client = self._auth.client
-            # garmy 2.0 API: APIClient(auth_client, domain, timeout, retries)
-            self._client = APIClient(auth_client=auth_client)
+            self._client = self._auth.create_api_client()
             logger.info("APIClient 已创建")
         return self._client
 

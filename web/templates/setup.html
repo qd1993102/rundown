@@ -282,6 +282,8 @@ p.desc{font-size:14px;color:#777;margin-bottom:28px;line-height:1.5}
 
 <script>
 // ── State ──
+const searchParams = new URLSearchParams(window.location.search);
+const rebindProvider = searchParams.get('rebind');
 let provider = 'garmin';
 let mfaSession = '';
 let step = 1;
@@ -319,6 +321,14 @@ function selectProvider(p){
       $('account-label').textContent='账号（邮箱）';
     }
   }
+}
+
+if(rebindProvider==='coros'){
+  selectProvider('coros');
+  document.querySelector('.provider-list').style.display='none';
+  document.querySelector('#step1 h1').textContent='😴 启用 Coros 睡眠同步';
+  document.querySelector('#step1 .desc').textContent='重新输入一次 Coros 账号和密码，同时更新活动与睡眠授权；neurun 不保存明文密码。';
+  $('step1-btn').textContent='授权并前往同步';
 }
 
 // ── Steps ──
@@ -368,6 +378,7 @@ async function doBind(){
   if(!email||!password){showError('请输入账号和密码');btn.disabled=false;return}
 
   const body = {provider,email,password};
+  if(rebindProvider==='coros') body.rebind = true;
   if(provider==='garmin') body.domain = $('domain').value;
 
   btn.innerHTML='<span class="spinner"></span>登录中...';
@@ -381,13 +392,17 @@ async function doBind(){
       $('mfa-section').style.display='block';
       $('step1-btn').style.display='none';
     }else if(d.status==='ok'){
-      showSuccess('绑定成功！');
-      setTimeout(()=>goStep(2),800);
+      showSuccess(d.message||'绑定成功！');
+      if(rebindProvider==='coros'){
+        setTimeout(()=>location.href='/sync',1000);
+      }else{
+        setTimeout(()=>goStep(2),800);
+      }
     }else{
       showError(d.message||'绑定失败');
     }
   }catch(e){showError('网络错误: '+e.message)}
-  btn.disabled=false;btn.textContent='绑定并继续';
+  btn.disabled=false;btn.textContent=rebindProvider==='coros'?'授权并前往同步':'绑定并继续';
 }
 
 async function submitMfa(){

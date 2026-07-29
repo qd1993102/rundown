@@ -12,9 +12,12 @@ from __future__ import annotations
 import logging
 import sys
 import time
-from typing import Any, Callable
+from typing import TYPE_CHECKING, Any, Callable
 
 from garmy import AuthClient
+
+if TYPE_CHECKING:
+    from garmy import APIClient
 
 from .config import Config
 
@@ -92,6 +95,15 @@ class AuthManager:
         if self._client is None:
             self._client = self._create_client()
         return self._client
+
+    def create_api_client(self) -> APIClient:
+        """创建与当前 Garmin 认证区域一致的数据 APIClient。"""
+        from garmy import APIClient
+
+        return APIClient(
+            auth_client=self.client,
+            domain=self._config.domain,
+        )
 
     # ── CLI 模式（保持向后兼容）──────────────────
 
