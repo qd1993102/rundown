@@ -23,6 +23,56 @@ def test_progress_reporter_gets_warning_compatibility(caplog):
     assert "activity fetch failed" in caplog.text
 
 
+def test_garmy_progress_reporter_emits_real_item_progress():
+    """长耗时指标阶段必须把 garmy 的逐项事件转换为可持久化进度。"""
+    from src.storage import GarmySyncProgressReporter
+
+    updates = []
+    reporter = GarmySyncProgressReporter(
+        updates.append, min_emit_interval=0,
+    )
+    first_day = date(2026, 4, 1)
+    second_day = date(2026, 4, 2)
+
+    reporter.start_sync(3)
+    reporter.task_complete("sleep", first_day)
+    reporter.task_skipped("stress", first_day)
+    reporter.task_failed("heart_rate", second_day)
+    reporter.end_sync()
+
+    assert updates == [
+        {"current": 0, "total": 3, "date": None, "metric": None,
+         "outcome": "started"},
+        {"current": 1, "total": 3, "date": "2026-04-01",
+         "metric": "sleep", "outcome": "completed"},
+        {"current": 2, "total": 3, "date": "2026-04-01",
+         "metric": "stress", "outcome": "skipped"},
+        {"current": 3, "total": 3, "date": "2026-04-02",
+         "metric": "heart_rate", "outcome": "failed"},
+    ]
+
+
+def test_garmy_progress_reporter_throttles_fast_same_date_updates(monkeypatch):
+    """同一天的快速事件应节流，但换日和最终项必须立即落盘。"""
+    import src.storage as storage_module
+
+    ticks = iter([0.0, 0.1, 0.2, 0.3])
+    monkeypatch.setattr(storage_module.time, "monotonic", lambda: next(ticks))
+    updates = []
+    reporter = storage_module.GarmySyncProgressReporter(
+        updates.append, min_emit_interval=1,
+    )
+
+    reporter.start_sync(3)
+    reporter.task_complete("sleep", date(2026, 4, 1))
+    reporter.task_complete("stress", date(2026, 4, 1))
+    reporter.task_complete("sleep", date(2026, 4, 2))
+
+    assert [(item["current"], item["date"]) for item in updates] == [
+        (0, None), (1, "2026-04-01"), (3, "2026-04-02"),
+    ]
+
+
 def test_storage_close_releases_http_sessions_and_sqlite_engines():
     """一次同步结束后应显式释放网络连接池与两个 SQLite Engine。"""
     from types import SimpleNamespace

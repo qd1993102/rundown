@@ -6,6 +6,9 @@ import time
 from datetime import date
 from unittest import mock
 
+import pytest
+import requests
+
 from src.providers.base import ActivityData, DailyHealth, DataProvider
 
 
@@ -87,6 +90,82 @@ class TestProviderRegistry:
         constructor.assert_called_once_with(
             auth_client=auth_client,
             domain="garmin.cn",
+        )
+
+    def test_garmin_auth_refreshes_expired_access_token_without_password(self, monkeypatch):
+        from src.providers.garmin import GarminAuth
+
+        class FakeClient:
+            is_authenticated = False
+            needs_refresh = True
+
+            def __init__(self, **kwargs):
+                self.kwargs = kwargs
+                self.refresh_calls = 0
+
+            def refresh_tokens(self):
+                self.refresh_calls += 1
+                self.is_authenticated = True
+
+            def login(self, **kwargs):
+                raise AssertionError("可刷新 Token 不得回退到账号密码登录")
+
+        client = FakeClient()
+        monkeypatch.setattr("garmy.AuthClient", lambda **kwargs: client)
+
+        auth = GarminAuth(domain="garmin.com", token_dir="/tmp/tokens")
+
+        assert auth.login("runner@example.com", "") is True
+        assert client.refresh_calls == 1
+
+    def test_garmin_auth_propagates_temporary_refresh_error(self, monkeypatch):
+        from src.providers.garmin import GarminAuth
+
+        class FakeClient:
+            is_authenticated = False
+            needs_refresh = True
+
+            def refresh_tokens(self):
+                raise requests.Timeout("Garmin refresh timeout")
+
+            def login(self, **kwargs):
+                raise AssertionError("临时刷新失败不得回退到账号密码登录")
+
+        monkeypatch.setattr("garmy.AuthClient", lambda **kwargs: FakeClient())
+
+        with pytest.raises(requests.Timeout, match="refresh timeout"):
+            GarminAuth(token_dir="/tmp/tokens").login("runner@example.com", "")
+
+    def test_garmin_auth_returns_false_when_refresh_is_unauthorized(self, monkeypatch):
+        from src.providers.garmin import GarminAuth
+
+        response = requests.Response()
+        response.status_code = 401
+
+        class FakeClient:
+            is_authenticated = False
+            needs_refresh = True
+
+            def refresh_tokens(self):
+                raise requests.HTTPError("Unauthorized", response=response)
+
+        monkeypatch.setattr("garmy.AuthClient", lambda **kwargs: FakeClient())
+
+        assert GarminAuth(token_dir="/tmp/tokens").login("runner@example.com", "") is False
+
+    def test_garmin_profile_error_is_not_converted_to_zero_user_id(self, monkeypatch):
+        from src.providers.garmin import GarminAuth
+
+        api_client = mock.Mock()
+        api_client.connectapi.side_effect = requests.Timeout("profile timeout")
+        auth = GarminAuth(token_dir="/tmp/tokens")
+        monkeypatch.setattr(auth, "create_api_client", lambda: api_client)
+
+        with pytest.raises(requests.Timeout, match="profile timeout"):
+            auth.get_user_id()
+
+        api_client.connectapi.assert_called_once_with(
+            "/userprofile-service/socialProfile"
         )
 
     def test_garmin_activity_reuses_auth_regional_api_client(self):

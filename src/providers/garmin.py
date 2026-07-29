@@ -17,6 +17,15 @@ from .base import (
 logger = logging.getLogger(__name__)
 
 
+def _http_status_code(exc: Exception) -> int | None:
+    """提取 requests/garmy 包装异常中的 HTTP 状态码。"""
+    response = getattr(exc, "response", None)
+    if response is None:
+        response = getattr(getattr(exc, "error", None), "response", None)
+    status_code = getattr(response, "status_code", None)
+    return int(status_code) if status_code is not None else None
+
+
 class GarminAuth(AuthProvider):
     """Garmin 认证（封装 garmy AuthClient）。"""
 
@@ -38,12 +47,32 @@ class GarminAuth(AuthProvider):
     def login(self, email: str, password: str) -> bool:
         from garmy import AuthClient
         self._client = AuthClient(domain=self._domain, token_dir=self._token_dir)
-        try:
-            if self._client.is_authenticated:
-                logger.info("Garmin: Token 有效")
-                return True
-        except Exception:
-            pass
+
+        if self._client.is_authenticated:
+            logger.info("Garmin: Token 有效")
+            return True
+
+        if self._client.needs_refresh:
+            logger.info("Garmin: Access Token 已过期，尝试自动刷新")
+            try:
+                self._client.refresh_tokens()
+            except Exception as exc:
+                if _http_status_code(exc) in (401, 403):
+                    logger.warning("Garmin: Refresh Token 已失效，需要重新绑定")
+                    return False
+                logger.error(
+                    "Garmin Token 自动刷新暂时失败: error_type=%s",
+                    type(exc).__name__,
+                )
+                raise
+            if not self._client.is_authenticated:
+                raise RuntimeError("Garmin Token 自动刷新后仍不可用，请稍后重试")
+            logger.info("Garmin: Token 自动刷新成功")
+            return True
+
+        if not email or not password:
+            logger.warning("Garmin: 没有可刷新的 Token，需要重新绑定")
+            return False
 
         logger.info("Garmin: 执行登录...")
         try:
@@ -55,9 +84,12 @@ class GarminAuth(AuthProvider):
                 self._client.resume_login(code, result[1])
             logger.info("Garmin: 登录成功")
             return True
-        except Exception as e:
-            logger.error("Garmin 登录失败: %s", e)
-            return False
+        except Exception as exc:
+            if _http_status_code(exc) in (401, 403):
+                logger.warning("Garmin 登录凭据无效: status=%s", _http_status_code(exc))
+                return False
+            logger.error("Garmin 登录暂时失败: error_type=%s", type(exc).__name__)
+            raise
 
     def is_authenticated(self) -> bool:
         if self._client is None:
@@ -71,10 +103,11 @@ class GarminAuth(AuthProvider):
         if self._user_id is not None:
             return self._user_id
         api = self.create_api_client()
-        profile = api.profile
-        if isinstance(profile, dict):
-            self._user_id = int(profile.get("id", 0))
-        return self._user_id or 0
+        profile = api.connectapi("/userprofile-service/socialProfile")
+        if not isinstance(profile, dict) or not profile.get("id"):
+            raise RuntimeError("Garmin profile 响应缺少用户 ID，请稍后重试")
+        self._user_id = int(profile["id"])
+        return self._user_id
 
     def create_api_client(self) -> APIClient:
         """创建与 Token 所属 Garmin 区域一致的数据 APIClient。"""

@@ -29,7 +29,7 @@ class _FakeServer:
         return decorator
 
 
-def _request(path, body, api_key, method="POST", query=""):
+def _request(path, body, api_key, method="POST", query="", path_params=None):
     raw = json.dumps(body).encode()
     delivered = False
 
@@ -47,6 +47,7 @@ def _request(path, body, api_key, method="POST", query=""):
         "path": path,
         "raw_path": path.encode(),
         "query_string": query.encode(),
+        "path_params": path_params or {},
         "headers": [
             (b"content-type", b"application/json"),
             (b"cookie", f"neurun_key={api_key}".encode()),
@@ -54,6 +55,21 @@ def _request(path, body, api_key, method="POST", query=""):
         "client": ("127.0.0.1", 12345),
         "server": ("testserver", 80),
     }, receive)
+
+
+async def _wait_sync_task(server, api_key, task_id, timeout=2):
+    route = server.routes[("/api/sync/tasks/{task_id}", "GET")]
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        response = await route(_request(
+            f"/api/sync/tasks/{task_id}", {}, api_key, method="GET",
+            path_params={"task_id": task_id},
+        ))
+        payload = json.loads(response.body)
+        if payload.get("status") in {"succeeded", "failed", "interrupted"}:
+            return response, payload
+        await asyncio.sleep(0.005)
+    raise AssertionError(f"同步任务 {task_id} 未在期限内结束")
 
 
 def _active_user(tmp_path):
@@ -359,21 +375,31 @@ def test_sync_route_only_persists_data_without_generating_reports(tmp_path, monk
     monkeypatch.setattr(web, "_do_data_sync", fake_sync)
     register_web_routes(server, manager, config)
 
-    response = asyncio.run(server.routes[("/api/sync", "POST")](_request(
-        "/api/sync",
-        {"mode": "batch", "from_date": "2026-07-17", "to_date": "2026-07-19"},
-        user.api_key,
-    )))
-    payload = json.loads(response.body)
+    async def scenario():
+        response = await server.routes[("/api/sync", "POST")](_request(
+            "/api/sync",
+            {"mode": "batch", "from_date": "2026-07-17", "to_date": "2026-07-19"},
+            user.api_key,
+        ))
+        payload = json.loads(response.body)
+        terminal_response, terminal = await _wait_sync_task(
+            server, user.api_key, payload["task_id"],
+        )
+        return response, payload, terminal_response, terminal
 
-    assert response.status_code == 200
-    assert payload == {
-        "status": "ok",
-        "message": "批量同步完成（2026-07-17 ~ 2026-07-19）",
-        "mode": "batch",
-        "from_date": "2026-07-17",
-        "to_date": "2026-07-19",
-    }
+    response, payload, terminal_response, terminal = asyncio.run(scenario())
+
+    assert response.status_code == 202
+    assert response.headers["location"] == payload["links"]["self"]
+    assert payload["status"] == "queued"
+    assert payload["mode"] == "batch"
+    assert payload["from_date"] == "2026-07-17"
+    assert payload["to_date"] == "2026-07-19"
+    assert terminal_response.status_code == 200
+    assert terminal_response.headers["cache-control"] == "no-store"
+    assert terminal["status"] == "succeeded"
+    assert terminal["result"]["from_date"] == "2026-07-17"
+    assert terminal["result"]["to_date"] == "2026-07-19"
     assert calls[0][0] == "sync"
     assert calls[-1][0] == "close"
 
@@ -397,6 +423,16 @@ def test_sync_route_keeps_health_responsive_and_rejects_same_user(tmp_path, monk
             pass
 
     def fake_sync(**kwargs):
+        kwargs["progress_callback"](
+            "syncing_metrics", 2, 4, "正在同步健康指标",
+            {
+                "current": 17,
+                "total": 33,
+                "date": "2026-07-25",
+                "metric": "stress",
+                "outcome": "completed",
+            },
+        )
         started.set()
         release.wait(timeout=2)
         return SimpleNamespace(), FakeStorage(), SimpleNamespace(), 123
@@ -405,11 +441,17 @@ def test_sync_route_keeps_health_responsive_and_rejects_same_user(tmp_path, monk
     register_web_routes(server, manager, config)
 
     async def scenario():
-        first = asyncio.create_task(server.routes[("/api/sync", "POST")](
+        first = await server.routes[("/api/sync", "POST")](
             _request("/api/sync", {"mode": "single", "date": "2026-07-26"}, user.api_key)
-        ))
+        )
+        first_payload = json.loads(first.body)
         while not started.is_set():
             await asyncio.sleep(0.005)
+
+        running = await server.routes[("/api/sync/tasks/{task_id}", "GET")](_request(
+            f"/api/sync/tasks/{first_payload['task_id']}", {}, user.api_key,
+            method="GET", path_params={"task_id": first_payload["task_id"]},
+        ))
 
         health_started = time.perf_counter()
         health = await server.routes[("/healthz", "GET")](
@@ -420,16 +462,36 @@ def test_sync_route_keeps_health_responsive_and_rejects_same_user(tmp_path, monk
             _request("/api/sync", {"mode": "single", "date": "2026-07-26"}, user.api_key)
         )
         release.set()
-        completed = await first
-        return health, health_elapsed, duplicate, completed
+        completed, completed_payload = await _wait_sync_task(
+            server, user.api_key, first_payload["task_id"],
+        )
+        return running, health, health_elapsed, first, first_payload, duplicate, completed, completed_payload
 
-    health, health_elapsed, duplicate, completed = asyncio.run(scenario())
+    running, health, health_elapsed, first, first_payload, duplicate, completed, completed_payload = asyncio.run(scenario())
 
+    assert running.status_code == 200
+    assert running.headers["retry-after"] == "1"
+    running_payload = json.loads(running.body)
+    assert running_payload["status"] == "running"
+    assert running_payload["progress"]["current"] == 2
+    assert running_payload["progress"]["total"] == 4
+    assert running_payload["progress"]["items"] == {
+        "current": 17,
+        "total": 33,
+        "date": "2026-07-25",
+        "metric": "stress",
+        "outcome": "completed",
+    }
     assert health.status_code == 200
     assert health_elapsed < 0.1
+    assert first.status_code == 202
     assert duplicate.status_code == 409
-    assert json.loads(duplicate.body)["code"] == "sync_in_progress"
+    duplicate_payload = json.loads(duplicate.body)
+    assert duplicate_payload["code"] == "sync_in_progress"
+    assert duplicate_payload["task_id"] == first_payload["task_id"]
+    assert duplicate_payload["links"]["self"] == first_payload["links"]["self"]
     assert completed.status_code == 200
+    assert completed_payload["status"] == "succeeded"
 
 
 def test_sync_route_rejects_distinct_user_over_pending_capacity(tmp_path, monkeypatch):
@@ -463,22 +525,71 @@ def test_sync_route_rejects_distinct_user_over_pending_capacity(tmp_path, monkey
     register_web_routes(server, manager, config)
 
     async def scenario():
-        first = asyncio.create_task(server.routes[("/api/sync", "POST")](
+        first = await server.routes[("/api/sync", "POST")](
             _request("/api/sync", {"mode": "single", "date": "2026-07-26"}, first_user.api_key)
-        ))
+        )
+        first_payload = json.loads(first.body)
         while not started.is_set():
             await asyncio.sleep(0.005)
         excess = await server.routes[("/api/sync", "POST")](
             _request("/api/sync", {"mode": "single", "date": "2026-07-26"}, second_user.api_key)
         )
         release.set()
-        await first
-        return excess
+        await _wait_sync_task(server, first_user.api_key, first_payload["task_id"])
+        return first, excess
 
-    excess = asyncio.run(scenario())
+    first, excess = asyncio.run(scenario())
 
+    assert first.status_code == 202
     assert excess.status_code == 503
     assert json.loads(excess.body)["code"] == "sync_capacity_exceeded"
+    second_task_file = tmp_path / second_user.api_key / "sync-tasks.json"
+    assert not second_task_file.exists()
+
+
+def test_sync_task_route_hides_other_users_tasks(tmp_path, monkeypatch):
+    import src.web as web
+
+    manager, owner = _active_user(tmp_path)
+    other = manager.register_account(
+        "其他跑者", "other-runner@example.com", "safe-password",
+    )
+    manager.update(other.api_key, token_status="active")
+    server = _FakeServer()
+    config = Config(data_dir=str(tmp_path))
+    release = threading.Event()
+
+    class FakeStorage:
+        def backup_to(self, path):
+            pass
+
+        def close(self):
+            pass
+
+    def fake_sync(**kwargs):
+        release.wait(timeout=2)
+        return SimpleNamespace(), FakeStorage(), SimpleNamespace(), 123
+
+    monkeypatch.setattr(web, "_do_data_sync", fake_sync)
+    register_web_routes(server, manager, config)
+
+    async def scenario():
+        accepted = await server.routes[("/api/sync", "POST")](_request(
+            "/api/sync", {"mode": "single", "date": "2026-07-26"}, owner.api_key,
+        ))
+        task_id = json.loads(accepted.body)["task_id"]
+        hidden = await server.routes[("/api/sync/tasks/{task_id}", "GET")](_request(
+            f"/api/sync/tasks/{task_id}", {}, other.api_key, method="GET",
+            path_params={"task_id": task_id},
+        ))
+        release.set()
+        await _wait_sync_task(server, owner.api_key, task_id)
+        return hidden
+
+    hidden = asyncio.run(scenario())
+
+    assert hidden.status_code == 404
+    assert json.loads(hidden.body)["code"] == "sync_task_not_found"
 
 
 def test_sync_calendar_route_returns_local_month_status(tmp_path, monkeypatch):
@@ -564,6 +675,16 @@ def test_sync_template_contains_accessible_calendar_contract():
     assert ".calendar-day.today{outline:2px solid var(--text-secondary)" not in html
     assert ".calendar-day.today .calendar-day-number{text-decoration" not in html
     assert "var text='已同步 '" in html
+    assert 'id="syncTaskCard"' in html
+    assert 'aria-live="polite"' in html
+    assert "neurun-sync-active-task" in html
+    assert "pollSyncTask" in html
+    assert "Retry-After" in html
+    assert "visibilitychange" in html
+    assert 'id="syncTaskItemProgress"' in html
+    assert 'id="syncTaskItemBar"' in html
+    assert "progress.items" in html
+    assert "已处理" in html
 
 
 def test_daily_templates_are_mobile_first_and_support_local_png_export():
@@ -686,6 +807,20 @@ def test_detects_coros_expired_token_error():
     assert _is_coros_auth_error(RuntimeError("temporary network error")) is False
 
 
+def test_provider_auth_error_reads_nested_http_status():
+    from src.web import _is_provider_auth_error
+
+    class NestedHTTPError(RuntimeError):
+        def __init__(self, status_code):
+            super().__init__(f"HTTP request failed: {status_code}")
+            response = SimpleNamespace(status_code=status_code)
+            self.error = SimpleNamespace(response=response)
+
+    assert _is_provider_auth_error(NestedHTTPError(401), "garmin") is True
+    assert _is_provider_auth_error(NestedHTTPError(403), "garmin") is True
+    assert _is_provider_auth_error(NestedHTTPError(503), "garmin") is False
+
+
 @pytest.mark.parametrize("provider", ["garmin", "coros", "huawei"])
 def test_sync_auth_failure_expires_bound_provider(tmp_path, monkeypatch, provider):
     import src.web as web
@@ -707,10 +842,64 @@ def test_sync_auth_failure_expires_bound_provider(tmp_path, monkeypatch, provide
     )
     register_web_routes(server, manager, config)
 
-    response = asyncio.run(server.routes[("/api/sync", "POST")](_request(
-        "/api/sync", {"mode": "single", "date": "2026-07-26"}, user.api_key,
-    )))
+    async def scenario():
+        response = await server.routes[("/api/sync", "POST")](_request(
+            "/api/sync", {"mode": "single", "date": "2026-07-26"}, user.api_key,
+        ))
+        accepted = json.loads(response.body)
+        terminal_response, terminal = await _wait_sync_task(
+            server, user.api_key, accepted["task_id"],
+        )
+        return response, terminal_response, terminal
 
-    assert response.status_code == 401
-    assert "重新绑定" in json.loads(response.body)["message"]
+    response, terminal_response, terminal = asyncio.run(scenario())
+
+    assert response.status_code == 202
+    assert terminal_response.status_code == 200
+    assert terminal["status"] == "failed"
+    assert terminal["error"]["code"] == "provider_authentication_failed"
+    assert terminal["error"]["action"] == "reauthorize"
+    assert "重新绑定" in terminal["error"]["message"]
     assert manager.get(user.api_key).token_status == "expired"
+
+
+def test_sync_temporary_provider_failure_keeps_connection_active(tmp_path, monkeypatch):
+    import src.web as web
+
+    manager, user = _active_user(tmp_path)
+    manager.update(
+        user.api_key,
+        provider="garmin",
+        garmin_email="runner@example.com",
+        token_status="active",
+    )
+    server = _FakeServer()
+    config = Config(data_dir=str(tmp_path))
+    monkeypatch.setattr(
+        web,
+        "_do_data_sync",
+        mock.Mock(side_effect=TimeoutError("Garmin temporary timeout")),
+    )
+    register_web_routes(server, manager, config)
+
+    async def scenario():
+        response = await server.routes[("/api/sync", "POST")](_request(
+            "/api/sync", {"mode": "single", "date": "2026-07-26"}, user.api_key,
+        ))
+        accepted = json.loads(response.body)
+        terminal_response, terminal = await _wait_sync_task(
+            server, user.api_key, accepted["task_id"],
+        )
+        return terminal_response, terminal
+
+    terminal_response, terminal = asyncio.run(scenario())
+
+    assert terminal_response.status_code == 200
+    assert terminal["status"] == "failed"
+    assert terminal["error"] == {
+        "code": "provider_timeout",
+        "message": "数据源请求超时，请稍后重试",
+        "retryable": True,
+        "action": "retry",
+    }
+    assert manager.get(user.api_key).token_status == "active"

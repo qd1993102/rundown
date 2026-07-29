@@ -31,7 +31,7 @@ from .auth import AuthManager, cleanup_expired_mfa_states, get_mfa_state
 from .coach import chat_stream
 from .config import Config, UserConfig
 from .invitations import InvitationError, InvitationStore
-from .local_files import atomic_write_private, ensure_private_dir
+from .local_files import LocalPersistenceError, atomic_write_private, ensure_private_dir
 from .main import ProviderAuthenticationError, _do_daily_sync, _do_data_sync
 from .memory import Memory, MemoryStore, build_memory_file
 from .resource_lifecycle import close_runtime_resources
@@ -41,6 +41,7 @@ from .sync_coordinator import (
     SyncCoordinator,
     SyncInProgressError,
 )
+from .sync_tasks import ACTIVE_STATUSES, SyncTaskStore
 from .users import UserExistsError, UserManager, UserRecord
 
 logger = logging.getLogger(__name__)
@@ -390,16 +391,50 @@ def _is_provider_auth_error(exc: Exception, provider_type: str) -> bool:
     if provider_type == "coros" and _is_coros_auth_error(exc):
         return True
     response = getattr(exc, "response", None)
-    if getattr(response, "status_code", None) == 401:
+    if response is None:
+        response = getattr(getattr(exc, "error", None), "response", None)
+    if getattr(response, "status_code", None) in (401, 403):
         return True
     message = str(exc).lower()
     return any(marker in message for marker in (
         "not authenticated",
         "please login first",
         "unauthorized",
+        "forbidden",
         "token expired",
         "token is invalid",
     ))
+
+
+def _sync_task_error(exc: Exception, provider_type: str) -> dict[str, Any]:
+    """将后台异常转换为不含第三方原始响应的稳定任务错误。"""
+    if _is_provider_auth_error(exc, provider_type):
+        return {
+            "code": "provider_authentication_failed",
+            "message": str(ProviderAuthenticationError(provider_type)),
+            "retryable": False,
+            "action": "reauthorize",
+        }
+    if isinstance(exc, LocalPersistenceError):
+        return {
+            "code": "local_persistence_failed",
+            "message": str(exc),
+            "retryable": True,
+            "action": "contact_support",
+        }
+    if isinstance(exc, TimeoutError):
+        return {
+            "code": "provider_timeout",
+            "message": "数据源请求超时，请稍后重试",
+            "retryable": True,
+            "action": "retry",
+        }
+    return {
+        "code": "sync_failed",
+        "message": "数据源同步失败，请稍后重试",
+        "retryable": True,
+        "action": "retry",
+    }
 
 
 def _user_context(memory_store: MemoryStore) -> str:
@@ -515,6 +550,18 @@ def register_web_routes(server, user_manager: UserManager, config: Config):
         max_concurrency=config.sync_max_concurrency,
         max_pending=config.sync_max_pending,
     )
+    runner_instance_id = secrets.token_hex(16)
+    sync_task_stores: dict[str, SyncTaskStore] = {}
+
+    def sync_task_store(api_key: str) -> SyncTaskStore:
+        store = sync_task_stores.get(api_key)
+        if store is None:
+            store = SyncTaskStore(
+                user_manager.get_sync_tasks_path(api_key),
+                runner_instance_id=runner_instance_id,
+            )
+            sync_task_stores[api_key] = store
+        return store
 
     # ═══ 基础设施路由 ═══
 
@@ -936,7 +983,30 @@ def register_web_routes(server, user_manager: UserManager, config: Config):
                 {"status": "error", "message": str(exc)}, status_code=400
             )
 
-        def run_sync() -> None:
+        task_id = f"st_{secrets.token_hex(16)}"
+        task_store = sync_task_store(api_key)
+
+        def report_progress(
+            stage: str, current: int, total: int, label: str,
+            items: dict[str, Any] | None = None,
+        ) -> None:
+            try:
+                task_store.update_progress(
+                    task_id,
+                    stage=stage,
+                    current=current,
+                    total=total,
+                    label=label,
+                    items=items,
+                )
+            except Exception as exc:
+                logger.warning(
+                    "无法更新同步任务阶段: task_id=%s error_type=%s",
+                    task_id,
+                    type(exc).__name__,
+                )
+
+        def run_sync() -> dict[str, Any]:
             provider = None
             storage = None
             try:
@@ -944,39 +1014,113 @@ def register_web_routes(server, user_manager: UserManager, config: Config):
                     config=user_cfg, target=sync_request.target,
                     sync_days=sync_request.sync_days, full_sync=sync_request.full,
                     force_sync=sync_request.force, quiet=True,
+                    progress_callback=report_progress,
                 )
+                report_progress("backing_up", 4, 4, "正在备份本地数据")
                 storage.backup_to(user_manager.get_backup_path(api_key))
+                return {
+                    "message": (
+                        f"单日同步完成（{sync_request.target}）"
+                        if sync_request.mode == "single"
+                        else f"批量同步完成（{sync_request.start} ~ {sync_request.end}）"
+                        if sync_request.mode == "batch"
+                        else f"同步完成（{sync_request.start} ~ {sync_request.end}）"
+                    ),
+                    "mode": sync_request.mode,
+                    "from_date": str(sync_request.start),
+                    "to_date": str(sync_request.end),
+                }
             finally:
                 close_runtime_resources(provider)
                 if storage is not None:
                     storage.close()
 
-        try:
-            await sync_coordinator.run(api_key, run_sync)
-            user_manager.update(api_key, last_sync=str(date.today()))
+        def on_accept() -> None:
+            task_store.create(
+                task_id=task_id,
+                mode=sync_request.mode,
+                from_date=str(sync_request.start),
+                to_date=str(sync_request.end),
+                force=sync_request.force,
+            )
 
+        def on_started() -> None:
+            task_store.mark_running(
+                task_id,
+                stage="authenticating",
+                current=1,
+                total=4,
+                label="正在验证数据源",
+            )
+
+        def on_succeeded(result: dict[str, Any]) -> None:
+            try:
+                user_manager.update(api_key, last_sync=str(date.today()))
+            except Exception as exc:
+                logger.warning(
+                    "无法更新用户最后同步日期: error_type=%s",
+                    type(exc).__name__,
+                )
+            task_store.mark_succeeded(task_id, result=result)
+
+        def on_failed(exc: Exception) -> None:
+            error = _sync_task_error(exc, user.provider)
+            if error["code"] == "provider_authentication_failed":
+                try:
+                    user_manager.update(api_key, token_status="expired")
+                except Exception as update_exc:
+                    logger.warning(
+                        "无法更新数据源失效状态: error_type=%s",
+                        type(update_exc).__name__,
+                    )
+            logger.error(
+                "同步任务失败: task_id=%s provider=%s error_type=%s code=%s",
+                task_id,
+                user.provider,
+                type(exc).__name__,
+                error["code"],
+            )
+            task_store.mark_failed(task_id, error=error)
+
+        try:
+            await sync_coordinator.submit(
+                api_key,
+                task_id,
+                run_sync,
+                on_accept=on_accept,
+                on_started=on_started,
+                on_succeeded=on_succeeded,
+                on_failed=on_failed,
+            )
+            location = f"/api/sync/tasks/{task_id}"
             return JSONResponse({
-                "status": "ok",
-                "message": (
-                    f"单日同步完成（{sync_request.target}）"
-                    if sync_request.mode == "single"
-                    else f"批量同步完成（{sync_request.start} ~ {sync_request.end}）"
-                    if sync_request.mode == "batch"
-                    else f"同步完成（{sync_request.start} ~ {sync_request.end}）"
-                ),
+                "status": "queued",
+                "task_id": task_id,
                 "mode": sync_request.mode,
                 "from_date": str(sync_request.start),
                 "to_date": str(sync_request.end),
+                "links": {"self": location},
+            }, status_code=202, headers={
+                "Location": location,
+                "Cache-Control": "no-store",
             })
 
         except SyncInProgressError as exc:
+            existing_task_id = exc.task_id
+            location = (
+                f"/api/sync/tasks/{existing_task_id}"
+                if existing_task_id else None
+            )
             return JSONResponse(
                 {
                     "status": "error",
                     "code": "sync_in_progress",
                     "message": str(exc),
+                    "task_id": existing_task_id,
+                    "links": {"self": location} if location else {},
                 },
                 status_code=409,
+                headers={"Cache-Control": "no-store"},
             )
         except SyncCapacityExceededError as exc:
             return JSONResponse(
@@ -986,19 +1130,64 @@ def register_web_routes(server, user_manager: UserManager, config: Config):
                     "message": str(exc),
                 },
                 status_code=503,
+                headers={"Cache-Control": "no-store", "Retry-After": "5"},
             )
         except Exception as exc:
-            logger.error("同步失败: %s", exc)
-            if _is_provider_auth_error(exc, user.provider):
-                user_manager.update(api_key, token_status="expired")
-                return JSONResponse(
-                    {
-                        "status": "error",
-                        "message": str(ProviderAuthenticationError(user.provider)),
-                    },
-                    status_code=401,
-                )
-            return JSONResponse({"status": "error", "message": str(exc)}, status_code=500)
+            logger.error(
+                "同步任务接纳失败: error_type=%s", type(exc).__name__,
+            )
+            return JSONResponse(
+                {
+                    "status": "error",
+                    "code": "sync_task_submit_failed",
+                    "message": "无法创建同步任务，请稍后重试",
+                },
+                status_code=500,
+                headers={"Cache-Control": "no-store"},
+            )
+
+    @server.custom_route("/api/sync/tasks/{task_id}", methods=["GET"])
+    async def api_sync_task(request: Request) -> Response:
+        """查询当前登录用户自己的异步同步任务。"""
+        api_key = _get_api_key(request)
+        user = user_manager.get(api_key) if api_key else None
+        if user is None:
+            return JSONResponse(
+                {"status": "error", "message": "请先登录"},
+                status_code=401,
+                headers={"Cache-Control": "no-store"},
+            )
+
+        task_id = str(request.path_params.get("task_id") or "")
+        try:
+            task = sync_task_store(api_key).get(task_id)
+        except LocalPersistenceError:
+            logger.error("无法读取同步任务: task_id=%s", task_id)
+            return JSONResponse(
+                {
+                    "status": "error",
+                    "code": "sync_task_read_failed",
+                    "message": "无法读取同步任务，请联系管理员检查数据目录权限",
+                },
+                status_code=500,
+                headers={"Cache-Control": "no-store"},
+            )
+
+        if task is None:
+            return JSONResponse(
+                {
+                    "status": "error",
+                    "code": "sync_task_not_found",
+                    "message": "同步任务不存在",
+                },
+                status_code=404,
+                headers={"Cache-Control": "no-store"},
+            )
+
+        headers = {"Cache-Control": "no-store"}
+        if task.status in ACTIVE_STATUSES:
+            headers["Retry-After"] = "1"
+        return JSONResponse(task.to_api_dict(), headers=headers)
 
     @server.custom_route("/api/sync/calendar", methods=["GET"])
     async def api_sync_calendar(request: Request) -> Response:

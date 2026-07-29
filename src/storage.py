@@ -10,11 +10,14 @@ import csv
 import io
 import json
 import logging
+import time
+from collections.abc import Callable
 from datetime import date, timedelta
 from pathlib import Path
 from typing import Any
 
 from garmy.localdb import HealthDB, SyncManager
+from garmy.localdb.progress import ProgressReporter
 
 from .config import Config
 from .local_files import atomic_write_private, ensure_private_dir, restrict_private_file
@@ -33,6 +36,111 @@ def _ensure_progress_reporter_compat(progress_reporter: Any) -> None:
     """
     if not callable(getattr(progress_reporter, "warning", None)):
         progress_reporter.warning = logger.warning
+
+
+class GarmySyncProgressReporter(ProgressReporter):
+    """把 garmy 的逐日期/逐指标事件适配为 Web 可持久化的真实进度。"""
+
+    def __init__(
+        self,
+        callback: Callable[[dict[str, Any]], None],
+        *,
+        min_emit_interval: float = 1.0,
+    ) -> None:
+        super().__init__(use_tqdm=False)
+        self._callback = callback
+        self._min_emit_interval = max(0.0, min_emit_interval)
+        self._current = 0
+        self._total = 0
+        self._last_emit_at = float("-inf")
+        self._last_emitted_current = -1
+        self._last_emitted_date: date | None = None
+        self._last_item: dict[str, Any] | None = None
+
+    def start_sync(self, total: int) -> None:
+        self._current = 0
+        self._total = max(0, int(total))
+        self._last_emit_at = float("-inf")
+        self._last_emitted_current = -1
+        self._last_emitted_date = None
+        self._last_item = None
+        super().start_sync(total)
+        self._emit(
+            task=None, sync_date=None, outcome="started", force=True,
+        )
+
+    def task_complete(self, task: str, sync_date: date) -> None:
+        super().task_complete(task, sync_date)
+        self._advance(task, sync_date, "completed")
+
+    def task_skipped(self, task: str, sync_date: date) -> None:
+        super().task_skipped(task, sync_date)
+        self._advance(task, sync_date, "skipped")
+
+    def task_failed(self, task: str, sync_date: date) -> None:
+        super().task_failed(task, sync_date)
+        self._advance(task, sync_date, "failed")
+
+    def end_sync(self) -> None:
+        if (
+            self._last_item is not None
+            and self._last_emitted_current != self._current
+        ):
+            self._emit(
+                task=self._last_item["metric"],
+                sync_date=date.fromisoformat(self._last_item["date"]),
+                outcome=self._last_item["outcome"],
+                force=True,
+            )
+        super().end_sync()
+
+    def _advance(self, task: str, sync_date: date, outcome: str) -> None:
+        self._current += 1
+        self._last_item = {
+            "metric": task,
+            "date": sync_date.isoformat(),
+            "outcome": outcome,
+        }
+        self._emit(
+            task=task,
+            sync_date=sync_date,
+            outcome=outcome,
+            force=self._current >= self._total,
+        )
+
+    def _emit(
+        self,
+        *,
+        task: str | None,
+        sync_date: date | None,
+        outcome: str,
+        force: bool,
+    ) -> None:
+        now = time.monotonic()
+        date_changed = sync_date is not None and sync_date != self._last_emitted_date
+        if (
+            not force
+            and not date_changed
+            and now - self._last_emit_at < self._min_emit_interval
+        ):
+            return
+
+        payload = {
+            "current": self._current,
+            "total": self._total,
+            "date": sync_date.isoformat() if sync_date is not None else None,
+            "metric": task,
+            "outcome": outcome,
+        }
+        try:
+            self._callback(payload)
+        except Exception as exc:
+            logger.warning(
+                "同步逐项进度上报失败: error_type=%s", type(exc).__name__,
+            )
+        self._last_emit_at = now
+        self._last_emitted_current = self._current
+        self._last_emitted_date = sync_date
 
 
 class Storage:
@@ -180,6 +288,7 @@ class Storage:
         start: date,
         end: date,
         metrics: list[str] | None = None,
+        progress_callback: Callable[[dict[str, Any]], None] | None = None,
     ) -> dict[str, int]:
         """同步指定日期范围的数据。
 
@@ -188,10 +297,18 @@ class Storage:
             start: 起始日期。
             end: 结束日期。
             metrics: 要同步的指标列表，None 表示全部。
+            progress_callback: 可选的真实逐项进度回调，仅供 Web 任务使用。
 
         Returns:
             同步结果统计 {metric_type: count}。
         """
+        if progress_callback is not None:
+            reporter = GarmySyncProgressReporter(progress_callback)
+            manager = self.sync_manager
+            manager.progress = reporter
+            _ensure_progress_reporter_compat(reporter)
+            if manager.activities_iterator is not None:
+                manager.activities_iterator.progress = reporter
         self.initialize_sync()
         logger.info(
             "开始同步: %s ~ %s, metrics=%s",

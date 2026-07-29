@@ -246,14 +246,44 @@ Garmin 遗留的 `activities=pending` 或个别健康指标失败显示为“部
 {"mode":"batch","from_date":"2026-07-01","to_date":"2026-07-19","force":false}
 ```
 
-`POST /api/sync` 成功响应包含 `mode`、`from_date`、`to_date`，不包含日报生成结果。
-Web 同步在工作线程中执行，默认单进程最多同时执行 4 个不同用户任务，并接纳最多 100 个
-执行中或排队中的不同用户。同一用户重复点击返回 HTTP 409（`sync_in_progress`）；达到全局
-接纳上限后返回 HTTP 503（`sync_capacity_exceeded`），客户端应稍后重试。同步期间
+`POST /api/sync` 在任务记录已持久化且调度器成功接纳后立即返回 HTTP 202，不等待第三方平台
+完成。响应包含 `task_id`、`mode`、`from_date`、`to_date` 和 `links.self`；202 表示“已接纳”，
+不表示数据已经同步成功：
+
+```json
+{
+  "status": "queued",
+  "task_id": "st_xxx",
+  "mode": "batch",
+  "from_date": "2026-07-01",
+  "to_date": "2026-07-19",
+  "links": {"self": "/api/sync/tasks/st_xxx"}
+}
+```
+
+客户端随后轮询 `GET /api/sync/tasks/{task_id}`。任务状态为 `queued`、`running`、
+`succeeded`、`failed` 或 `interrupted`，并返回认证、健康指标、运动记录、备份等真实阶段；
+运行中响应带 `Retry-After: 1`。任务失败仍是成功读取到的 HTTP 200 响应，由 `error.code`、
+`error.message`、`error.retryable` 和 `error.action` 表达业务终态。页面会保存活动 `task_id`，
+刷新或短暂断网后继续轮询，不会重复提交。
+
+Garmin 健康指标阶段会在四阶段总进度下额外展示真实的“已处理项 / 总项数”、最近处理日期和指标；
+完成、跳过和失败的指标事件都会推进该计数。明细保存在用户任务文件中，刷新页面后可直接恢复，
+不会按运行时长伪造百分比。
+
+Web 后台任务默认单进程最多同时执行 4 个不同用户，并接纳最多 100 个执行中或排队中的不同
+用户。同一用户重复点击返回 HTTP 409（`sync_in_progress`）及现有 `task_id`，页面据此恢复任务；
+达到全局接纳上限后返回 HTTP 503（`sync_capacity_exceeded`），客户端应稍后重试。同步期间
 `GET|HEAD /healthz` 仍可响应。单机 100 是准入上限，不代表 100 个任务会同时访问平台。
-同步开始时 Garmin、Coros、Huawei 都会先恢复并验证当前用户凭据，再读取平台
-`user_id` 和打开 SQLite；认证失败会返回 HTTP 401、将连接标记为 `expired` 并提示重新绑定，
-不会用 `user_id=0` 或未认证客户端继续写本地数据。
+进程重启后旧的 `queued/running` 任务会变为可重试的 `interrupted`，不会自动重放第三方请求。
+
+同步开始时 Garmin、Coros、Huawei 都会先恢复并验证当前用户凭据，再读取平台 `user_id` 和打开
+SQLite；后台认证失败会把任务标记为 `failed`、将连接标记为 `expired` 并在轮询结果中提示重新
+绑定，不会用 `user_id=0` 或未认证客户端继续写本地数据。若连接在提交前已经是 `expired`，
+`POST /api/sync` 直接返回 HTTP 401。
+Garmin Access Token 到期时会优先使用用户目录中的刷新凭据自动续期并继续同步，Web 不保存也
+不需要重新提交 Garmin 明文密码。只有刷新凭据过期、被撤销或刷新明确返回 401/403 时才提示
+重新绑定；超时、限流、Garmin 5xx 或 profile 临时异常保持连接为 `active`，页面提示稍后重试。
 Garmin 用户绑定时选择的国际区 `garmin.com` 或中国区 `garmin.cn` 会同时用于登录、profile、
 活动和健康数据请求；后续同步不会回退到服务级默认区域。
 `GET /api/sync/calendar?month=YYYY-MM` 返回当前用户该月的逐日状态、活动数量、健康数据

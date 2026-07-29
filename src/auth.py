@@ -28,6 +28,15 @@ logger = logging.getLogger(__name__)
 _mfa_states: dict[str, dict] = {}
 
 
+def _http_status_code(exc: Exception) -> int | None:
+    """提取 requests/garmy 包装异常中的 HTTP 状态码。"""
+    response = getattr(exc, "response", None)
+    if response is None:
+        response = getattr(getattr(exc, "error", None), "response", None)
+    status_code = getattr(response, "status_code", None)
+    return int(status_code) if status_code is not None else None
+
+
 def _discard_mfa_state(session_key: str) -> bool:
     """删除一个 MFA 状态并关闭其认证会话。"""
     state = _mfa_states.pop(session_key, None)
@@ -239,11 +248,18 @@ class AuthManager:
 
     @staticmethod
     def _try_existing_token(client: AuthClient) -> bool:
-        """尝试用已有 Token 认证，返回是否有效。"""
-        try:
+        """恢复已有 Token，并在 Access Token 到期时先自动刷新。"""
+        if client.is_authenticated:
+            return True
+        if client.needs_refresh:
+            try:
+                client.refresh_tokens()
+            except Exception as exc:
+                if _http_status_code(exc) in (401, 403):
+                    return False
+                raise
             return client.is_authenticated
-        except Exception:
-            return False
+        return False
 
     def logout(self) -> None:
         """清除 Token。"""

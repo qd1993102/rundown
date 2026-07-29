@@ -168,7 +168,8 @@ JSON，而是原子写入该用户的 `huawei-tokens/group-pals-token`，目录�
 2. 调用 `provider.authenticate()` 验证或刷新认证；
 3. 仅在认证成功后读取 `provider.user_id`；
 4. 使用该 `user_id` 初始化同步、SQLite 查询和写入；
-5. 认证失败时停止同步，将 Web 用户连接状态标记为 `expired`，并返回 HTTP 401 的重新绑定提示。
+5. 只有明确的凭据失效才停止同步并将 Web 用户连接状态标记为 `expired`；网络、限流、平台 5xx
+   或响应异常作为可重试失败返回，并保持连接为 `active`。
 
 禁止把 `user_id=0`、服务级凭证或尚未初始化的认证客户端作为同步降级值。Garmin 的
 `AuthClient`、Coros 的 `StoredAuth` 和 Huawei 的本地 AT 都必须先通过各自认证检查。
@@ -177,7 +178,11 @@ Garmin 的区域是认证与数据请求的共同边界。创建 `garmy.APIClien
 `UserConfig.domain`（Web）或 `Config.domain`（CLI），不能只传 `AuthClient` 后依赖 garmy
 默认的 `garmin.com`。profile、活动、健康同步及记忆补全使用的每个 APIClient 都必须与
 创建 Token 的 `AuthClient.domain` 一致；`garmin.cn` Token 不得请求 `connectapi.garmin.com`。
-有效 Token 的 profile 返回空对象不能直接证明 Token 失效，应先确认 APIClient 区域是否一致。
+Garmin `provider.authenticate()` 必须先区分 `is_authenticated` 与 `needs_refresh`：前者为真时直接
+复用，后者为真时调用 `refresh_tokens()` 并持久化新 OAuth2 Token，不能直接进入账号密码 SSO。
+只有 Refresh Token 不可用或刷新明确返回 401/403 才返回认证失败。有效 Token 的 profile 返回
+空对象不能直接证明 Token 失效；Provider 应调用可保留原始异常的 profile 请求，401/403 才归类
+认证失效，超时、429、5xx 和响应异常均保持可重试。
 
 ### 12.5 Huawei 数据 API 接入细节
 

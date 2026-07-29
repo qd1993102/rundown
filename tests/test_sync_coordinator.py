@@ -116,3 +116,57 @@ def test_failed_work_releases_user_and_capacity():
         assert await coordinator.run("runner-a", lambda: "retried") == "retried"
 
     asyncio.run(scenario())
+
+
+def test_submit_returns_immediately_and_keeps_background_task():
+    coordinator = SyncCoordinator(max_concurrency=1, max_pending=2)
+    started = threading.Event()
+    release = threading.Event()
+    events = []
+
+    def work():
+        started.set()
+        release.wait(timeout=2)
+        return "done"
+
+    async def scenario():
+        task_id = await coordinator.submit(
+            "runner-a", "st_async", work,
+            on_accept=lambda: events.append("accepted"),
+            on_started=lambda: events.append("started"),
+            on_succeeded=lambda result: events.append(("succeeded", result)),
+            on_failed=lambda exc: events.append(("failed", type(exc).__name__)),
+        )
+        assert task_id == "st_async"
+        assert coordinator.pending_count == 1
+        while not started.is_set():
+            await asyncio.sleep(0.005)
+        release.set()
+        await coordinator.wait("st_async")
+
+    asyncio.run(scenario())
+
+    assert events == ["accepted", "started", ("succeeded", "done")]
+    assert coordinator.pending_count == 0
+
+
+def test_submit_duplicate_exposes_existing_task_id():
+    coordinator = SyncCoordinator(max_concurrency=1, max_pending=1)
+    started = threading.Event()
+    release = threading.Event()
+
+    def work():
+        started.set()
+        release.wait(timeout=2)
+
+    async def scenario():
+        await coordinator.submit("runner-a", "st_first", work)
+        while not started.is_set():
+            await asyncio.sleep(0.005)
+        with pytest.raises(SyncInProgressError) as captured:
+            await coordinator.submit("runner-a", "st_second", lambda: None)
+        assert captured.value.task_id == "st_first"
+        release.set()
+        await coordinator.wait("st_first")
+
+    asyncio.run(scenario())

@@ -19,6 +19,7 @@ import json
 import logging
 import os
 import sys
+from collections.abc import Callable
 from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -45,6 +46,7 @@ from .resource_lifecycle import close_runtime_resources
 
 logger = logging.getLogger(__name__)
 console = Console()
+SyncProgressCallback = Callable[..., None]
 
 
 class ProviderAuthenticationError(RuntimeError):
@@ -58,6 +60,34 @@ class ProviderAuthenticationError(RuntimeError):
             "huawei": "Huawei",
         }.get(provider_type, provider_type)
         super().__init__(f"{display_name} 认证失败，请重新绑定账号")
+
+
+class ProviderIdentityError(RuntimeError):
+    """认证通过，但平台暂时没有返回可用的正整数用户 ID。"""
+
+    def __init__(self, provider_type: str):
+        self.provider_type = provider_type
+        super().__init__("数据源暂时无法确认用户身份，请稍后重试")
+
+
+def _report_sync_progress(
+    callback: SyncProgressCallback | None,
+    stage: str,
+    current: int,
+    total: int,
+    label: str,
+    items: dict[str, Any] | None = None,
+) -> None:
+    """上报真实阶段；进度持久化异常不得掩盖主同步结果。"""
+    if callback is None:
+        return
+    try:
+        if items is None:
+            callback(stage, current, total, label)
+        else:
+            callback(stage, current, total, label, items)
+    except Exception as exc:
+        logger.warning("同步进度上报失败: error_type=%s", type(exc).__name__)
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -78,24 +108,21 @@ def _setup(config=None):
     provider = get_provider(config)
     try:
         authenticated = provider.authenticate()
-    except LocalPersistenceError:
+    except Exception:
         close_runtime_resources(provider)
         raise
-    except Exception as exc:
-        close_runtime_resources(provider)
-        raise ProviderAuthenticationError(config.provider_type) from exc
     if not authenticated:
         close_runtime_resources(provider)
         raise ProviderAuthenticationError(config.provider_type)
 
     try:
         user_id = int(provider.user_id)
-    except Exception as exc:
+    except Exception:
         close_runtime_resources(provider)
-        raise ProviderAuthenticationError(config.provider_type) from exc
+        raise
     if user_id <= 0:
         close_runtime_resources(provider)
-        raise ProviderAuthenticationError(config.provider_type)
+        raise ProviderIdentityError(config.provider_type)
 
     storage = Storage(config)
 
@@ -310,12 +337,16 @@ def _sync_garmin_activities(provider, storage, user_id: int, start: date, end: d
 
 
 def _sync_provider(provider, storage, user_id: int, start: date, end: date,
-                   provider_name: str) -> None:
+                   provider_name: str,
+                   progress_callback: SyncProgressCallback | None = None) -> None:
     """将非 Garmin Provider 的标准化数据写入 SQLite。"""
     from sqlalchemy import text
 
     _ensure_activity_columns(storage)
 
+    _report_sync_progress(
+        progress_callback, "syncing_activities", 2, 4, "正在同步运动记录",
+    )
     console.print("[dim]📥 拉取活动数据...[/]")
     activities = provider.activities.fetch_activities(start, end)
     session = storage.db.get_session()
@@ -370,6 +401,9 @@ def _sync_provider(provider, storage, user_id: int, start: date, end: date,
         f"(共 {len(activities)} 条)"
     )
 
+    _report_sync_progress(
+        progress_callback, "syncing_metrics", 3, 4, "正在同步健康指标",
+    )
     console.print("[dim]📥 拉取健康数据...[/]")
     stored_health = 0
     updated_health = 0
@@ -469,8 +503,12 @@ def _sync_provider(provider, storage, user_id: int, start: date, end: date,
 
 def _do_data_sync(config, target: date | None = None,
                   full_sync: bool = False, force_sync: bool = False,
-                  sync_days: int | None = None, quiet: bool = False):
+                  sync_days: int | None = None, quiet: bool = False,
+                  progress_callback: SyncProgressCallback | None = None):
     """核心数据同步逻辑；只写入 SQLite，不生成日报。"""
+    _report_sync_progress(
+        progress_callback, "authenticating", 1, 4, "正在验证数据源",
+    )
     _, provider, storage, memory_store, user_id = _setup(config=config)
     try:
         return _do_initialized_data_sync(
@@ -484,6 +522,7 @@ def _do_data_sync(config, target: date | None = None,
             force_sync=force_sync,
             sync_days=sync_days,
             quiet=quiet,
+            progress_callback=progress_callback,
         )
     except Exception:
         close_runtime_resources(provider, storage)
@@ -501,6 +540,7 @@ def _do_initialized_data_sync(
     force_sync: bool = False,
     sync_days: int | None = None,
     quiet: bool = False,
+    progress_callback: SyncProgressCallback | None = None,
 ):
     """使用已初始化资源执行数据同步；成功后资源所有权交还调用方。"""
 
@@ -544,11 +584,29 @@ def _do_initialized_data_sync(
                 # Web 多用户模式：每用户隔离 token_dir，需注入已认证 APIClient
                 if hasattr(provider, 'auth') and hasattr(provider.auth, '_client'):
                     storage.set_api_client(provider.auth.create_api_client())
-                storage.sync_range(user_id, from_day, to_day)
+                _report_sync_progress(
+                    progress_callback, "syncing_metrics", 2, 4,
+                    "正在同步健康指标",
+                )
+
+                def report_metric_items(items: dict[str, Any]) -> None:
+                    _report_sync_progress(
+                        progress_callback, "syncing_metrics", 2, 4,
+                        "正在同步健康指标", items,
+                    )
+
+                storage.sync_range(
+                    user_id, from_day, to_day,
+                    progress_callback=report_metric_items,
+                )
+                _report_sync_progress(
+                    progress_callback, "syncing_activities", 3, 4,
+                    "正在同步运动记录",
+                )
                 _sync_garmin_activities(provider, storage, user_id, from_day, to_day)
             elif config.provider_type in ("coros", "huawei"):
                 _sync_provider(provider, storage, user_id, from_day, to_day,
-                               config.provider_type)
+                               config.provider_type, progress_callback)
         except Exception as exc:
             storage.mark_sync_calendar_range(
                 user_id, from_day, to_day, "failed", error_message=str(exc),

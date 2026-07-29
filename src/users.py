@@ -203,15 +203,16 @@ class UserManager:
 
     def update(self, api_key: str, **kwargs) -> UserRecord | None:
         """更新用户字段。"""
-        record = self.get(api_key)
-        if record is None:
-            return None
-        for key, value in kwargs.items():
-            if hasattr(record, key):
-                setattr(record, key, value)
-        self._save(record)
-        self._cache[api_key] = record
-        return record
+        with self._lock:
+            record = self.get(api_key)
+            if record is None:
+                return None
+            for key, value in kwargs.items():
+                if hasattr(record, key):
+                    setattr(record, key, value)
+            self._save(record)
+            self._cache[api_key] = record
+            return record
 
     def delete_account(self, api_key: str) -> None:
         """删除刚创建但未能完成邀请码核销的账号。"""
@@ -242,6 +243,9 @@ class UserManager:
 
     def get_db_path(self, api_key: str) -> str:
         return str(self._data_dir / api_key / "data.db")
+
+    def get_sync_tasks_path(self, api_key: str) -> str:
+        return str(self._data_dir / api_key / "sync-tasks.json")
 
     def get_backup_dir(self, api_key: str) -> str:
         return str(self._data_dir / "backup")

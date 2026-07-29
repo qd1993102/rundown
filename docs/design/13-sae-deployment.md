@@ -1,6 +1,6 @@
 # 设计方案 — 13. Web Chat 部署方案（多用户）
 
-> 版本: v2.9 · 更新日期: 2026-07-29 · 状态: 已实现
+> 版本: v3.1 · 更新日期: 2026-07-29 · 状态: 代码已实现并通过本地验证；ECS 验收待完成
 
 ---
 
@@ -56,6 +56,8 @@ graph TB
 
 ## 3. 用户流程
 
+以下绑定、日报和日常流程均已在代码中实现；异步同步片段仍需发布后完成 ECS 真实数据源验收。
+
 ```mermaid
 sequenceDiagram
     actor User as 用户
@@ -94,9 +96,16 @@ sequenceDiagram
 
     User->>Web: 点击"开始同步"
     Web->>VPS: POST /api/sync
-    VPS->>Garmin: 拉取活动 + 健康数据
-    VPS->>VPS: 只写入 SQLite
-    VPS-->>Web: 同步完成
+    VPS->>VPS: 校验并持久化同步任务
+    VPS-->>Web: 202 + task_id + Location
+    VPS->>Garmin: 后台拉取活动 + 健康数据
+    loop 任务未进入终态
+        Web->>VPS: GET /api/sync/tasks/{task_id}
+        VPS-->>Web: queued/running + 真实阶段
+    end
+    VPS->>VPS: 只写入 SQLite + 备份 + 任务终态
+    Web->>VPS: GET /api/sync/tasks/{task_id}
+    VPS-->>Web: succeeded 或结构化失败
     User->>Web: 选择日期并点击"生成日报"
     Web->>VPS: POST /api/reports
     VPS->>VPS: 从 SQLite 生成结构化日报
@@ -114,9 +123,11 @@ sequenceDiagram
 
     User->>Web: 点击"同步"
     Web->>VPS: POST /api/sync
-    VPS->>Garmin: 拉取活动 + 健康数据
-    VPS->>VPS: 只写入 SQLite
-    VPS-->>Web: 同步完成
+    VPS-->>Web: 202 + task_id
+    Web->>VPS: 轮询 GET /api/sync/tasks/{task_id}
+    VPS->>Garmin: 后台拉取活动 + 健康数据
+    VPS->>VPS: 只写入 SQLite + 更新任务进度
+    VPS-->>Web: succeeded / failed / interrupted
     User->>Web: 按需进入日报页显式生成日报
 ```
 
@@ -142,6 +153,7 @@ sequenceDiagram
 │   │   ├── auto/daily/...
 │   │   ├── profile/...
 │   │   └── goals/...
+│   ├── sync-tasks.json      ← 最近同步任务与进度（0600）
 │   └── data.db              ← SQLite
 ├── rd_xyz/
 │   ├── tokens/...
@@ -188,6 +200,20 @@ VPS 磁盘是持久化的，容器重启不丢。OSS 仅作为灾备，初期可
 ### 5.3 不改的文件
 
 `src/mcp_server.py`、`src/coach.py`、`src/render.py`、`src/image.py`、`src/activity.py`
+
+### 5.4 异步同步任务改动
+
+| 文件 | 改动 |
+|------|----------|
+| `src/sync_tasks.py` | 新增用户隔离的任务模型、原子 JSON 持久化、终态和重启中断恢复 |
+| `src/sync_coordinator.py` | 从等待式 `run()` 扩展为接纳后返回的 `submit()`，持有后台任务强引用并继续执行 4/100 与 singleflight |
+| `src/web.py` | `POST /api/sync` 返回 202；新增任务查询路由并映射 409/503/404 |
+| `src/main.py` | 为认证、指标、活动和备份边界增加可选进度回调，不改变 CLI 默认同步行为 |
+| `web/templates/sync.html` | 保存活动任务 ID、轮询状态、刷新恢复并区分排队/运行/成功/失败/中断 |
+| `tests/test_sync_tasks.py`、`tests/test_sync_coordinator.py`、`tests/test_web.py` | 覆盖持久化、状态机、隔离、重启、轮询合同和资源回收 |
+
+本期不修改 CLI 命令或参数，因此无需改变现有 MCP tool 合同；CLI 与 MCP 继续等待同步完成并返回
+最终结果。若后续也要提供异步 CLI，必须单独设计可脚本化的 `submit/status` 命令及对应 MCP tools。
 
 ---
 
@@ -281,7 +307,13 @@ async def api_sync(request): ...
     # 未提供 mode 时兼容旧版 date/sync_days/full
     # 阻塞式平台请求与 SQLite 写入通过 SyncCoordinator 移出事件循环
     # 默认最多 4 个不同用户执行、100 个不同用户执行或排队
-    # 同用户重复请求返回 409；全局容量超限返回 503
+    # 持久化并接纳后返回 202 + task_id + Location，不等待同步完成
+    # 同用户重复请求返回 409 + 现有 task_id；全局容量超限返回 503
+
+@server.custom_route("/api/sync/tasks/{task_id}", methods=["GET"])
+async def api_sync_task(request): ...
+    # 只允许当前登录用户读取自己的任务；跨用户或未知任务统一返回 404
+    # queued/running 返回 Retry-After: 1；所有响应 Cache-Control: no-store
 
 @server.custom_route("/api/reports", methods=["POST"])
 async def api_report_generate(request): ...
@@ -315,9 +347,136 @@ async def api_logout(request): ...
 - 工作函数在 `finally` 中关闭 Provider HTTP Session、`Storage` 及 SQLAlchemy engine，
   成功时在关闭前完成 SQLite 备份。
 
-该队列是单进程内边界，不是持久化任务系统。HTTP 请求保持现有同步响应合同；
-进程重启时正在运行的请求由客户端按日历状态重试。若未来需要跨重启任务、脱离 HTTP
-超时或多实例协调，必须另立持久化任务队列设计，不在本次 Bug 修复中隐式扩展。
+当前队列是单进程内边界。以下 6.2.2 在保留单进程、单 ECS 和现有 4/100 容量边界的前提下，
+提供轻量任务持久化与轮询合同；它不扩展为多实例协调系统。
+
+#### 6.2.2 异步任务、进度与轮询
+
+##### 接口合同
+
+`POST /api/sync` 在完成会话、参数、singleflight、容量和任务记录持久化后返回：
+
+```http
+HTTP/1.1 202 Accepted
+Location: /api/sync/tasks/st_01...
+Cache-Control: no-store
+```
+
+```json
+{
+  "status": "queued",
+  "task_id": "st_01...",
+  "mode": "batch",
+  "from_date": "2026-06-29",
+  "to_date": "2026-07-29",
+  "links": {"self": "/api/sync/tasks/st_01..."}
+}
+```
+
+HTTP 202 只证明任务已持久化并被当前进程接纳。参数错误仍返回 400，连接已失效返回 401，
+同用户已有任务返回 409，容量超限返回 503。409 响应增加现有 `task_id` 和 `links.self`，前端
+据此恢复轮询；409/503 均不得新建任务文件或后台协程。
+
+`GET /api/sync/tasks/{task_id}` 成功查询统一返回 200。任务失败是成功读取到的业务终态，不用
+HTTP 500 表达：
+
+```json
+{
+  "task_id": "st_01...",
+  "status": "running",
+  "stage": "syncing_metrics",
+  "progress": {
+    "kind": "stage",
+    "current": 2,
+    "total": 4,
+    "label": "正在同步健康指标",
+    "items": {
+      "current": 286,
+      "total": 660,
+      "date": "2026-04-26",
+      "metric": "stress",
+      "outcome": "completed"
+    }
+  },
+  "mode": "batch",
+  "from_date": "2026-06-29",
+  "to_date": "2026-07-29",
+  "created_at": "2026-07-29T08:00:00Z",
+  "started_at": "2026-07-29T08:00:01Z",
+  "updated_at": "2026-07-29T08:00:08Z",
+  "finished_at": null,
+  "result": null,
+  "error": null
+}
+```
+
+终态 `failed` / `interrupted` 的 `error` 固定包含 `code`、脱敏 `message`、`retryable` 和
+`action`；`succeeded` 的 `result` 包含实际同步范围和日历刷新月份。未知任务或其他用户的任务
+统一返回 404，防止通过 task ID 探测账号。所有响应使用 `Cache-Control: no-store`；
+`queued/running` 响应增加 `Retry-After: 1`。
+
+##### 状态机与真实进度
+
+```mermaid
+stateDiagram-v2
+    [*] --> queued: 已持久化并接纳
+    queued --> running: 工作线程开始
+    running --> succeeded: 数据写入和备份均成功
+    running --> failed: 认证、平台、存储或备份失败
+    queued --> interrupted: 进程重启
+    running --> interrupted: 进程重启
+    succeeded --> [*]
+    failed --> [*]
+    interrupted --> [*]
+```
+
+`status` 只使用 `queued`、`running`、`succeeded`、`failed`、`interrupted`。`stage` 使用
+`queued`、`authenticating`、`syncing_metrics`、`syncing_activities`、`backing_up`、`done`。
+`progress.current/total` 表示已经跨过的四个真实阶段，不把阶段比例描述为数据量或剩余时间。
+Garmin 指标阶段通过 garmy Reporter 钩子在 `progress.items` 返回真实的已处理项数、总项数、最近日期、
+指标和结果；已处理包含完成、跳过和失败事件。该嵌套结构不改变顶层阶段总数，前端用独立细进度条
+呈现。不得使用运行秒数推算百分比。
+
+核心同步函数接受可选的同步进度回调；CLI/MCP 不传回调时行为不变。阶段回调写入任务记录；garmy
+适配器按日期变化、至少一秒间隔或最终项上报逐项快照，避免每个快速跳过项都执行 `fsync`。
+回调不传递凭证、邮箱或第三方原始响应，也不能因进度持久化失败掩盖主同步错误。
+
+##### 持久化与执行模型
+
+- 每个用户目录保存权限为 `0600` 的 `sync-tasks.json`，通过现有同目录原子替换工具写入；任务
+  ID 使用足够随机的 `st_` 前缀标识，文件只保留最近 50 条或 7 天内任务。
+- 任务记录包含范围、force、状态、阶段、结构化错误、时间戳和本次 `runner_instance_id`，不保存
+  API Key、Cookie、账号、平台 Token 或原始响应。
+- `SyncCoordinator.submit()` 在同一临界区完成 singleflight/容量占位和任务注册，再创建受控后台
+  协程；只有两步都成功才返回 202。后台协程必须由 coordinator 集合持有强引用并消费异常。
+- 阻塞同步继续在线程池执行。终态顺序为：Provider 写入/SQLite 备份完成或抛错 → `finally`
+  释放 Provider 与 Storage 资源 → 写 `succeeded` 或 `failed` → 释放 singleflight 名额。任务查询
+  不得在备份或资源回收完成前看到成功。
+- 单 ECS 启动时生成新的 `runner_instance_id`；读取或启动扫描发现旧实例遗留的
+  `queued/running` 任务时原子改为 `interrupted`。本期不自动恢复，避免重复调用第三方平台。
+- 同步日历的 `pending/completed/failed` 仍表达日期覆盖状态；任务排队时不提前把日期标成
+  `pending`，开始执行后才由核心同步更新。任务面板负责展示 `queued`。
+
+##### 前端轮询与恢复
+
+- 收到 202 后把 `task_id` 保存到当前浏览器的同步页状态并立即渲染“已排队”，1 秒后开始轮询；
+- `queued/running` 按 `Retry-After` 继续查询；临时网络失败采用 1、2、4、5 秒上限退避，不能重新
+  POST；页面重新可见时立即补一次查询；
+- 页面刷新后先恢复保存的 `task_id`。查询 404 时清理本地记录；终态时停止轮询、清理活动 ID，
+  成功时刷新相关月份日历，失败或中断时展示重试按钮；
+- `progress.items` 存在时，阶段条仍固定为四段，另显示已处理项百分比、日期和指标；刷新后直接使用
+  轮询响应中的持久化快照恢复，不从本地计时器重建；
+- 轮询只更新任务卡和进度，不触发日报生成。用户关闭页面不会取消后台任务。
+
+##### 测试与发布验证
+
+- API 合同测试覆盖 202/Location、200 轮询、409 携带已有任务、503 不创建任务、跨用户 404；
+- 状态机测试覆盖合法转换、原子写入失败、后台异常消费、备份失败不得标成功和终态资源释放；
+- 重启测试用新的 `runner_instance_id` 验证旧 `queued/running` 变成 `interrupted`；
+- 前端合同测试覆盖刷新恢复、轮询退避、终态停轮询和一次 POST；
+- 进度适配测试覆盖完成、跳过、失败、节流和最终项；轮询合同验证嵌套 `progress.items` 可持久化；
+- 本地完整 `pytest` 通过后仍需做 ECS 验收：POST 快速返回、真实 Garmin 国际区任务持续运行、
+  轮询可见阶段、`/healthz` 及时响应、任务结束后 FD 回落；验收前不得宣称线上已发布。
 
 ### 6.3 `src/auth.py` — MFA 两步
 

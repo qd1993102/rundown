@@ -10,8 +10,17 @@ neurun 项目变更日志，按日期倒序。
 - **联系我们与内测交流群入口**: 登录后的所有 Web 页面新增统一浮动联系按钮；桌面支持 hover/focus 预览与点击锁定，移动端支持点击、长按或保存二维码，包含外部点击、关闭按钮、Escape、焦点返回和图片不可用状态。群二维码端点受应用会话保护，优先读取持久化覆盖文件并禁用缓存，后续换图无需修改页面代码。
 - **影响范围**: src/web.py, web/assets/contact-wechat.jpg, tests/test_web.py, README.md, docs/product/, docs/design/
 - **关联文档**: [联系入口产品方案](product/contact-community.md), [联系入口技术设计](design/contact-community.md), [README](../README.md)
+- **Web 异步同步任务与实时阶段进度**: `POST /api/sync` 在任务持久化和调度接纳后立即返回 202 与 `task_id`；同步页通过用户隔离的轮询接口展示排队、认证、指标、活动、备份和终态，支持刷新恢复、网络退避、同用户任务找回及服务重启后的 `interrupted`。任务仍复用 4/100 受控并发，不引入 Redis/Celery，CLI/MCP 合同不变。
+- **影响范围**: src/sync_tasks.py, src/sync_coordinator.py, src/main.py, src/web.py, src/users.py, web/templates/sync.html, tests/test_sync_tasks.py, tests/test_sync_coordinator.py, tests/test_main.py, tests/test_web.py, README.md, docs/product/, docs/design/
+- **关联文档**: [数据源同步产品方案](product/data-source-sync.md), [模块设计](design/04-modules.md), [数据流](design/05-data-flow.md), [Web 部署设计](design/13-sae-deployment.md), [开发过程](process/2026-07-29-web-async-sync-tasks.md), [README](../README.md)
 
 ### Fixed
+- **Garmin 批量同步进度长时间停在 2/4**: 接入 garmy 逐日期/逐指标完成、跳过和失败事件，在四阶段总进度下持久化真实的已处理项数、总项数、日期和指标；同步页使用独立细进度条展示并在刷新后恢复，不再因长阶段缺少更新时间而误判假死。
+- **影响范围**: src/storage.py, src/main.py, src/sync_tasks.py, src/web.py, web/templates/sync.html, tests/test_storage.py, tests/test_main.py, tests/test_sync_tasks.py, tests/test_web.py
+- **关联文档**: [数据源同步产品方案](product/data-source-sync.md), [Bug 记录](bugfixes/2026-07-29-sync-progress-stale-after-refresh.md), [模块设计](design/04-modules.md), [数据流](design/05-data-flow.md), [Web 部署设计](design/13-sae-deployment.md), [README](../README.md)
+- **Garmin Access Token 到期反复要求输入密码**: 同步恢复 Token 后先判断 `needs_refresh` 并自动换取、持久化新 OAuth2 Token，不再把约一天到期的 Access Token 直接回退为空密码 SSO 登录；profile、刷新和 Provider 初始化保留原始临时异常，只有明确 401/403 或不可再刷新的凭据才把连接标记为 `expired`，其他错误保持 `active` 并允许重试。
+- **影响范围**: src/auth.py, src/providers/garmin.py, src/main.py, src/web.py, tests/test_auth.py, tests/test_providers.py, tests/test_main.py, tests/test_web.py
+- **关联文档**: [数据源同步产品方案](product/data-source-sync.md), [Bug 记录](bugfixes/2026-07-29-garmin-token-refresh-rebind-loop.md), [模块设计](design/04-modules.md), [数据流](design/05-data-flow.md), [多平台设计](design/12-multi-platform.md), [README](../README.md)
 - **ECS Web 同步阻塞与文件描述符耗尽**: 阻塞式平台同步和 SQLite 写入移入受控工作线程，单进程默认同时执行 4 个、接纳 100 个不同用户；同用户 singleflight 与容量超限分别返回 409/503。同步、MFA 和临时 SQLite/HTTP 客户端显式释放资源，systemd 服务增加 `LimitNOFILE=8192` 防线。
 - **影响范围**: src/sync_coordinator.py, src/resource_lifecycle.py, src/web.py, src/main.py, src/storage.py, src/auth.py, src/config.py, scripts/deploy-ecs.sh, tests/
 - **关联文档**: [数据源同步产品方案](product/data-source-sync.md), [Bug 记录](bugfixes/2026-07-29-ecs-sync-event-loop-fd-exhaustion.md), [Web 部署设计](design/13-sae-deployment.md), [开发过程](process/2026-07-29-web-sync-capacity.md), [README](../README.md)

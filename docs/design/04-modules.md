@@ -1,6 +1,6 @@
 # 设计方案 — 4. 模块设计
 
-> 属于 [设计方案索引](../design.md) · 版本 v3.2 · 2026-07-26
+> 属于 [设计方案索引](../design.md) · 版本 v3.5 · 2026-07-29
 
 ---
 
@@ -46,8 +46,13 @@
 
 **设计要点**:
 - 创建 `AuthClient(domain=config.domain, token_dir=config.token_dir)`
-- 检查已有 Token 是否有效（garmy 自动从 `~/.garmy/` 加载）
-- 无效则调用 `auth_client.login(email, password)`
+- 检查已有 Token 是否有效（garmy 自动从用户专属 Token 目录加载）
+- Access Token 到期且 Refresh Token 仍有效时，显式调用 `refresh_tokens()`；刷新成功后由 garmy
+  写回 OAuth2 Token 文件，再继续 profile 和同步请求
+- 只有 Refresh Token 不可用或刷新明确返回 401/403 时才视为认证失效；超时、429、5xx 和响应
+  解析异常向上抛为可重试同步错误，不得回退到空密码 SSO 登录或标记连接 `expired`
+- CLI 仅在没有可用 Token 且配置了账号密码时调用 `login(email, password)`；Web 后台不保存密码，
+  因此没有可刷新凭据时直接要求用户重新绑定
 - 支持 MFA：若账号开启了二次验证，通过回调函数交互式输入
 - 提供 `get_auth_headers()` 供 API 调用使用（garmy 内部自动处理）
 - 日志中脱敏显示邮箱（如 `ga***@gmail.com`）
@@ -58,18 +63,21 @@
 graph TD
     FIRST["首次登录"]
     TOKEN["OAuth1 + OAuth2 Token"]
-    PERSIST["持久化到 ~/.garmy/"]
+    PERSIST["持久化到用户 Token 目录"]
     LOAD["后续启动 → 加载已有 Token"]
     VALIDATE["校验有效性"]
     USE["正常使用"]
-    REFRESH["使用 Refresh Token 自动刷新"]
-    EXPIRED["Refresh 也过期"]
+    REFRESH["使用 OAuth1 凭据换取新 OAuth2 Token"]
+    TRANSIENT["超时 / 429 / 5xx"]
+    EXPIRED["Refresh 过期或明确 401/403"]
 
     FIRST --> TOKEN --> PERSIST --> LOAD --> VALIDATE
     VALIDATE -->|"有效"| USE
     VALIDATE -->|"过期"| REFRESH
-    REFRESH -->|"刷新成功"| USE
-    REFRESH -->|"失败"| EXPIRED
+    REFRESH -->|"成功并持久化"| USE
+    REFRESH -->|"临时错误"| TRANSIENT
+    REFRESH -->|"凭据失效"| EXPIRED
+    TRANSIENT -->|"保持 active，稍后重试"| VALIDATE
     EXPIRED --> FIRST
 ```
 
@@ -331,3 +339,16 @@ Web 数据同步与日报生成是两个独立动作：
 - 日报图片由 `chat.html` 在浏览器内根据 `GET /api/dashboard` 已返回的数据绘制到 Canvas。
   支持文件分享时调用 Web Share API，否则使用 Blob URL 下载 PNG；图片数据不回传服务器，
   不引入外部 CDN，也不修改 `src/image.py` 的 CLI 静态报告截图职责。
+
+Web 异步旅程在不改变 CLI/MCP 同步合同的前提下增加 `sync_tasks.py`：按用户在
+`sync-tasks.json` 中原子保存任务状态，由
+`SyncCoordinator.submit()` 接纳后台任务，Web 立即返回 202 和 `task_id`，再通过
+`GET /api/sync/tasks/{task_id}` 查询进度。任务模块只接受结构化阶段和脱敏错误，不接触或保存
+Cookie、API Key、账号和平台 Token；完整状态机、响应 Schema、重启中断与保留策略见
+[13-sae-deployment.md §6.2.2](13-sae-deployment.md#622-proposed异步任务进度与轮询)。
+
+`storage.py` 的 `GarmySyncProgressReporter` 适配 garmy `ProgressReporter` 的 `start_sync`、
+`task_complete`、`task_skipped`、`task_failed` 和 `end_sync` 钩子，将真实已处理项数、总项数、日期、
+指标和结果回传给 Web 任务。适配器保留原日志行为，并按日期变化、时间间隔或最终项节流持久化；
+CLI/MCP 未传回调时仍使用 garmy 默认 Reporter。顶层 `progress.current/total` 始终表示四个阶段，
+阶段内明细存入 `progress.items`，避免前端把数百个指标项误画成数百个阶段块。

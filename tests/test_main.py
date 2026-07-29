@@ -118,6 +118,23 @@ def test_setup_preserves_actionable_local_persistence_error(monkeypatch):
         ))
 
 
+def test_setup_preserves_temporary_provider_error(monkeypatch):
+    import src.main as main
+    import src.providers as providers
+
+    class FakeProvider:
+        def authenticate(self):
+            raise TimeoutError("Garmin temporary timeout")
+
+    monkeypatch.setattr(providers, "get_provider", lambda config: FakeProvider())
+
+    with pytest.raises(TimeoutError, match="temporary timeout"):
+        main._setup(SimpleNamespace(
+            provider_type="garmin",
+            memory_dir="/tmp/memory",
+        ))
+
+
 def test_data_sync_marks_calendar_range_completed(monkeypatch):
     import src.main as main
 
@@ -202,9 +219,16 @@ def test_garmin_data_sync_injects_regional_api_client(monkeypatch):
             self.api_client = value
 
         def sync_range(self, *args, **kwargs):
-            pass
+            kwargs["progress_callback"]({
+                "current": 1,
+                "total": 11,
+                "date": "2026-07-26",
+                "metric": "sleep",
+                "outcome": "completed",
+            })
 
     storage = FakeStorage()
+    progress = []
     monkeypatch.setattr(main, "_setup", lambda config: (
         config, provider, storage, SimpleNamespace(), 42,
     ))
@@ -215,10 +239,23 @@ def test_garmin_data_sync_injects_regional_api_client(monkeypatch):
         target=date(2026, 7, 26),
         sync_days=0,
         quiet=True,
+        progress_callback=lambda *args: progress.append(args),
     )
 
     assert storage.api_client is api_client
     auth.create_api_client.assert_called_once_with()
+    assert progress == [
+        ("authenticating", 1, 4, "正在验证数据源"),
+        ("syncing_metrics", 2, 4, "正在同步健康指标"),
+        ("syncing_metrics", 2, 4, "正在同步健康指标", {
+            "current": 1,
+            "total": 11,
+            "date": "2026-07-26",
+            "metric": "sleep",
+            "outcome": "completed",
+        }),
+        ("syncing_activities", 3, 4, "正在同步运动记录"),
+    ]
 
 
 def test_daily_report_rerenders_body_with_coach_insight(monkeypatch):

@@ -1,6 +1,6 @@
 # 设计方案 — 5. 数据流
 
-> 属于 [设计方案索引](../design.md) · 版本 v3.2 · 2026-07-26
+> 属于 [设计方案索引](../design.md) · 版本 v3.5 · 2026-07-29
 
 ---
 
@@ -11,7 +11,7 @@
 ```mermaid
 graph LR
     A["📋 读取<br/>环境变量"] --> B["🔐 创建<br/>AuthClient"]
-    B --> C["✅ 检查<br/>Token 有效性"]
+    B --> C["✅ 检查并刷新<br/>Token"]
     C --> D["📡 创建<br/>APIClient"]
     D --> E["📥 按日期<br/>/类型拉取"]
     E --> F["🔄 SyncManager<br/>调度 + 去重"]
@@ -29,7 +29,7 @@ graph LR
     O -.->|"AI 洞察写入"| K
 
     A -.->|".env 文件<br/>或系统环境"| A
-    C -.->|"~/.garmy/<br/>Token 文件"| C
+    C -.->|"用户目录<br/>Token 文件"| C
 ```
 
 ### 5.2 sync 命令执行流程
@@ -38,7 +38,7 @@ graph LR
 graph TD
     SYNC["sync 命令"]
     S1["1. config.py<br/>加载并校验环境变量"]
-    S2["2. auth.py<br/>创建 AuthClient，检查/执行登录"]
+    S2["2. auth.py / GarminAuth<br/>恢复 Token，必要时自动刷新"]
     S3["3. fetcher.py<br/>创建 APIClient，初始化 SyncManager"]
     S4["4. storage.py<br/>SyncManager.sync_range()"]
     S4A["按日期遍历"]
@@ -162,8 +162,11 @@ sequenceDiagram
 收起这些复杂表单并提供显式跳过入口，跳过时不得写入空档案或默认偏好。
 
 同步请求重新创建 Provider 时，必须先从用户目录恢复并执行 `authenticate()`，再读取平台
-`user_id`。任何平台认证失败都在本地 SQLite 写入之前终止，并把连接状态更新为
-`expired`；禁止用 `user_id=0` 或服务级默认凭证继续同步。
+`user_id`。Garmin Access Token 到期而 Refresh Token 仍有效时，认证阶段调用
+`refresh_tokens()` 并持久化新 OAuth2 Token，不进入账号密码 SSO。只有刷新凭据已过期、被撤销
+或平台明确返回 401/403 时，才在本地 SQLite 写入之前终止并把连接状态更新为 `expired`；
+超时、429、5xx、响应解析或 profile 临时异常保持连接为 `active`，任务以可重试错误结束。
+任何失败路径都禁止用 `user_id=0` 或服务级默认凭证继续同步。
 
 认证完成且范围确定后，核心同步函数先将范围内每天的 `neurun_provider_sync` 标记为
 `pending`。全部 Provider 拉取与 SQLite 写入成功后统一更新为 `completed`；异常退出时
@@ -173,6 +176,50 @@ sequenceDiagram
 三平台写入活动时同时保存标准化 `activity_type`。日历聚合先判断当天是否存在跑步记录；
 存在时直接输出 `synced`，优先于范围标记和指标级状态。升级前的历史活动没有该字段时，
 只在名称包含“跑步”或 `run` 时作兼容识别；非跑步活动和健康数据仍按原状态证据聚合。
+
+Web 异步任务在核心同步外增加一层任务状态流，不改变上述 Provider 与日历写入顺序：
+
+```mermaid
+sequenceDiagram
+    actor User as 用户
+    participant Web as sync.html
+    participant API as web.py
+    participant Task as SyncTaskStore
+    participant Queue as SyncCoordinator
+    participant Core as _do_data_sync
+
+    User->>API: POST /api/sync
+    API->>Queue: submit(request, task_store, work)
+    Queue->>Queue: 临界区校验 singleflight 与容量
+    Queue->>Task: 原子写 queued
+    Queue->>Queue: 注册并强引用后台协程
+    Queue-->>API: accepted(task_id)
+    API-->>Web: 202 + task_id + Location
+    Queue->>Task: running / authenticating
+    Queue->>Core: 在线程池执行
+    Core->>Task: syncing_metrics / syncing_activities
+    loop Garmin 每个日期与指标
+        Core->>Task: progress.items 已处理数/总数/日期/指标
+    end
+    Core->>Core: 写 SQLite + 同步日历
+    Queue->>Task: backing_up
+    Queue->>Queue: 释放 Provider / Storage
+    Queue->>Task: succeeded 或 failed
+    loop queued 或 running
+        Web->>API: GET /api/sync/tasks/{task_id}
+        API->>Task: 读取当前用户任务
+        API-->>Web: 200 + status/progress/error
+    end
+```
+
+202 必须发生在任务记录写入和后台调度接纳都成功之后。排队阶段不修改同步日历；工作线程开始后
+才写 `neurun_provider_sync=pending`。成功终态必须晚于用户 SQLite 备份和资源回收；失败路径也先
+释放 Provider、Storage，再写结构化任务错误并释放 singleflight 名额。进程重启后，旧实例的
+`queued/running` 进入 `interrupted`，不自动重放第三方请求。
+
+Garmin 指标同步通过 garmy 已有完成/跳过/失败事件推进 `progress.items`；任务文件保存最近一次真实
+明细，因此轮询断开或页面刷新只会丢失中间动画，不会丢失已处理计数。适配层不会从运行时间推算
+百分比，也不会改变 Provider 写入、日历状态或后续活动补齐的执行顺序。
 
 ---
 
