@@ -250,6 +250,51 @@ def test_registration_and_login_routes_create_session_and_consume_invite(tmp_pat
     assert "已经使用" in _json(duplicate)["message"]
 
 
+@pytest.mark.parametrize(
+    ("credential_key", "expected"),
+    [("configured-test-key", True), ("", False)],
+)
+def test_setup_capabilities_are_available_before_provider_binding(
+    tmp_path, credential_key, expected,
+):
+    config = Config(
+        data_dir=str(tmp_path), coros_credential_key=credential_key,
+    )
+    manager = UserManager(str(tmp_path))
+    user = manager.register_account(
+        "跑者", "runner@example.com", "safe-password",
+    )
+    server = _FakeServer()
+    register_web_routes(server, manager, config)
+
+    response = asyncio.run(server.routes[
+        ("/api/setup/capabilities", "GET")
+    ](_request(
+        "/api/setup/capabilities",
+        cookie=f"neurun_key={user.api_key}",
+    )))
+
+    assert response.status_code == 200
+    assert _json(response) == {
+        "coros_secure_credential_storage": expected,
+    }
+    assert manager.get(user.api_key).token_status == "none"
+
+
+def test_setup_capabilities_require_application_login(tmp_path):
+    server = _FakeServer()
+    register_web_routes(
+        server, UserManager(str(tmp_path)), Config(data_dir=str(tmp_path)),
+    )
+
+    response = asyncio.run(server.routes[
+        ("/api/setup/capabilities", "GET")
+    ](_request("/api/setup/capabilities")))
+
+    assert response.status_code == 401
+    assert "登录应用账号" in _json(response)["message"]
+
+
 def test_active_account_cannot_rebind_platform(tmp_path):
     invite_path = tmp_path / "invite-codes.json"
     _write_invites(invite_path)

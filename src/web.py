@@ -758,6 +758,22 @@ def register_web_routes(server, user_manager: UserManager, config: Config):
         _set_session_cookie(response, request, user.api_key)
         return response
 
+    @server.custom_route("/api/setup/capabilities", methods=["GET"])
+    async def api_setup_capabilities(request: Request) -> Response:
+        """返回绑定前可安全公开的服务端能力。"""
+        api_key = _get_api_key(request)
+        user = user_manager.get(api_key) if api_key else None
+        if user is None:
+            return JSONResponse(
+                {"status": "error", "message": "请先登录应用账号"},
+                status_code=401,
+            )
+        return JSONResponse({
+            "coros_secure_credential_storage": bool(
+                config.coros_credential_key
+            ),
+        })
+
     @server.custom_route("/api/setup", methods=["POST"])
     async def api_setup(request: Request) -> Response:
         """启动数据源绑定流程（Garmin / Coros / Huawei）。"""

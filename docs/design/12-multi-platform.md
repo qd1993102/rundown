@@ -279,6 +279,10 @@ Huawei API 返回字段存在嵌套差异，Provider 对 ID、名称、类型、
 - 两个新认证端点都接受 `auto_refresh: boolean`，前端在服务端报告
   `coros_secure_credential_storage=true` 时默认传 `true`；用户可在提交前取消。存量账号不静默生成
   缺失凭据，需在对应表单重新授权一次。
+- `GET /api/setup/capabilities` 是绑定前只读能力接口，只校验 neurun 应用会话，不要求
+  `UserRecord.token_status=active`。响应仅包含 `coros_secure_credential_storage` 等非敏感布尔能力；
+  首次绑定与重新授权页面统一通过该接口初始化复选框，不再借用 `/api/profile`。未登录返回 401，
+  已登录但尚未绑定运动平台的用户仍返回 200。
 - Training Hub 重放对象包含 `account`、按账号类型确定的 `accountType`、`pwd=MD5(password)` 和
   `region`；Mobile 重放对象使用上游生成的 AES 登录载荷。两者都是可直接重放的密码等价物，必须
   分域整体加密，不得出现在 `UserRecord`、`coros-auth.json`、日志、异常或 API 响应中。
@@ -327,6 +331,8 @@ Training Hub 重登与 Mobile 睡眠刷新保持两条独立状态机、锁和�
 - `UserRecord` 不新增密码或密文字段；启用状态由两个凭据文件分别推导。状态接口返回
   `training_auth_status`、`sleep_auth_status`、`training_auto_refresh_enabled`、
   `sleep_auto_refresh_enabled` 和 `coros_secure_credential_storage`。
+- Web 测试覆盖绑定前能力门禁：未绑定用户在密钥存在时读取到 `true`，密钥缺失时读取到 `false`，
+  未登录请求返回 401；模板只调用 `/api/setup/capabilities` 初始化自动鉴权，不依赖 `/api/profile`。
 - 已新增 `cryptography` 运行依赖，并同步更新 `pyproject.toml`、部署文档和 README 的环境变量说明；
   项目当前没有依赖锁文件。Web API 变化不新增 CLI 参数，因此本期不新增 MCP tool；如果后续增加
   CLI 开关，必须同步 MCP inputSchema。

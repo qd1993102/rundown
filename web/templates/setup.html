@@ -322,7 +322,7 @@ async function configureCorosAutoRefresh(){
   const hint=$('coros-auto-relogin-hint');
   checkbox.checked=true;checkbox.disabled=true;
   try{
-    const r=await fetch('/api/profile');const d=await r.json();
+    const r=await fetch('/api/setup/capabilities');const d=await r.json();
     if(d.coros_secure_credential_storage){
       checkbox.disabled=false;checkbox.checked=true;
       hint.textContent='默认开启。登录重放对象只在本机加密保存，可在「我的」按认证域随时删除；明文密码不会落盘。';

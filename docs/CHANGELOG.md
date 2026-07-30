@@ -4,6 +4,15 @@ neurun 项目变更日志，按日期倒序。
 
 ---
 
+## 2026-07-30
+
+### Fixed
+- **Coros 首次绑定无法勾选自动鉴权**: 新增只要求应用登录态的绑定能力查询接口，首次绑定用户无需
+  active 数据源即可读取服务端安全加密能力；页面不再通过受绑定状态约束的个人资料接口初始化
+  复选框。配置密钥时默认勾选且可取消，缺少密钥时才禁用。
+- **影响范围**: src/web.py, web/templates/setup.html, tests/test_registration.py, tests/test_web.py, README.md, docs/product/, docs/design/
+- **关联文档**: [数据源同步产品方案](product/data-source-sync.md), [多平台设计](design/12-multi-platform.md), [Bug 记录](bugfixes/2026-07-30-coros-auto-refresh-capability-gate.md), [README](../README.md)
+
 ## 2026-07-29
 
 ### Added

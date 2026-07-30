@@ -234,6 +234,8 @@ def test_coros_sleep_reauthorization_is_exposed_to_existing_users():
     assert 'id="coros-auto-relogin"' in setup_html
     assert "body.auto_refresh" in setup_html
     assert "加密保存" in setup_html
+    assert "fetch('/api/setup/capabilities')" in setup_html
+    assert "fetch('/api/profile')" not in setup_html
     assert 'id="corosReloginRow"' in profile_html
     assert "/api/coros/auth/training/refresh-credential" in profile_html
     assert "/api/coros/auth/sleep/refresh-credential" in profile_html
