@@ -1,6 +1,6 @@
 # 设计方案 — 13. Web Chat 部署方案（多用户）
 
-> 版本: v3.2 · 更新日期: 2026-07-29 · 状态: 代码已实现并通过本地验证；ECS 验收待完成
+> 版本: v3.3 · 更新日期: 2026-07-31 · 状态: 代码已实现并通过本地验证；ECS 验收待完成
 
 ---
 
@@ -658,9 +658,12 @@ docker compose exec neurun neurun invite create --output json
 /var/lib/neurun/                              # 跨版本持久化的用户数据
 ```
 
-发布入口必须从平台工作目录显式传入 `SOURCE_DIR`，刷新目标 `DEPLOY_REF` 后把取得的完整 Git SHA
-作为 `EXPECTED_COMMIT` 传给发布脚本。脚本必须确认暂存区是干净 Git 工作树、`HEAD` 与
-`EXPECTED_COMMIT` 完全一致且存在 `pyproject.toml`，不得只因文件存在就接受缓存或残留 checkout。
+发布任务负责选择本次要发布的 revision（包括“最新提交”选项），并把该提交 checkout 到工作目录的
+`code_deploy_application/`。控制台入口必须显式传入 `SOURCE_DIR`，直接把该干净工作树的完整 `HEAD` SHA
+作为 `EXPECTED_COMMIT` 传给发布脚本。入口不得另外固定、推测或 `fetch` 某个远程分支，否则平台选定的
+新提交可能被另一分支的旧 SHA 错误拒绝，并且会引入不必要的额外网络依赖。脚本必须确认暂存区是干净 Git
+工作树、`HEAD` 与 `EXPECTED_COMMIT` 完全一致且存在 `pyproject.toml`。运行中 release 的实际 SHA 仍必须通过
+`/healthz` 回传并与本次平台 checkout 一致；平台是否选中远程最新 revision 由发布任务配置保证，不由服务器脚本跨分支判定。
 校验通过后将源码复制到新 release，在该 release 的独立虚拟环境中完成依赖安装和导入检查，然后
 才允许切换 `neurun-current` 并重启服务。Git 下载
 失败、暂存区不完整、Python 版本不合格或依赖安装失败时，脚本必须在修改当前软链接和

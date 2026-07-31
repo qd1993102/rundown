@@ -12,6 +12,9 @@ neurun 项目变更日志，按日期倒序。
 - **关联文档**: [训练体验产品方案](product/training-experience.md), [数据源同步产品方案](product/data-source-sync.md), [训练系统技术设计](design/training-system.md), [多平台数据合同](design/12-multi-platform.md), [记忆系统设计](design/memory-system.md), [AI 教练设计](design/ai-coaching.md), [开发过程](process/2026-07-31-training-session-analysis.md), [README](../README.md)
 
 ### Fixed
+- **ECS 平台选定的新提交被固定分支拒绝**: 控制台入口不再额外固定或刷新 `feature/huawei`，直接把发布平台已 checkout 的干净 `HEAD` 作为候选 Commit；完整 SHA、并发锁与发布后版本健康检查保持不变。
+- **影响范围**: README.md, docs/design/13-sae-deployment.md, tests/test_packaging.py
+- **关联文档**: [Bug 记录](bugfixes/2026-07-31-ecs-fixed-deploy-ref-rejects-selected-commit.md), [ECS 部署设计](design/13-sae-deployment.md), [README](../README.md)
 - **空活动不再误判为休息日**: 日报先读取逐日活动同步覆盖，再输出 `training`、`confirmed_rest`、`unknown` 三态；只有活动同步完成且确无记录时才确认休息，其余空活动日在 Web、CLI、HTML、AI 教练和 MCP 中显示运动数据未同步或状态未知。
 - **影响范围**: src/training_analysis.py, src/memory.py, src/coach.py, src/main.py, src/web.py, src/render.py, src/mcp_server.py, tests/, README.md, CONTEXT.md, docs/product/, docs/design/
 - **关联文档**: [Bug 记录](bugfixes/2026-07-31-empty-activity-misclassified-as-rest.md), [训练体验产品方案](product/training-experience.md), [训练系统技术设计](design/training-system.md), [记忆系统设计](design/memory-system.md)

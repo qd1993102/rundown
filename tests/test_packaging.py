@@ -118,6 +118,20 @@ def test_ecs_deploy_uses_release_directory_instead_of_download_checkout():
     assert "LimitNOFILE=8192" in script
 
 
+def test_ecs_console_entry_deploys_platform_selected_checkout_without_fixed_branch():
+    """控制台入口应发布平台选定的 HEAD，不得另外固定分支。"""
+    readme = (_ROOT / "README.md").read_text(encoding="utf-8")
+    entry_start = readme.index("阿里云控制台的“启动脚本”使用：")
+    entry_end = readme.index("不要在上述校验前执行", entry_start)
+    entry = readme[entry_start:entry_end]
+
+    assert 'EXPECTED_COMMIT="$(git -C "${SOURCE_DIR}" rev-parse HEAD)"' in entry
+    assert 'EXPECTED_COMMIT="${EXPECTED_COMMIT}"' in entry
+    assert "DEPLOY_REF" not in entry
+    assert "git -C \"${SOURCE_DIR}\" fetch" not in entry
+    assert "git -C \"${SOURCE_DIR}\" merge" not in entry
+
+
 def test_ecs_deploy_rejects_stale_source_commit_before_systemd(tmp_path):
     """平台给出旧 checkout 时不得把它当作成功候选版本。"""
     source_dir = tmp_path / "work" / "code_deploy_application"

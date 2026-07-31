@@ -192,7 +192,6 @@ curl -fsS http://<ECS_PRIVATE_IP>:8080/healthz
 set -Eeuo pipefail
 WORK_DIR="${WORK_DIR:-$(pwd)}"
 SOURCE_DIR="${WORK_DIR}/code_deploy_application"
-DEPLOY_REF="${DEPLOY_REF:-feature/huawei}"
 DEPLOY_SCRIPT="${SOURCE_DIR}/scripts/deploy-ecs.sh"
 
 if [ ! -f "${SOURCE_DIR}/pyproject.toml" ] || [ ! -f "${DEPLOY_SCRIPT}" ]; then
@@ -200,9 +199,7 @@ if [ ! -f "${SOURCE_DIR}/pyproject.toml" ] || [ ! -f "${DEPLOY_SCRIPT}" ]; then
   exit 1
 fi
 
-git -C "${SOURCE_DIR}" fetch origin "${DEPLOY_REF}"
-EXPECTED_COMMIT="$(git -C "${SOURCE_DIR}" rev-parse FETCH_HEAD)"
-git -C "${SOURCE_DIR}" merge --ff-only "${EXPECTED_COMMIT}"
+EXPECTED_COMMIT="$(git -C "${SOURCE_DIR}" rev-parse HEAD)"
 
 exec env \
   WORK_DIR="${WORK_DIR}" \
@@ -216,8 +213,10 @@ exec env \
 失败不会切换 `/opt/neurun-current`，也不会调用 `systemctl restart`。如果阿里云部署平台
 自身配置了“部署前停止应用”的生命周期动作，需要在控制台关闭该动作；仓库内脚本只能保证
 自己不会提前停止服务，无法撤销平台在脚本执行前已经完成的停机。
-发布脚本拒绝缺少 `EXPECTED_COMMIT`、源码 `HEAD` 不一致、脏工作树或并发发布；成功信息和
-`GET /healthz` 都包含实际 release SHA。Git 刷新失败或版本校验不一致时，在线 release 保持不变。
+发布任务在控制台选择本次 revision（包括最新提交），启动入口以平台已 checkout 的干净 `HEAD`
+作为唯一候选版本，不另外固定或刷新远程分支。发布脚本拒绝缺少 `EXPECTED_COMMIT`、源码 `HEAD`
+不一致、脏工作树或并发发布；成功信息和 `GET /healthz` 都包含实际 release SHA。版本校验不一致时，
+在线 release 保持不变。
 部署脚本生成的 `neurun.service` 由 systemd 直接守护 Python 进程，使用
 `Restart=on-failure` 自动拉起异常退出，并设置 `LimitNOFILE=8192`；该部署不依赖 Docker。
 
