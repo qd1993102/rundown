@@ -13,6 +13,8 @@ from datetime import date, timedelta
 from pathlib import Path
 from typing import Any
 
+from .training_analysis import ActivityDayState, natural_week_bounds
+
 logger = logging.getLogger(__name__)
 
 DEEPSEEK_BASE_URL = "https://api.deepseek.com/chat/completions"
@@ -56,7 +58,7 @@ TOOLS = [
         "type": "function",
         "function": {
             "name": "get_training_history",
-            "description": "获取最近 N 天的训练与恢复数据汇总：训练天数、总跑量、周均跑量、前后半段跑量/HRV 趋势、平均睡眠/恢复/HRV/RHR、近7天每日明细表",
+            "description": "直接从 SQLite 原始活动和健康数据获取最近 N 天完整训练史，不依赖是否生成历史日报；包含训练量、恢复趋势和结构化课型",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -66,6 +68,23 @@ TOOLS = [
                     }
                 },
                 "required": ["days"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_current_week_progress",
+            "description": "按报告日期所在自然周（周一至周日）查询截至该日的训练次数、跑量、负荷和活动数据覆盖；专用于周目标完成度，不是滚动 7 天",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "date": {
+                        "type": "string",
+                        "description": "报告日期，YYYY-MM-DD 格式",
+                    }
+                },
+                "required": ["date"],
             },
         },
     },
@@ -131,7 +150,7 @@ TOOLS = [
         "type": "function",
         "function": {
             "name": "save_training_plan",
-            "description": "新建或更新运动大纲。必须包含完整的训练计划内容。如果大纲不存在则创建，如果存在则基于当前数据调整",
+            "description": "仅在用户明确确认修改训练方案后保存完整内容；日报分析和一般建议不得调用",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -212,39 +231,65 @@ def _exec_get_training_goals(memory_store: Any) -> str:
         return "无法获取目标"
 
 
+def _get_history_entries(memory_store: Any, days: int) -> list[dict[str, Any]]:
+    """优先读取 SQLite 完整历史，兼容尚未接入数据库的旧 MemoryStore。"""
+    if hasattr(memory_store, "get_training_history_entries"):
+        try:
+            entries = memory_store.get_training_history_entries(days=days)
+            if entries:
+                return entries
+        except Exception as exc:
+            logger.warning("读取 SQLite 训练历史失败，回退日报: %s", exc)
+
+    entries = []
+    for i in range(days):
+        current = date.today() - timedelta(days=i)
+        mem = memory_store.get(str(current))
+        if not mem:
+            continue
+        fm = mem.front_matter
+        activities = fm.get("yesterday_activities", {})
+        sleep = fm.get("last_night_sleep", {})
+        morning = fm.get("this_morning", {})
+        recovery = fm.get("recovery", {})
+        entries.append({
+            "date": str(current),
+            "activity_state": (
+                activities.get("activity_state")
+                or (
+                    ActivityDayState.CONFIRMED_REST.value
+                    if activities.get("is_rest_day")
+                    else ActivityDayState.UNKNOWN.value
+                )
+            ),
+            "is_rest": activities.get("is_rest_day", False),
+            "duration": activities.get("total_duration_min", 0) or 0,
+            "distance": activities.get("total_distance_km", 0) or 0,
+            "load": activities.get("total_training_load", 0) or 0,
+            "sleep_h": sleep.get("total_hours", 0) or 0,
+            "sleep_score": sleep.get("sleep_score"),
+            "hrv": morning.get("hrv_ms"),
+            "rhr": morning.get("resting_hr"),
+            "bb": morning.get("body_battery_morning"),
+            "recovery": recovery.get("overall_score"),
+            "readiness": morning.get("training_readiness_score"),
+        })
+    return entries
+
+
 def _exec_get_training_history(memory_store: Any, days: int) -> str:
     """执行 get_training_history 工具 — N 天训练与恢复汇总。"""
     days = max(1, min(days, 90))
-    entries = []
-    for i in range(days):
-        d = date.today() - timedelta(days=i)
-        mem = memory_store.get(str(d))
-        if mem:
-            fm = mem.front_matter
-            ya = fm.get("yesterday_activities", {})
-            sl = fm.get("last_night_sleep", {})
-            mo = fm.get("this_morning", {})
-            rec = fm.get("recovery", {})
-            entries.append({
-                "date": str(d),
-                "is_rest": ya.get("is_rest_day", False),
-                "duration": ya.get("total_duration_min", 0) or 0,
-                "distance": ya.get("total_distance_km", 0) or 0,
-                "load": ya.get("total_training_load", 0) or 0,
-                "sleep_h": sl.get("total_hours", 0) or 0,
-                "sleep_score": sl.get("sleep_score"),
-                "hrv": mo.get("hrv_ms"),
-                "rhr": mo.get("resting_hr"),
-                "bb": mo.get("body_battery_morning"),
-                "recovery": rec.get("overall_score"),
-                "readiness": mo.get("training_readiness_score"),
-            })
+    entries = _get_history_entries(memory_store, days)
 
     if not entries:
         return "暂无历史数据"
 
     n = len(entries)
-    train_entries = [e for e in entries if not e["is_rest"]]
+    train_entries = [
+        e for e in entries
+        if _history_activity_state(e) == ActivityDayState.TRAINING
+    ]
     tc = len(train_entries)
     total_km = sum(e["distance"] for e in train_entries)
     total_dur = sum(e["duration"] for e in train_entries)
@@ -255,8 +300,9 @@ def _exec_get_training_history(memory_store: Any, days: int) -> str:
     hrv_s = [e["hrv"] for e in entries if e["hrv"]]
     rhr_s = [e["rhr"] for e in entries if e["rhr"]]
 
+    chronological = list(reversed(entries))
     mid = max(n // 2, 1)
-    first, second = entries[:mid], entries[mid:]
+    first, second = chronological[:mid], chronological[mid:]
     f_km = sum(e["distance"] for e in first if not e["is_rest"])
     s_km = sum(e["distance"] for e in second if not e["is_rest"])
     km_trend = "上升" if s_km > f_km * 1.1 else ("下降" if s_km < f_km * 0.9 else "持平")
@@ -280,7 +326,17 @@ def _exec_get_training_history(memory_store: Any, days: int) -> str:
     lines.append(header)
     lines.append("|" + "-" * (len(header) - 2) + "|")
     for e in recent:
-        t = "休息" if e["is_rest"] else f"{e['duration']}min {e['distance']:.1f}km L{e['load']:.0f}"
+        type_text = "、".join(e.get("training_types", []))
+        state = _history_activity_state(e)
+        if state == ActivityDayState.CONFIRMED_REST:
+            t = "已确认休息"
+        elif state == ActivityDayState.UNKNOWN:
+            t = "运动数据未同步"
+        else:
+            t = (
+                f"{type_text + ' ' if type_text else ''}"
+                f"{e['duration']}min {e['distance']:.1f}km L{e['load']:.0f}"
+            )
         lines.append(
             f"| {e['date']} | {t} | {e['sleep_h']:.1f}/{e['sleep_score'] or '—'} | "
             f"{e['hrv'] or '—'} | {e['rhr'] or '—'} | {e['bb'] or '—'} | {e['recovery'] or '—'} |"
@@ -289,29 +345,69 @@ def _exec_get_training_history(memory_store: Any, days: int) -> str:
     return "\n".join(lines)
 
 
+def _history_activity_state(entry: dict[str, Any]) -> ActivityDayState:
+    """兼容旧日报条目并返回统一的每日运动状态。"""
+
+    raw = entry.get("activity_state")
+    try:
+        return ActivityDayState(raw)
+    except (TypeError, ValueError):
+        if entry.get("is_rest"):
+            return ActivityDayState.CONFIRMED_REST
+        if any((
+            entry.get("duration"), entry.get("distance"), entry.get("load"),
+            entry.get("training_types"),
+        )):
+            return ActivityDayState.TRAINING
+        return ActivityDayState.UNKNOWN
+
+
+def _exec_get_current_week_progress(
+    memory_store: Any,
+    target_date: date | None = None,
+) -> str:
+    """按自然周统计截至目标日期的实际训练进度。"""
+
+    target_date = target_date or date.today()
+    monday, sunday = natural_week_bounds(target_date)
+    elapsed_days = (target_date - monday).days + 1
+    entries = memory_store.get_training_history_entries(
+        days=elapsed_days, end_date=target_date,
+    )
+    training = [
+        entry for entry in entries
+        if _history_activity_state(entry) == ActivityDayState.TRAINING
+    ]
+    unknown_count = sum(
+        _history_activity_state(entry) == ActivityDayState.UNKNOWN
+        for entry in entries
+    )
+    total_km = sum(float(entry.get("distance", 0) or 0) for entry in training)
+    total_duration = sum(float(entry.get("duration", 0) or 0) for entry in training)
+    total_load = sum(float(entry.get("load", 0) or 0) for entry in training)
+
+    lines = [f"## 本周进度（自然周 {monday} 至 {sunday}）"]
+    lines.append(
+        f"- 截至 {target_date}：已完成 {len(training)} 次，"
+        f"{total_km:.1f}km，{total_duration:.0f}min，总负荷 {total_load:.0f}"
+    )
+    if unknown_count:
+        lines.append(
+            f"- {unknown_count} 天运动数据状态未知；不得将其视为休息日或已完成 0 训练"
+        )
+    return "\n".join(lines)
+
+
 def _exec_get_recovery_pattern(memory_store: Any, days: int) -> str:
     """执行 get_recovery_pattern 工具 — 个体恢复模式。"""
     days = max(1, min(days, 90))
     train_days, rest_days = [], []
-    for i in range(days - 1, -1, -1):
-        d = date.today() - timedelta(days=i)
-        mem = memory_store.get(str(d))
-        if not mem:
-            continue
-        fm = mem.front_matter
-        ya = fm.get("yesterday_activities", {})
-        mo = fm.get("this_morning", {})
-        rec = fm.get("recovery", {})
-        entry = {
-            "date": str(d), "hrv": mo.get("hrv_ms"), "rhr": mo.get("resting_hr"),
-            "bb": mo.get("body_battery_morning"), "recovery": rec.get("overall_score"),
-        }
-        if ya.get("is_rest_day"):
+    for raw_entry in reversed(_get_history_entries(memory_store, days)):
+        entry = dict(raw_entry)
+        state = _history_activity_state(entry)
+        if state == ActivityDayState.CONFIRMED_REST:
             rest_days.append(entry)
-        else:
-            entry["load"] = ya.get("total_training_load", 0)
-            entry["duration"] = ya.get("total_duration_min", 0)
-            entry["distance"] = ya.get("total_distance_km", 0)
+        elif state == ActivityDayState.TRAINING:
             train_days.append(entry)
 
     if not train_days:
@@ -402,7 +498,9 @@ def _exec_get_daily_report(memory_store: Any, date_str: str) -> str:
     rc = fm.get("recovery", {})
 
     lines = [f"## {date_str} 日报"]
-    if ya.get("is_rest_day"):
+    if ya.get("activity_state") == ActivityDayState.UNKNOWN:
+        lines.append("训练: 运动数据未同步，无法判断当天是否训练或休息")
+    elif ya.get("is_rest_day"):
         lines.append(f"训练: 休息日（步数 {ya.get('daily_steps', 0)}，活动距离 {ya.get('daily_distance_km', 0):.1f}km）")
     else:
         lines.append(f"训练: {ya.get('total_duration_min', 0)}min {ya.get('total_distance_km', 0):.1f}km 负荷{ya.get('total_training_load', 0)}")
@@ -514,6 +612,9 @@ TOOL_EXECUTORS = {
     "get_athlete_profile": lambda ms, args: _exec_get_athlete_profile(ms),
     "get_training_goals": lambda ms, args: _exec_get_training_goals(ms),
     "get_training_history": lambda ms, args: _exec_get_training_history(ms, args.get("days", 30)),
+    "get_current_week_progress": lambda ms, args: _exec_get_current_week_progress(
+        ms, date.fromisoformat(args.get("date", str(date.today()))),
+    ),
     "get_recovery_pattern": lambda ms, args: _exec_get_recovery_pattern(ms, args.get("days", 30)),
     "get_training_cycle": lambda ms, args: _exec_get_training_cycle(ms),
     "get_daily_report": lambda ms, args: _exec_get_daily_report(ms, args.get("date", str(date.today()))),
@@ -564,7 +665,9 @@ def get_coach_insight(
     mo = fm.get("this_morning", {})
     ld = fm.get("training_load", {})
 
-    if ya.get("is_rest_day"):
+    if ya.get("activity_state") == ActivityDayState.UNKNOWN:
+        train_hint = "运动数据未同步，训练/休息状态未知"
+    elif ya.get("is_rest_day"):
         train_hint = "休息日"
     else:
         train_hint = f"{ya.get('total_duration_min', 0)}min {ya.get('total_distance_km', 0):.1f}km"

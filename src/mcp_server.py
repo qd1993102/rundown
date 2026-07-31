@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any
 
 from .local_files import atomic_write_private, ensure_private_dir, restrict_private_file
+from .training_analysis import ActivityDayState, natural_week_bounds
 
 logger = logging.getLogger(__name__)
 
@@ -53,7 +54,7 @@ def create_server(
 ## 典型对话示例
 - 用户："早上好，今天状态怎么样？" → 你读取 daily/latest，用自然语言总结状态并给出训练建议
 - 用户："帮我看看昨天那场跑步的技术数据" → 你先 query_activities 找到活动ID，再 get_activity_detail 获取分段
-- 用户："这周跑量够不够？离目标还差多少？" → 你读取 goals/active + query_activities，计算对比
+- 用户："这周跑量够不够？离目标还差多少？" → 你读取 goals/active + query_current_week_progress，按自然周计算对比
 - 用户："生成今天的HTML日报" → 你调用 generate_html_report
 
 ## 数据时效
@@ -95,22 +96,25 @@ def create_server(
         if mem:
             parts.append(f"# 最新日报 ({mem.id})\n{_format_memory(mem)}")
 
-        # 前 7 天摘要
+        # 前 7 天摘要直接读取 SQLite，不依赖是否生成过历史日报。
         parts.append("\n# 前 7 天数据")
-        for i in range(1, 8):
-            d = date.today() - timedelta(days=i)
-            m = memory_store.get(str(d))
-            if m:
-                fm = m.front_matter
-                rec = fm.get("recovery", {})
-                sleep = fm.get("last_night_sleep", {})
-                ya = fm.get("yesterday_activities", {})
-                dur = ya.get("total_duration_min", 0) if not ya.get("is_rest_day") else 0
-                parts.append(
-                    f"- {d}: 恢复 {rec.get('overall_score', '?')}/100 "
-                    f"| 睡眠 {sleep.get('total_hours', '?')}h "
-                    f"| 训练 {dur}min"
-                )
+        entries = memory_store.get_training_history_entries(
+            user_id=user_id, days=7,
+        )
+        for entry in entries:
+            state = entry.get("activity_state")
+            if state == ActivityDayState.CONFIRMED_REST:
+                types = "已确认休息"
+            elif state == ActivityDayState.UNKNOWN:
+                types = "运动数据未同步"
+            else:
+                types = "、".join(entry.get("training_types", [])) or "训练"
+            parts.append(
+                f"- {entry['date']}: {types} "
+                f"{entry.get('duration', 0)}min {entry.get('distance', 0):.1f}km "
+                f"| 恢复 {entry.get('recovery') or '?'} "
+                f"| 睡眠 {entry.get('sleep_h', 0)}h"
+            )
 
         # 活跃目标
         goals = memory_store.list_by_type("goal", status="active")
@@ -214,6 +218,43 @@ def create_server(
         return "\n".join(lines)
 
     @mcp.tool()
+    def query_current_week_progress(target_date: str = "") -> str:
+        """查询目标日期所在自然周（周一至周日）截至当日的实际训练进度。"""
+        try:
+            target = (
+                date.fromisoformat(target_date)
+                if target_date
+                else date.today()
+            )
+        except ValueError:
+            return "日期格式错误，请使用 YYYY-MM-DD"
+        monday, sunday = natural_week_bounds(target)
+        entries = memory_store.get_training_history_entries(
+            user_id=user_id,
+            days=(target - monday).days + 1,
+            end_date=target,
+        )
+        training = [
+            entry for entry in entries
+            if entry.get("activity_state") == ActivityDayState.TRAINING
+        ]
+        unknown = sum(
+            entry.get("activity_state") == ActivityDayState.UNKNOWN
+            for entry in entries
+        )
+        total_km = sum(float(entry.get("distance", 0) or 0) for entry in training)
+        total_minutes = sum(
+            float(entry.get("duration", 0) or 0) for entry in training
+        )
+        lines = [
+            f"自然周 {monday} 至 {sunday}，截至 {target}：",
+            f"- 已完成 {len(training)} 次，{total_km:.1f}km，{total_minutes:.0f}min",
+        ]
+        if unknown:
+            lines.append(f"- {unknown} 天运动数据状态未知，不计为休息日")
+        return "\n".join(lines)
+
+    @mcp.tool()
     def query_health_metrics(days: int = 7) -> str:
         """查询最近 N 天的健康指标（睡眠、HRV、心率、身体电量等）。"""
         metrics = storage.get_health_metrics_range(user_id, days)
@@ -238,6 +279,7 @@ def create_server(
         用户问"配速"、"步频"、"功率"、"技术分析"、"分段数据"时调用。
         需要先通过 query_activities 获取 activity_id。"""
         from .activity import get_activity_splits, get_activity_detail
+        from .training_analysis import get_latest_training_analysis, display_name
         detail = get_activity_detail(storage, activity_id)
         splits = get_activity_splits(storage, activity_id)
         if not detail:
@@ -247,6 +289,18 @@ def create_server(
             f"距离: {(detail.get('summaryDTO', {}).get('distance', 0) or 0)/1000:.1f}km",
             f"时长: {(detail.get('summaryDTO', {}).get('duration', 0) or 0)/60:.0f}min",
         ]
+        analysis = get_latest_training_analysis(storage, user_id, activity_id)
+        if analysis:
+            lines.extend([
+                f"训练内容: {display_name(analysis['primary_type'], analysis['terrain'])}",
+                f"识别置信度: {analysis['confidence']:.0%} "
+                f"({analysis['algorithm_version']})",
+            ])
+            lines.extend(f"识别依据: {item}" for item in analysis["evidence"])
+            lines.extend(
+                f"后续影响: {item}"
+                for item in analysis["training_implications"]
+            )
         for s in splits:
             dist = (s.get("distance_m") or 0) / 1000
             pace = s.get("pace_per_km")
@@ -486,7 +540,9 @@ def _format_memory(mem) -> str:
 
     # 附加关键 Front Matter 数据
     ya = fm.get("yesterday_activities", {})
-    if ya and not ya.get("is_rest_day"):
+    if ya.get("activity_state") == ActivityDayState.UNKNOWN:
+        parts.append("\n运动数据: 未同步，训练/休息状态未知")
+    elif ya and not ya.get("is_rest_day"):
         parts.append(
             f"\n数据: {ya.get('total_duration_min', 0)}min "
             f"{ya.get('total_distance_km', 0):.1f}km "

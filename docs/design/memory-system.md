@@ -960,19 +960,27 @@ graph TD
 
 ##### 每日报告聚合 ⭐
 
+> **训练内容识别扩展（v1 已实现，2026-07-31）**：日报对目标日期活动的类型解释消费版本化 `TrainingSessionAnalysis`。个人基线和历史训练上下文直接查询 SQLite 中完整的原始活动及分析，不以是否存在历史日报为前提；日报仍是生成时的解释快照。分类、地形、数据质量和证据合同见 [交互式训练方案系统](training-system.md#12-训练内容识别)。
+
 ```
 输入: target_date (默认今天), HealthDB, MemoryStore (读取活跃目标)
 输出: auto/daily/YYYY-MM-DD.md
 
 算法步骤:
-1. 查询昨日活动
-   yesterday = target_date - 1day
-   activities = db.get_activities(user_id, yesterday, yesterday)
+1. 查询报告日期活动与活动同步覆盖
+   activities = db.get_activities(user_id, target_date, target_date)
+   coverage = sync_status(user_id, target_date, neurun_provider_sync)
    
    if no activities:
-     is_rest_day = true
-     活动部分标记为休息日
+     if coverage == completed:
+       activity_state = confirmed_rest
+       is_rest_day = true
+     else:
+       activity_state = unknown
+       is_rest_day = false
+       活动部分标记为运动数据未同步/状态未知
    else:
+     activity_state = training
      逐条提取: type, duration, distance, avg_hr, max_hr,
               avg_pace, training_load, aerobic_te, anaerobic_te
      汇总: total_duration, total_distance, total_load
@@ -1415,7 +1423,7 @@ AI 教练从多个 memory 来源收集上下文，构建丰富的 prompt：
 | 竞技档案 | `_collect_profile()` | `profile/fitness-assessment.md` — 身高体重、各距离 PB、VO2max |
 | 训练偏好 | `_collect_preferences()` | `coaching/preferences.md` — 主项、训练哲学、伤病史 |
 | 活跃目标 | `_collect_goals()` | `goals/active/*.md` — 目标成绩、截止日期、配速对照表（含 body 正文） |
-| 历史趋势 | `_collect_history()` | 前 7 天日报 Front Matter 数字摘要 + 近 3 天训练细节（配速、步频、功率） |
+| 历史趋势 | `_collect_history()` | 当前实现读取前 7 天日报；目标改为直接读取近期 SQLite 原始活动及版本化训练分析，历史日报仅作解释快照 |
 | 当日数据 | `_build_coach_prompt()` | 当日日报 FM（活动详情、睡眠、晨起指标、负荷、恢复评分） |
 
 #### Prompt 结构
@@ -1429,6 +1437,8 @@ AI 教练从多个 memory 来源收集上下文，构建丰富的 prompt：
 ```
 
 关键改进：AI 现在知道运动员的全马 PB 2:32:48、sub-2:30 目标、配速能力，能给出与竞技水平匹配的评估。
+
+训练内容识别接入后，prompt 只解释结构化的训练主类型、地形属性、置信度和证据；不能依据活动名称重新分类。未生成历史日报的日期仍须从 SQLite 原始活动进入上下文。空活动日期必须同时读取 Activity Data Coverage：只有覆盖完成才能作为休息日，否则为未知。周目标完成度通过自然周进度查询统计周一至报告日期的 Actual Activity；`get_training_history(days=7)` 只用于滚动趋势，不承担本周目标口径。
 
 #### API 调用
 

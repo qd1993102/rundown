@@ -22,10 +22,11 @@ from garmy.localdb.progress import ProgressReporter
 from .config import Config
 from .local_files import atomic_write_private, ensure_private_dir, restrict_private_file
 from .resource_lifecycle import close_runtime_resources
+from .training_analysis import ACTIVITY_SYNC_METRIC_TYPE, natural_week_bounds
 
 logger = logging.getLogger(__name__)
 
-_CALENDAR_METRIC_TYPE = "neurun_provider_sync"
+_CALENDAR_METRIC_TYPE = ACTIVITY_SYNC_METRIC_TYPE
 
 
 def _ensure_progress_reporter_compat(progress_reporter: Any) -> None:
@@ -619,7 +620,9 @@ class Storage:
             rows = session.execute(text("""
                 SELECT user_id, activity_id, activity_date, activity_name,
                        duration_seconds, avg_heart_rate, training_load,
-                       start_time, distance_meters, created_at
+                       start_time, distance_meters, activity_type,
+                       max_heart_rate, calories, elevation_gain,
+                       provider_name, created_at
                 FROM activities
                 WHERE user_id = :uid AND activity_date >= :start AND activity_date <= :end
                 ORDER BY start_time
@@ -630,7 +633,10 @@ class Storage:
                     "user_id": r[0], "activity_id": r[1], "activity_date": r[2],
                     "activity_name": r[3], "duration_seconds": r[4],
                     "avg_heart_rate": r[5], "training_load": r[6],
-                    "start_time": r[7], "distance_meters": r[8], "created_at": r[9],
+                    "start_time": r[7], "distance_meters": r[8],
+                    "activity_type": r[9], "max_heart_rate": r[10],
+                    "calories": r[11], "elevation_gain": r[12],
+                    "provider_name": r[13], "created_at": r[14],
                 }
                 for r in rows
             ]
@@ -740,9 +746,7 @@ class Storage:
         """
         if target_date is None:
             target_date = date.today()
-        # 找到本周一
-        monday = target_date - timedelta(days=target_date.weekday())
-        sunday = monday + timedelta(days=6)
+        monday, sunday = natural_week_bounds(target_date)
 
         activities = self.get_activities_range(user_id, monday, sunday)
 

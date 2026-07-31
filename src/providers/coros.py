@@ -137,9 +137,8 @@ def _parse_activity_item(item: dict[str, Any]) -> ActivityData:
         max_heart_rate=item.get("maxHr"),
         training_load=float(item.get("trainingLoad") or 0),
         calories=_int_value(item.get("calorie")),
-        elevation_gain=float(
-            item.get("ascent") or item.get("totalAscent")
-            or item.get("elevationGain") or 0
+        elevation_gain=_optional_float_value(
+            item, ("ascent", "totalAscent", "elevationGain"),
         ),
         extra={
             "provider": "coros",
@@ -148,6 +147,20 @@ def _parse_activity_item(item: dict[str, Any]) -> ActivityData:
             "paused_seconds": max(total_time - active_time, 0),
         },
     )
+
+
+def _optional_float_value(
+    item: dict[str, Any], keys: tuple[str, ...],
+) -> float | None:
+    """保留 Provider 缺失值；真实零值仍返回 0.0。"""
+    for key in keys:
+        if key not in item or item[key] is None:
+            continue
+        try:
+            return float(item[key])
+        except (TypeError, ValueError):
+            return None
+    return None
 
 
 def _emit_progress(

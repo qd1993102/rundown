@@ -24,7 +24,7 @@ class ActivityData:
     max_heart_rate: int | None = None
     training_load: float = 0
     calories: int = 0
-    elevation_gain: float = 0
+    elevation_gain: float | None = None
     has_gps: bool = False
     extra: dict[str, Any] = field(default_factory=dict)
 

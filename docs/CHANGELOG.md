@@ -6,7 +6,21 @@ neurun 项目变更日志，按日期倒序。
 
 ## 2026-07-31
 
+### Added
+- **训练内容识别 v1**: 新增训练主类型与地形属性双轴分析，结合活动汇总、分段、活动发生前 28–42 天个人基线和恢复状态识别有氧、节奏、间歇、坡地、越野及山地训练；结果以版本化派生记录保存，包含数据质量、置信度、证据和后续训练约束，并接入日报、AI 教练历史上下文和 MCP 活动详情。当前不自动改写训练方案，也不覆盖平台原始负荷。
+- **影响范围**: src/training_analysis.py, src/activity.py, src/main.py, src/memory.py, src/coach.py, src/mcp_server.py, src/providers/, src/storage.py, prompts/coach.md, tests/, README.md, CONTEXT.md, docs/product/, docs/design/
+- **关联文档**: [训练体验产品方案](product/training-experience.md), [数据源同步产品方案](product/data-source-sync.md), [训练系统技术设计](design/training-system.md), [多平台数据合同](design/12-multi-platform.md), [记忆系统设计](design/memory-system.md), [AI 教练设计](design/ai-coaching.md), [开发过程](process/2026-07-31-training-session-analysis.md), [README](../README.md)
+
 ### Fixed
+- **空活动不再误判为休息日**: 日报先读取逐日活动同步覆盖，再输出 `training`、`confirmed_rest`、`unknown` 三态；只有活动同步完成且确无记录时才确认休息，其余空活动日在 Web、CLI、HTML、AI 教练和 MCP 中显示运动数据未同步或状态未知。
+- **影响范围**: src/training_analysis.py, src/memory.py, src/coach.py, src/main.py, src/web.py, src/render.py, src/mcp_server.py, tests/, README.md, CONTEXT.md, docs/product/, docs/design/
+- **关联文档**: [Bug 记录](bugfixes/2026-07-31-empty-activity-misclassified-as-rest.md), [训练体验产品方案](product/training-experience.md), [训练系统技术设计](design/training-system.md), [记忆系统设计](design/memory-system.md)
+- **周目标改为自然周统计**: 新增共享自然周边界和专用周进度工具，AI 教练与 MCP 只累计报告日期所在周一至周日内的实际训练；滚动 7 天继续仅用于负荷和恢复趋势，未知活动日不计作训练或休息。
+- **影响范围**: src/training_analysis.py, src/coach.py, src/mcp_server.py, src/storage.py, prompts/coach.md, tests/, README.md, CONTEXT.md, docs/product/, docs/design/
+- **关联文档**: [Bug 记录](bugfixes/2026-07-31-week-goal-rolling-window.md), [训练体验产品方案](product/training-experience.md), [训练系统技术设计](design/training-system.md), [AI 教练设计](design/ai-coaching.md)
+- **日报训练史、爬升和负荷口径不完整**: 教练历史工具改为直接读取 SQLite 原始活动和健康数据，不再跳过未生成日报的日期；同步持久化累计爬升并补齐常见 Provider 分段详情，缺失爬升保留为 `null`；ACWR 改为近 7 天累计负荷除以近 28 天周均负荷，同时修复持久化字段名与 HRV 状态大小写问题。
+- **影响范围**: src/main.py, src/activity.py, src/memory.py, src/coach.py, src/providers/, src/storage.py, tests/
+- **关联文档**: [Bug 记录](bugfixes/2026-07-31-training-analysis-data-gaps.md), [数据源同步产品方案](product/data-source-sync.md), [训练系统技术设计](design/training-system.md), [开发过程](process/2026-07-31-training-session-analysis.md)
 - **ECS 旧 Git checkout 被误报为成功发布**: 发布入口刷新目标分支并显式传入期望 Commit；发布脚本
   校验干净 Git 工作树与完整 SHA，使用全局锁拒绝并发发布，并让 release 标记、systemd 运行环境和
   `/healthz` 共同返回同一 Commit。旧暂存代码、错误源码目录或其他进程的存活响应不再满足成功条件。

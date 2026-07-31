@@ -159,7 +159,10 @@ class GarminActivity(ActivityProvider):
                     max_heart_rate=a.get("maxHR"),
                     training_load=float(a.get("activityTrainingLoad", 0) or 0),
                     calories=int(a.get("calories", 0) or 0),
-                    elevation_gain=float(a.get("elevationGain", 0) or 0),
+                    elevation_gain=(
+                        float(a["elevationGain"])
+                        if a.get("elevationGain") is not None else None
+                    ),
                 ))
         return result
 

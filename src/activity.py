@@ -91,7 +91,7 @@ def store_activity_detail(
     user_id: int,
     activity_id: str,
     detail: dict[str, Any],
-) -> None:
+) -> bool:
     """存储活动详情到 DB。"""
     from sqlalchemy import text
     session = storage.db.get_session()
@@ -107,10 +107,13 @@ def store_activity_detail(
         })
 
         # 存储分段数据
-        splits = detail.get("splitSummaries", [])
+        session.execute(text(
+            "DELETE FROM activity_splits WHERE activity_id = :aid"
+        ), {"aid": str(activity_id)})
+        splits = _extract_splits(detail)
         for i, s in enumerate(splits):
-            dist = s.get("distance", 0) or 0
-            dur = s.get("duration", 0) or 0
+            dist = _value(s, "distance", "distance_m", "distanceMeters") or 0
+            dur = _value(s, "duration", "duration_sec", "durationSeconds") or 0
             pace = (dur / (dist / 1000)) if dist > 0 else None
 
             session.execute(text("""
@@ -125,28 +128,62 @@ def store_activity_detail(
             """), {
                 "aid": str(activity_id),
                 "idx": i,
-                "stype": s.get("splitType", "unknown"),
+                "stype": _value(
+                    s, "splitType", "split_type", "type", "lapType", "stepType"
+                ) or "unknown",
                 "dist": dist,
                 "dur": dur,
                 "pace": round(pace, 1) if pace else None,
-                "ahr": s.get("averageHR"),
-                "mhr": s.get("maxHR"),
-                "cad": s.get("averageRunCadence"),
-                "pwr": s.get("averagePower"),
-                "npwr": s.get("normalizedPower"),
-                "gct": s.get("groundContactTime"),
-                "sl": s.get("strideLength"),
-                "vo": s.get("verticalOscillation"),
-                "eg": s.get("elevationGain", 0) or 0,
-                "el": s.get("elevationLoss", 0) or 0,
+                "ahr": _value(s, "averageHR", "avgHr", "avg_hr"),
+                "mhr": _value(s, "maxHR", "maxHr", "max_hr"),
+                "cad": _value(s, "averageRunCadence", "avgCadence", "avg_cadence"),
+                "pwr": _value(s, "averagePower", "avgPower", "avg_power"),
+                "npwr": _value(s, "normalizedPower", "normalized_power"),
+                "gct": _value(s, "groundContactTime", "ground_contact_ms"),
+                "sl": _value(s, "strideLength", "stride_length_cm"),
+                "vo": _value(s, "verticalOscillation", "vertical_osc_mm"),
+                "eg": _value(s, "elevationGain", "ascent", "elevation_gain") or 0,
+                "el": _value(s, "elevationLoss", "descent", "elevation_loss") or 0,
             })
 
         session.commit()
+        return True
     except Exception as exc:
         session.rollback()
         logger.warning("存储活动详情 %s 失败: %s", activity_id, exc)
+        return False
     finally:
         session.close()
+
+
+def _value(mapping: dict[str, Any], *keys: str) -> Any:
+    for key in keys:
+        if key in mapping and mapping[key] is not None:
+            return mapping[key]
+    return None
+
+
+def _extract_splits(detail: dict[str, Any]) -> list[dict[str, Any]]:
+    """兼容 Provider 常见详情结构提取有顺序的 laps/splits。"""
+    candidates = (
+        "splitSummaries", "splits", "laps", "intervals", "segments",
+    )
+    queue: list[dict[str, Any]] = [detail]
+    visited: set[int] = set()
+    while queue:
+        current = queue.pop(0)
+        marker = id(current)
+        if marker in visited:
+            continue
+        visited.add(marker)
+        for key in candidates:
+            value = current.get(key)
+            if value and isinstance(value, list) and all(isinstance(item, dict) for item in value):
+                return value
+        for value in current.values():
+            if isinstance(value, dict):
+                queue.append(value)
+    return []
 
 
 # ── Sync ─────────────────────────────────────
@@ -201,8 +238,8 @@ def sync_all_activity_details(
             continue
 
         stats["fetched"] += 1
-        store_activity_detail(storage, user_id, str(aid), detail)
-        stats["stored"] += 1
+        if store_activity_detail(storage, user_id, str(aid), detail):
+            stats["stored"] += 1
 
     logger.info("活动详情同步完成: %s", stats)
     return stats

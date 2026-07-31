@@ -134,6 +134,7 @@ def test_non_garmin_resync_updates_existing_activity_duration(tmp_path):
         start_time="2026-07-19 08:00:00",
         duration_seconds=4200,
         distance_meters=10000,
+        elevation_gain=120,
     )
 
     class Activities:
@@ -153,16 +154,93 @@ def test_non_garmin_resync_updates_existing_activity_duration(tmp_path):
     _sync_provider(Provider(), storage, 1, target, target, "coros")
 
     activity.duration_seconds = 3600
+    activity.elevation_gain = 180
     _sync_provider(Provider(), storage, 1, target, target, "coros")
 
     session = storage.db.get_session()
     row = session.execute(text(
-        "SELECT duration_seconds, activity_type FROM activities "
+        "SELECT duration_seconds, activity_type, elevation_gain FROM activities "
         "WHERE activity_id = 'coros-1'"
     )).one()
     session.close()
     assert row.duration_seconds == 3600
     assert row.activity_type == "running"
+    assert row.elevation_gain == 180
+
+
+def test_activity_detail_resync_replaces_splits_instead_of_duplicating(tmp_path):
+    from sqlalchemy import text
+
+    from src.activity import ensure_tables, store_activity_detail
+    from src.config import Config
+    from src.storage import Storage
+
+    storage = Storage(Config(db_path=str(tmp_path / "data.db")))
+    ensure_tables(storage)
+    session = storage.db.get_session()
+    session.execute(text("""
+        INSERT INTO activities (user_id, activity_id, activity_date)
+        VALUES (1, 'detail-1', '2026-07-29')
+    """))
+    session.commit()
+    session.close()
+    detail = {
+        "splitSummaries": [
+            {"splitType": "INTERVAL_ACTIVE", "distance": 1000, "duration": 240},
+            {"splitType": "RECOVERY", "distance": 400, "duration": 180},
+        ]
+    }
+
+    store_activity_detail(storage, 1, "detail-1", detail)
+    store_activity_detail(storage, 1, "detail-1", detail)
+
+    session = storage.db.get_session()
+    count = session.execute(text(
+        "SELECT COUNT(*) FROM activity_splits WHERE activity_id = 'detail-1'"
+    )).scalar_one()
+    session.close()
+    assert count == 2
+
+
+def test_provider_sync_persists_available_activity_splits(tmp_path):
+    from src.activity import get_activity_splits
+    from src.config import Config
+    from src.main import _sync_provider
+    from src.providers.base import ActivityData
+    from src.storage import Storage
+
+    target = date(2026, 7, 29)
+    activity = ActivityData(
+        activity_id="coros-detail", activity_name="间歇训练",
+        activity_type="running", start_time="2026-07-29 07:00:00",
+        duration_seconds=3000, distance_meters=8000,
+    )
+
+    class Activities:
+        def fetch_activities(self, start, end):
+            return [activity]
+
+        def fetch_activity_detail(self, activity_id):
+            return {"data": {"laps": [
+                {"type": "INTERVAL_ACTIVE", "distanceMeters": 800,
+                 "durationSeconds": 230},
+                {"type": "RECOVERY", "distanceMeters": 400,
+                 "durationSeconds": 190},
+            ]}}
+
+    class Health:
+        def fetch_health_range(self, start, end):
+            return []
+
+    provider = type("Provider", (), {
+        "activities": Activities(), "health": Health(),
+    })()
+    storage = Storage(Config(db_path=str(tmp_path / "data.db")))
+
+    _sync_provider(provider, storage, 1, target, target, "coros")
+
+    splits = get_activity_splits(storage, "coros-detail")
+    assert [split["type"] for split in splits] == ["INTERVAL_ACTIVE", "RECOVERY"]
 
 
 def test_non_garmin_resync_merges_sleep_into_existing_health(tmp_path):

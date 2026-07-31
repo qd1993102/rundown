@@ -77,9 +77,20 @@ class TestActivitySummarize:
         assert summary["daily_steps"] == 12000
 
     def test_summarize_rest_day(self):
-        summary = MemoryWriter._summarize_activities([], SAMPLE_HEALTH)
+        summary = MemoryWriter._summarize_activities(
+            [], SAMPLE_HEALTH, activity_state="confirmed_rest",
+        )
         assert summary["is_rest_day"] is True
         assert summary["is_training_day"] is False
+        assert summary["activity_state"] == "confirmed_rest"
+
+    def test_empty_activity_without_sync_coverage_is_unknown(self):
+        summary = MemoryWriter._summarize_activities([], SAMPLE_HEALTH)
+
+        assert summary["is_rest_day"] is False
+        assert summary["is_training_day"] is False
+        assert summary["activity_state"] == "unknown"
+        assert summary["day_type"] == "unknown"
 
     def test_summarize_no_health(self):
         summary = MemoryWriter._summarize_activities(SAMPLE_ACTIVITIES, {})
@@ -114,15 +125,32 @@ class TestRecoveryScore:
         assert 0 <= r["overall_score"] <= 100
         assert r["level"] in ("excellent", "good", "fair", "poor")
 
+    def test_balanced_hrv_scores_higher_than_low_hrv(self):
+        balanced = MemoryWriter._calc_recovery_score(
+            SAMPLE_HEALTH, {**SAMPLE_HEALTH, "hrv_status": "balanced"},
+        )
+        low = MemoryWriter._calc_recovery_score(
+            SAMPLE_HEALTH, {**SAMPLE_HEALTH, "hrv_status": "low"},
+        )
+
+        assert balanced["overall_score"] > low["overall_score"]
+
 
 class TestTrainingLoad:
     def test_acwr(self):
-        # acute: 180 (2 activities), chronic: same 2 activities → ACWR=1.0 optimal
+        # acute: 180；28 天总负荷 180 折算为周均 45，ACWR=4.0。
         l = MemoryWriter._calc_training_load(SAMPLE_ACTIVITIES, SAMPLE_ACTIVITIES)
         assert l["acute_load_7d"] == 180.0
-        assert l["chronic_load_28d"] == 90.0  # avg = 180/2
-        # ACWR = 180/90 = 2.0 → high_risk (test data is extreme)
-        assert l["acwr"] == 2.0
+        assert l["chronic_load_28d"] == 45.0
+        assert l["acwr"] == 4.0
+
+    def test_uses_persisted_training_load_field(self):
+        activities = [{"training_load": 80.0}, {"training_load": 40.0}]
+
+        result = MemoryWriter._calc_training_load(activities, activities)
+
+        assert result["acute_load_7d"] == 120.0
+        assert result["chronic_load_28d"] == 30.0
 
 
 class TestAIInsight:

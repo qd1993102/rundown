@@ -454,7 +454,9 @@ def _user_context(memory_store: MemoryStore) -> str:
             ai = fm.get("ai_insight", {})
 
             lines = ["## 今日数据"]
-            if ya.get("is_rest_day"):
+            if ya.get("activity_state") == "unknown":
+                lines.append("- 昨天: 运动数据未同步，训练/休息状态未知")
+            elif ya.get("is_rest_day"):
                 lines.append("- 昨天: 休息日")
             else:
                 lines.append(
@@ -1443,7 +1445,9 @@ def register_web_routes(server, user_manager: UserManager, config: Config):
 
             # 训练摘要
             train_parts = []
-            if ya.get("is_rest_day"):
+            if ya.get("activity_state") == "unknown":
+                train_parts.append("⏳ 运动数据未同步")
+            elif ya.get("is_rest_day"):
                 train_parts.append("🧘 休息日")
             else:
                 sessions = ya.get("sessions", [])

@@ -73,7 +73,7 @@ graph TD
 | 统一字段 | 类型 / 标准单位 | Garmin | Coros | Huawei | 对齐规则 |
 |----------|-----------------|:------:|:-----:|:------:|----------|
 | `activity_id` | string | ✅ | ✅ | ✅ | 保留平台原始 ID，跨平台唯一键使用 `provider + activity_id` |
-| `activity_name` | string | ✅ | ✅ | ✅ | 空值使用通用运动名称，不用于类型判断 |
+| `activity_name` | string | ✅ | ✅ | ✅ | 空值使用通用运动名称；只能作为训练内容识别的辅助证据 |
 | `activity_type` | enum string | ✅ | ◐ | ◐ | Huawei 保留 API 原始类型；原始记录同时放入 `extra` |
 | `start_time` | ISO 8601 + 时区 | ◐ | ◐ | ✅ | Huawei 毫秒时间戳转换为 UTC ISO 8601 |
 | `duration_seconds` | integer, s | ✅ | ✅ | ✅ | Coros 优先使用排除暂停的 `workoutTime`，缺失时回退 `totalTime`；Huawei 无 duration 时以结束减开始计算 |
@@ -114,6 +114,21 @@ graph TD
 4. **统一物理单位**：时间用秒/小时、距离和海拔用米、能量用 kcal、心率用 bpm、HRV 用 ms。
 5. **时间必须可定位**：活动时间目标格式为带时区的 ISO 8601；每日健康数据按用户本地时区聚合。
 6. **能力与数据质量分离**：Provider 支持某字段，不代表当天一定有值；同步结果应分别记录 `supported`、`authorized`、`available` 状态。
+
+#### 12.3.4 训练内容识别数据合同
+
+> v1 已实现汇总字段持久化、常见 laps/splits 归一化、详情幂等补齐和缺失爬升 `null` 语义；各 Provider 的真实详情形态、逐字段授权原因和大批量同步成本仍需线上验收。
+
+Provider 层只提供可追溯事实，不输出 neurun 的有氧、节奏、间歇或越野最终结论。训练内容识别由 [交互式训练方案系统](training-system.md) 的 `TrainingSessionAnalyzer` 负责。
+
+除 `ActivityData` 汇总字段外，Provider 支持时还应归一化：
+
+- 有顺序的 laps/splits：开始时间、时长、距离、平均/最大心率、配速、功率及原始分段类型；
+- 海拔与路线负荷：累计爬升/下降、逐段爬升和可用的坡度或高度序列；
+- 数据质量：`complete`、`partial`、`unavailable`，以及 `not_provided`、`not_authorized`、`not_mapped`、`request_failed` 等原因；
+- 来源元数据：Provider、原始字段、原始单位和详情获取时间。
+
+`0` 只能表达平台确认的真实零值；未知爬升、未知心率和未知分段必须使用空值及原因。活动汇总先到、详情后到时采用幂等补齐，并使对应派生分析失效或重算。不得为跨平台对齐而合成不存在的分段，也不得用起终点海拔差替代累计爬升。
 
 ### 12.4 Provider 切换
 

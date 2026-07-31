@@ -288,6 +288,10 @@ def _ensure_activity_columns(storage: Storage) -> None:
     for column_sql in (
         "ALTER TABLE activities ADD COLUMN distance_meters FLOAT",
         "ALTER TABLE activities ADD COLUMN activity_type VARCHAR",
+        "ALTER TABLE activities ADD COLUMN max_heart_rate INTEGER",
+        "ALTER TABLE activities ADD COLUMN calories INTEGER",
+        "ALTER TABLE activities ADD COLUMN elevation_gain FLOAT",
+        "ALTER TABLE activities ADD COLUMN provider_name VARCHAR",
     ):
         session = storage.db.get_session()
         try:
@@ -318,7 +322,8 @@ def _sync_garmin_activities(provider, storage, user_id: int, start: date, end: d
     for a in activities:
         row = session.execute(
             text("""
-                SELECT distance_meters, activity_type
+                SELECT distance_meters, activity_type, elevation_gain,
+                       max_heart_rate, calories, provider_name
                 FROM activities WHERE activity_id = :aid
             """),
             {"aid": a.activity_id}
@@ -330,9 +335,10 @@ def _sync_garmin_activities(provider, storage, user_id: int, start: date, end: d
                 INSERT INTO activities (user_id, activity_id, activity_date,
                     activity_name, duration_seconds, avg_heart_rate,
                     training_load, start_time, distance_meters, activity_type,
+                    max_heart_rate, calories, elevation_gain, provider_name,
                     created_at)
                 VALUES (:uid, :aid, :ad, :an, :dur, :hr, :tl, :st, :dist,
-                    :atype, datetime('now'))
+                    :atype, :mhr, :cal, :elev, :provider, datetime('now'))
             """), {
                 "uid": user_id, "aid": a.activity_id,
                 "ad": adate,
@@ -340,25 +346,43 @@ def _sync_garmin_activities(provider, storage, user_id: int, start: date, end: d
                 "hr": a.avg_heart_rate, "tl": a.training_load,
                 "st": a.start_time, "dist": a.distance_meters,
                 "atype": a.activity_type,
+                "mhr": a.max_heart_rate, "cal": a.calories,
+                "elev": a.elevation_gain, "provider": "garmin",
             })
             stored_act += 1
-        elif (not row[0] and a.distance_meters) or row[1] != a.activity_type:
-            # 已有记录：补全距离和标准运动类型。
+        elif (
+            (not row[0] and a.distance_meters)
+            or row[1] != a.activity_type
+            or (a.elevation_gain is not None and row[2] != a.elevation_gain)
+            or (a.max_heart_rate is not None and row[3] != a.max_heart_rate)
+            or (a.calories is not None and row[4] != a.calories)
+            or row[5] != "garmin"
+        ):
+            # 已有记录：补全标准活动事实，不覆盖未知值。
             session.execute(text("""
                 UPDATE activities
                 SET distance_meters = CASE
                         WHEN :dist > 0 THEN :dist ELSE distance_meters
                     END,
-                    activity_type = :atype
+                    activity_type = :atype,
+                    max_heart_rate = COALESCE(:mhr, max_heart_rate),
+                    calories = COALESCE(:cal, calories),
+                    elevation_gain = COALESCE(:elev, elevation_gain),
+                    provider_name = :provider
                 WHERE activity_id = :aid
             """), {
                 "dist": a.distance_meters,
                 "atype": a.activity_type,
+                "mhr": a.max_heart_rate,
+                "cal": a.calories,
+                "elev": a.elevation_gain,
+                "provider": "garmin",
                 "aid": a.activity_id,
             })
             updated_act += 1
     session.commit()
     session.close()
+    _sync_activity_details(provider, storage, user_id, activities)
     if stored_act > 0 or updated_act > 0:
         console.print(f"  ✅ Garmin 活动: {stored_act} 条新增, {updated_act} 条字段补全 (共 {len(activities)} 条)")
     else:
@@ -393,7 +417,8 @@ def _sync_provider(provider, storage, user_id: int, start: date, end: date,
     for a in activities:
         existing = session.execute(
             text("""
-                SELECT duration_seconds, activity_type
+                SELECT duration_seconds, activity_type, distance_meters,
+                       elevation_gain, max_heart_rate, calories, provider_name
                 FROM activities WHERE activity_id = :aid
             """),
             {"aid": a.activity_id}
@@ -409,9 +434,10 @@ def _sync_provider(provider, storage, user_id: int, start: date, end: date,
                 INSERT INTO activities (user_id, activity_id, activity_date,
                     activity_name, duration_seconds, avg_heart_rate,
                     training_load, start_time, distance_meters, activity_type,
+                    max_heart_rate, calories, elevation_gain, provider_name,
                     created_at)
                 VALUES (:uid, :aid, :ad, :an, :dur, :hr, :tl, :st, :dist,
-                    :atype, datetime('now'))
+                    :atype, :mhr, :cal, :elev, :provider, datetime('now'))
             """), {
                 "uid": user_id, "aid": a.activity_id,
                 "ad": activity_date,
@@ -419,26 +445,49 @@ def _sync_provider(provider, storage, user_id: int, start: date, end: date,
                 "hr": a.avg_heart_rate, "tl": a.training_load,
                 "st": a.start_time, "dist": a.distance_meters,
                 "atype": a.activity_type,
+                "mhr": a.max_heart_rate, "cal": a.calories,
+                "elev": a.elevation_gain, "provider": provider_name,
             })
             stored_act += 1
-        elif existing[0] != a.duration_seconds or existing[1] != a.activity_type:
+        elif (
+            existing[0] != a.duration_seconds
+            or existing[1] != a.activity_type
+            or (a.distance_meters > 0 and existing[2] != a.distance_meters)
+            or (a.elevation_gain is not None and existing[3] != a.elevation_gain)
+            or (a.max_heart_rate is not None and existing[4] != a.max_heart_rate)
+            or (a.calories is not None and existing[5] != a.calories)
+            or existing[6] != provider_name
+        ):
             session.execute(text("""
                 UPDATE activities
-                SET duration_seconds = :dur, activity_type = :atype
+                SET duration_seconds = :dur,
+                    activity_type = :atype,
+                    distance_meters = CASE
+                        WHEN :dist > 0 THEN :dist ELSE distance_meters
+                    END,
+                    max_heart_rate = COALESCE(:mhr, max_heart_rate),
+                    calories = COALESCE(:cal, calories),
+                    elevation_gain = COALESCE(:elev, elevation_gain),
+                    provider_name = :provider
                 WHERE activity_id = :aid
             """), {
                 "dur": a.duration_seconds,
                 "atype": a.activity_type,
+                "dist": a.distance_meters,
+                "mhr": a.max_heart_rate,
+                "cal": a.calories,
+                "elev": a.elevation_gain,
+                "provider": provider_name,
                 "aid": a.activity_id,
             })
             updated_act += 1
     session.commit()
     session.close()
+    _sync_activity_details(provider, storage, user_id, activities)
     console.print(
         f"  ✅ 活动: {stored_act} 条新增, {updated_act} 条字段更新 "
         f"(共 {len(activities)} 条)"
     )
-
     _report_sync_progress(
         progress_callback, "syncing_metrics", 3, 4, "正在同步健康指标",
     )
@@ -546,6 +595,48 @@ def _sync_provider(provider, storage, user_id: int, start: date, end: date,
     console.print(f"  ✅ 健康: {stored_health} 天新增, {updated_health} 天更新")
 
     console.print(f"[green]✅ {provider_name} 同步完成[/]")
+
+
+def _sync_activity_details(
+    provider, storage, user_id: int, activities: list[Any],
+) -> dict[str, int]:
+    """尽力补齐 Provider 活动详情；单条失败不影响汇总同步。"""
+    from .activity import (
+        ensure_tables, get_activity_detail, get_activity_splits,
+        store_activity_detail,
+    )
+
+    fetch_detail = getattr(provider.activities, "fetch_activity_detail", None)
+    if not callable(fetch_detail):
+        return {"total": len(activities), "stored": 0, "failed": 0}
+
+    ensure_tables(storage)
+    stored = 0
+    failed = 0
+    for activity in activities:
+        try:
+            existing_detail = get_activity_detail(storage, str(activity.activity_id))
+            existing_splits = get_activity_splits(storage, str(activity.activity_id))
+            is_running = "run" in str(activity.activity_type).lower()
+            if existing_detail and (existing_splits or not is_running):
+                continue
+            detail = fetch_detail(str(activity.activity_id))
+            if not isinstance(detail, dict) or not detail:
+                failed += 1
+                continue
+            if store_activity_detail(
+                storage, user_id, str(activity.activity_id), detail,
+            ):
+                stored += 1
+            else:
+                failed += 1
+        except Exception as exc:
+            failed += 1
+            logger.warning(
+                "活动详情同步失败 activity_id=%s error_type=%s",
+                getattr(activity, "activity_id", ""), type(exc).__name__,
+            )
+    return {"total": len(activities), "stored": stored, "failed": failed}
 
 
 def _do_data_sync(config, target: date | None = None,
@@ -672,6 +763,7 @@ def _do_initialized_data_sync(
 def _local_report_context(config):
     """创建仅访问本地 SQLite 的日报上下文。"""
     storage = Storage(config)
+    _ensure_activity_columns(storage)
     user_id = storage.get_local_user_id()
     if user_id is None:
         raise RuntimeError("本地没有已同步数据，请先同步后再生成日报")
@@ -787,7 +879,11 @@ def cmd_daily(args: argparse.Namespace) -> None:
     console.rule(f"[bold blue]📰 每日训练报告 — {target} {wd}[/]")
 
     # 当日训练
-    if ya.get("is_rest_day"):
+    if ya.get("activity_state") == "unknown":
+        console.print(
+            "\n[bold]🏃 今日训练[/]: [yellow]运动数据未同步，训练/休息状态未知[/]"
+        )
+    elif ya.get("is_rest_day"):
         console.print(f"\n[bold]🏃 今日训练[/]: [dim]休息日（无正式记录）[/]")
         console.print(f"   [dim]全天活动: {ya.get('daily_steps', 0)} 步 | "
                       f"{ya.get('daily_distance_km', 0)} km | "

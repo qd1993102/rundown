@@ -94,6 +94,31 @@ def _summary_value(record: dict[str, Any], data_type: str, field_name: str) -> f
     return 0
 
 
+def _optional_number(data: Any, names: tuple[str, ...]) -> float | None:
+    value = _find_value(data, names)
+    if value is None:
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _optional_summary_value(
+    record: dict[str, Any], data_type: str, field_name: str,
+) -> float | None:
+    summaries = record.get("activitySummary", {}).get("dataSummary", [])
+    for summary in summaries if isinstance(summaries, list) else []:
+        if not isinstance(summary, dict) or data_type not in str(summary.get("dataTypeName", "")):
+            continue
+        for value in summary.get("value", []) or []:
+            if isinstance(value, dict) and value.get("fieldName") == field_name:
+                return _optional_number(
+                    value, ("floatValue", "integerValue", "longValue", "value")
+                )
+    return None
+
+
 class HuaweiAuth(AuthProvider):
     def __init__(self, config):
         self.config = config
@@ -280,8 +305,15 @@ class HuaweiActivities(ActivityProvider):
                 training_load=_number(record, ("trainingLoad", "activityTrainingLoad")),
                 calories=int(_summary_value(record, "calories.burnt.total", "calories_total") or _number(
                     record, ("calories", "totalCalories", "calorie"))),
-                elevation_gain=_summary_value(record, "altitude.statistics", "ascent_total") or _number(
-                    record, ("elevationGain", "totalClimb", "climb")),
+                elevation_gain=(
+                    summary_elevation
+                    if (summary_elevation := _optional_summary_value(
+                        record, "altitude.statistics", "ascent_total",
+                    )) is not None
+                    else _optional_number(
+                        record, ("elevationGain", "totalClimb", "climb"),
+                    )
+                ),
                 has_gps=bool(_find_value(record, ("route", "track", "longitude", "latitude"))),
                 extra={"provider": "huawei", "raw": record},
             ))

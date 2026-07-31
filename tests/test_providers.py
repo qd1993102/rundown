@@ -31,7 +31,7 @@ class TestActivityData:
         assert a.avg_heart_rate is None
         assert a.training_load == 0
         assert a.calories == 0
-        assert a.elevation_gain == 0
+        assert a.elevation_gain is None
         assert a.has_gps is False
 
 

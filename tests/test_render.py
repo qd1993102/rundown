@@ -107,6 +107,20 @@ class TestHTMLComponents:
         assert "🧘" in s
         assert "休息日" in s
 
+    def test_unknown_activity_state_is_not_rendered_as_rest(self):
+        fm = dict(SAMPLE_FM)
+        fm["yesterday_activities"] = {
+            "activity_state": "unknown",
+            "is_rest_day": False,
+            "sessions": [],
+        }
+
+        s = _sessions(fm)
+
+        assert "运动数据未同步" in s
+        assert "无法判断当天是否训练或休息" in s
+        assert "<h3>休息日</h3>" not in s
+
     def test_load(self):
         l = _load(SAMPLE_FM)
         assert "1.05" in l

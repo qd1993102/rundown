@@ -30,6 +30,36 @@ _Avoid_: neurun account, application account
 一个 neurun Account 获得持续读取某个 Platform Account 数据授权的关系；第一版每个 neurun Account 最多一个活跃连接。
 _Avoid_: Login, provider field, token directory
 
+## Activity Understanding
+
+**Actual Activity**:
+运动者实际完成并同步到 neurun 的一次运动事实记录；它独立于计划安排，也不等同于系统对训练内容的解释。
+_Avoid_: Daily Workout, Execution Record, provider label
+
+**Activity Data Coverage**:
+neurun 已完成指定日期运动记录同步的证据；没有 Actual Activity 只有在该日期覆盖已确认时才能解释为 Observed Rest Day。
+_Avoid_: health data presence, empty activity list, generated daily report
+
+**Observed Rest Day**:
+Activity Data Coverage 已确认且没有 Actual Activity 的自然日；它描述已观察事实，不等于 Weekly Plan 中安排的休息日。
+_Avoid_: unsynced day, missing data, planned rest day
+
+**Athlete Baseline**:
+由运动者近期 Actual Activity、身体状态和有效档案形成的当前能力参照，用于解释一次训练的相对强度；它不是固定的通用配速表。
+_Avoid_: population threshold, static pace zone, daily report history
+
+**Training Session Analysis**:
+基于 Actual Activity、Athlete Baseline 和数据质量形成的可追溯训练解释，包含 Training Type、Terrain Attribute、置信度和判断证据。
+_Avoid_: raw activity, provider label, AI prose
+
+**Training Type**:
+Training Session Analysis 中描述主要训练结构与生理刺激的分类，当前跑步分类为有氧、节奏、间歇或未知；它与 Terrain Attribute 相互独立。
+_Avoid_: activity type, terrain, workout name
+
+**Terrain Attribute**:
+Training Session Analysis 中描述路线环境和爬升特征的独立维度，允许平路、坡地、越野、山地或未知；它不替代 Training Type。
+_Avoid_: Training Type, total elevation alone, provider sport type
+
 ## Training Planning
 
 **Training Goal**:
@@ -43,6 +73,10 @@ _Avoid_: 运动大纲, Weekly Plan, Daily Workout, generic advice
 **Weekly Plan**:
 Training Scheme 在一个自然周内的具体安排，包含每天的计划训练、休息日和周目标。
 _Avoid_: Training Scheme, weekly summary
+
+**Natural Week**:
+按运动者本地日期从周一到周日的固定统计周期；周目标完成度只使用所属 Natural Week 内的 Actual Activity，不使用滚动七天窗口。
+_Avoid_: rolling 7 days, recent week
 
 **Daily Workout**:
 Weekly Plan 中某一天可执行的训练处方，包含训练目的、类型、距离或时长和强度范围；用户界面称为“今日训练”。

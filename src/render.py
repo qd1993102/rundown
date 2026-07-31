@@ -113,6 +113,8 @@ def _metric_strip(fm: dict) -> str:
 
 def _sessions(fm: dict) -> str:
     ya = fm.get("yesterday_activities", {})
+    if ya.get("activity_state") == "unknown":
+        return '<div class="rest-card"><div class="rest-emoji">⏳</div><h3>运动数据未同步</h3><p class="rest-detail">暂时无法判断当天是否训练或休息</p></div>'
     if ya.get("is_rest_day"):
         steps = ya.get("daily_steps", 0)
         dist = ya.get("daily_distance_km", 0)

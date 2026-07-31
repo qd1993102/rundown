@@ -316,6 +316,13 @@ Garmin 用户绑定时选择的国际区 `garmin.com` 或中国区 `garmin.cn` �
 并将洞察写入 Front Matter 和 Markdown 正文。未配置 `DEEPSEEK_API_KEY` 或在线调用失败时，
 保留本地规则洞察作为降级结果。
 
+跑步日报会基于活动汇总、laps/splits、最近个人能力基线和爬升数据生成结构化训练内容识别：
+训练主类型为有氧、节奏、间歇或未知，地形属性为平路、坡地、越野、山地或未知，并同时展示
+置信度、判断依据和后续训练约束。两类属性可以组合为“坡地间歇跑”等名称。历史训练上下文
+直接读取 SQLite，不要求用户逐日生成日报；平台原始训练负荷保持不变。
+
+空活动列表不会直接显示为休息日：只有该日期运动同步已完成且确无活动时才标记“已确认休息”，同步覆盖未知时显示“运动数据未同步”。周目标完成度按本地自然周（周一至周日）统计；近 7 天滚动窗口仅用于负荷与恢复趋势。
+
 ### Web 日报与图片保存
 
 `/sync`、`/reports`、`/` 和 `/profile` 使用同一套响应式应用导航：手机上固定在底部，
@@ -613,15 +620,16 @@ neurun mcp                         # stdio 模式（默认）
 MCP 提供的 Resources:
 - `neurun://daily/latest` — 最新日报
 - `neurun://daily/{date}` — 指定日期日报
-- `neurun://context/full` — 完整 AI 上下文（日报+7天趋势+目标+资料）
+- `neurun://context/full` — 完整 AI 上下文（最新日报 + SQLite 近7天训练/恢复 + 目标 + 资料）
 - `neurun://goals/active` — 进行中的目标
 - `neurun://profile` — 个人档案
 - `neurun://preferences` — 训练偏好
 
 MCP 提供的 Tools:
 - `query_activities` — 查询活动列表
+- `query_current_week_progress` — 按目标日期所在自然周查询截至当日的训练次数、跑量和数据覆盖
 - `query_health_metrics` — 查询健康指标
-- `get_activity_detail` — 获取活动分段详情
+- `get_activity_detail` — 获取活动分段详情及已生成的训练类型、地形、置信度和后续影响
 - `search_memories` — 搜索记忆库
 - `get_training_advice` — 生成训练建议
 

@@ -4,6 +4,10 @@
 
 > **产品边界更新（2026-07-28）**：AI 对话继续承担解释、查询和计划协商，但训练安排的主要感知面改为结构化训练主界面。涉及训练方案的写入必须先生成 Adjustment Proposal，用户确认后才能生效。详见 [训练体验产品方案](../product/training-experience.md) 和 [交互式训练方案系统](training-system.md)。
 
+> **训练内容识别边界（v1 已实现，2026-07-31）**：AI 教练消费 `TrainingSessionAnalysis` 的训练主类型、地形属性、置信度和证据，不直接从活动名称或原始分段自由猜测课型。近期训练上下文以 SQLite 原始活动及其分析为真相源，历史日报仅是生成时快照；坡跑或山地专项可以影响恢复建议，但 Adjustment Proposal 与训练方案确认流程仍属后续阶段，当前不得直接改写生效方案。
+
+> **日期与数据状态边界（2026-07-31）**：空活动列表不等于休息日。AI 教练读取共享 `activity_state`，仅把同步覆盖已完成的空活动日称为已确认休息，其余显示运动数据未知。周目标通过 `get_current_week_progress(date)` 按报告日期所在自然周（周一至周日）统计；滚动 7 天历史只用于负荷和恢复趋势。
+
 ---
 
 #### 8.4.6 OpenClaw 配置
@@ -36,7 +40,8 @@ neurun mcp --daemon
       "description": "Garmin 运动数据 + AI 教练",
       "autoApprove": ["query_health_metrics", "query_activities",
                        "get_memory", "search_memories",
-                       "get_trend", "get_training_advice"]
+                       "query_current_week_progress", "get_trend",
+                       "get_training_advice"]
     }
   }
 }

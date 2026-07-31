@@ -20,6 +20,11 @@ from typing import Any, Callable
 import yaml
 
 from .local_files import atomic_write_private
+from .training_analysis import (
+    ACTIVITY_SYNC_METRIC_TYPE,
+    ActivityDayState,
+    natural_week_bounds,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -357,13 +362,27 @@ class MemoryWriter:
         # 4. 查询近 7 天数据用于趋势
         seven_day_metrics = self._safe_get_health_range(db, user_id, 7)
 
-        # 5. 查询近 28 天数据用于 chronic load（包含今天）
+        # 5. 查询近 7/28 天活动用于 ACWR（均包含报告日期）
+        seven_day_activities = self._safe_get_activities(
+            db, user_id, target_date - timedelta(days=6), target_date,
+        )
         twenty_eight_day_activities = self._safe_get_activities(
-            db, user_id, target_date - timedelta(days=28), target_date,
+            db, user_id, target_date - timedelta(days=27), target_date,
+        )
+
+        # 使用原始活动、分段与个人基线生成版本化训练内容分析。
+        session_analyses = self._analyze_training_sessions(
+            db, int(user_id), activities, twenty_eight_day_activities,
+            health_data or {},
         )
 
         # ── 先汇总各维度（供 Front Matter 和 recommendation 共用） ──
-        activity_summary = self._summarize_activities(activities, today_health)
+        activity_state = self._get_activity_day_state(
+            db, int(user_id), target_date, activities,
+        )
+        activity_summary = self._summarize_activities(
+            activities, today_health, activity_state=activity_state,
+        )
         sleep_summary = self._summarize_sleep(sleep)
         morning_summary = self._summarize_morning(morning)
 
@@ -381,7 +400,7 @@ class MemoryWriter:
             "this_morning": morning_summary,
             # 训练负荷
             "training_load": self._calc_training_load(
-                activities, twenty_eight_day_activities,
+                seven_day_activities, twenty_eight_day_activities,
             ),
             # 恢复评分
             "recovery": self._calc_recovery_score(sleep, morning),
@@ -393,10 +412,13 @@ class MemoryWriter:
             "anomalies": self._detect_anomalies(seven_day_metrics),
             # 今日建议（使用汇总后的数据）
             "recommendation": self._generate_recommendation(
-                sleep_summary, morning_summary, activities, twenty_eight_day_activities,
+                sleep_summary, morning_summary, seven_day_activities,
+                twenty_eight_day_activities, session_analyses,
             ),
             # 标签
             "tags": self._build_tags(activities, target_date),
+            # 版本化训练内容识别
+            "session_analyses": session_analyses,
         }
 
         # 10. AI 教练洞察
@@ -412,24 +434,6 @@ class MemoryWriter:
                 profile=profile, goals=goals,
             )
             fm["ai_insight"] = ai_insight
-
-        # ── 活动详情分析（from activity.py）──
-        session_analyses = []
-        if not activity_summary.get("is_rest_day"):
-            try:
-                from .activity import build_session_analysis_text
-                # 通过 storage 实例访问 DB
-                # 注意：memory.py 没有直接 storage 引用，通过 db_getter 获取
-                for a in activities:
-                    aid = a.get("activity_id", "")
-                    name = a.get("activity_name", "")
-                    if aid:
-                        text = build_session_analysis_text(db, aid, name)
-                        if text:
-                            session_analyses.append(text)
-            except Exception as exc:
-                logger.warning("获取活动详情分析失败: %s", exc)
-        fm["session_analyses"] = session_analyses
 
         # ── 构建正文 ──
         body = self._render_daily_body(fm, target_date)
@@ -459,8 +463,7 @@ class MemoryWriter:
         if target_date is None:
             target_date = date.today()
 
-        monday = target_date - timedelta(days=target_date.weekday())
-        sunday = monday + timedelta(days=6)
+        monday, sunday = natural_week_bounds(target_date)
         week_num = monday.isocalendar()[1]
 
         db = self._db()
@@ -527,8 +530,7 @@ class MemoryWriter:
         if target_date is None:
             target_date = date.today()
 
-        monday = target_date - timedelta(days=target_date.weekday())
-        sunday = monday + timedelta(days=6)
+        monday, sunday = natural_week_bounds(target_date)
         week_num = monday.isocalendar()[1]
 
         db = self._db()
@@ -639,7 +641,9 @@ class MemoryWriter:
             rows = session.execute(text("""
                 SELECT user_id, activity_id, activity_date, activity_name,
                        duration_seconds, avg_heart_rate, training_load,
-                       start_time, distance_meters, created_at
+                       start_time, distance_meters, activity_type,
+                       max_heart_rate, calories, elevation_gain,
+                       provider_name, created_at
                 FROM activities
                 WHERE user_id = :uid AND activity_date >= :start AND activity_date <= :end
                 ORDER BY start_time
@@ -650,7 +654,10 @@ class MemoryWriter:
                     "user_id": r[0], "activity_id": r[1], "activity_date": r[2],
                     "activity_name": r[3], "duration_seconds": r[4],
                     "avg_heart_rate": r[5], "training_load": r[6],
-                    "start_time": r[7], "distance_meters": r[8], "created_at": r[9],
+                    "start_time": r[7], "distance_meters": r[8],
+                    "activity_type": r[9], "max_heart_rate": r[10],
+                    "calories": r[11], "elevation_gain": r[12],
+                    "provider_name": r[13], "created_at": r[14],
                 }
                 for r in rows
             ]
@@ -759,12 +766,74 @@ class MemoryWriter:
         except Exception:
             return []
 
+    @staticmethod
+    def _analyze_training_sessions(
+        db: Any,
+        user_id: int,
+        activities: list[dict[str, Any]],
+        baseline_activities: list[dict[str, Any]],
+        recovery: dict[str, Any],
+    ) -> list[dict[str, Any]]:
+        """分析并持久化当日活动，失败时不阻断日报生成。"""
+        from .activity import get_activity_splits
+        from .training_analysis import (
+            ActivityFactsNormalizer,
+            AthleteBaselineBuilder,
+            TrainingSessionAnalyzer,
+            display_name,
+            save_training_analysis,
+        )
+
+        analyzer = TrainingSessionAnalyzer()
+        normalizer = ActivityFactsNormalizer()
+        baseline_builder = AthleteBaselineBuilder()
+        results = []
+        for activity in activities:
+            activity_id = str(activity.get("activity_id") or "")
+            if not activity_id:
+                continue
+            try:
+                try:
+                    splits = get_activity_splits(db, activity_id)
+                except Exception:
+                    splits = []
+                baseline = baseline_builder.build(
+                    baseline_activities,
+                    target_time=(
+                        activity.get("start_time")
+                        or activity.get("activity_date")
+                    ),
+                )
+                analysis = analyzer.analyze(
+                    activity, splits, baseline, recovery,
+                )
+                facts = normalizer.normalize(activity, splits)
+                analysis_id = save_training_analysis(
+                    db, user_id, facts, baseline, analysis,
+                )
+                result = {
+                    "analysis_id": analysis_id,
+                    "activity_id": activity_id,
+                    "activity_name": activity.get("activity_name", ""),
+                    "display_name": display_name(
+                        analysis.primary_type, analysis.terrain,
+                    ),
+                    **analysis.to_dict(),
+                }
+                activity["training_analysis"] = result
+                results.append(result)
+            except Exception as exc:
+                logger.warning("训练内容识别失败 activity_id=%s: %s", activity_id, exc)
+        return results
+
     # ── 辅助: 数据聚合 ────────────────────────
 
     @staticmethod
     def _summarize_activities(
         activities: list[dict[str, Any]],
         health_data: dict[str, Any] | None = None,
+        *,
+        activity_state: ActivityDayState | str | None = None,
     ) -> dict[str, Any]:
         """汇总当日活动数据。
 
@@ -801,8 +870,14 @@ class MemoryWriter:
             return d if d > 0 else 0
 
         if not activities:
+            state = (
+                ActivityDayState.CONFIRMED_REST
+                if activity_state == ActivityDayState.CONFIRMED_REST
+                else ActivityDayState.UNKNOWN
+            )
             return {
-                "is_rest_day": True,
+                "activity_state": state.value,
+                "is_rest_day": state == ActivityDayState.CONFIRMED_REST,
                 "is_training_day": False,
                 "sessions": [],
                 "total_sessions": 0,
@@ -810,7 +885,11 @@ class MemoryWriter:
                 "total_distance_km": 0,
                 "total_calories": 0,
                 "total_training_load": 0,
-                "day_type": "rest",
+                "day_type": (
+                    "rest"
+                    if state == ActivityDayState.CONFIRMED_REST
+                    else "unknown"
+                ),
                 # 全天活动量（来自 health_data）
                 "daily_steps": daily_steps,
                 "daily_distance_km": round(daily_distance_m / 1000, 2),
@@ -838,13 +917,14 @@ class MemoryWriter:
             total_load += load
 
             activity_name = a.get("activity_name", "")
-            if "跑" in activity_name or "run" in activity_name.lower():
+            stored_type = str(a.get("activity_type") or "").lower()
+            if "run" in stored_type or "跑" in activity_name or "run" in activity_name.lower():
                 atype = "running"
-            elif "骑" in activity_name or "cycling" in activity_name.lower():
+            elif "cycl" in stored_type or "骑" in activity_name or "cycling" in activity_name.lower():
                 atype = "cycling"
-            elif "游泳" in activity_name or "swim" in activity_name.lower():
+            elif "swim" in stored_type or "游泳" in activity_name or "swim" in activity_name.lower():
                 atype = "swimming"
-            elif "力量" in activity_name or "strength" in activity_name.lower():
+            elif "strength" in stored_type or "力量" in activity_name or "strength" in activity_name.lower():
                 atype = "strength"
             else:
                 atype = activity_name or "unknown"
@@ -857,6 +937,8 @@ class MemoryWriter:
                 "avg_hr": hr,
                 "training_load": round(load, 1) if load else 0,
                 "calories": cal,
+                "elevation_gain_m": a.get("elevation_gain"),
+                "training_analysis": a.get("training_analysis"),
             })
 
         total_dur_min = round(total_duration_sec / 60, 1)
@@ -877,6 +959,7 @@ class MemoryWriter:
             training_distance_km = round(daily_distance_m / 1000, 2)
 
         return {
+            "activity_state": ActivityDayState.TRAINING.value,
             "is_rest_day": False,
             "is_training_day": total_duration_sec > 0,
             "sessions": sessions,
@@ -893,6 +976,48 @@ class MemoryWriter:
             "daily_active_cal": daily_active_cal,
             "activity_level": activity_level,
         }
+
+    @staticmethod
+    def _get_activity_day_state(
+        db: Any,
+        user_id: int,
+        target_date: date,
+        activities: list[dict[str, Any]],
+    ) -> ActivityDayState:
+        """根据活动事实与同步覆盖证据解析每日运动状态。"""
+
+        if activities:
+            return ActivityDayState.TRAINING
+
+        session = None
+        try:
+            from sqlalchemy import text
+
+            session = db.get_session()
+            row = session.execute(text("""
+                SELECT status
+                FROM sync_status
+                WHERE user_id = :uid
+                  AND sync_date = :sync_date
+                  AND metric_type = :metric_type
+                ORDER BY synced_at DESC
+                LIMIT 1
+            """), {
+                "uid": user_id,
+                "sync_date": str(target_date),
+                "metric_type": ACTIVITY_SYNC_METRIC_TYPE,
+            }).fetchone()
+            if row and str(row[0]).lower() == "completed":
+                return ActivityDayState.CONFIRMED_REST
+        except Exception as exc:
+            logger.debug(
+                "查询活动同步覆盖失败 date=%s error_type=%s",
+                target_date, type(exc).__name__,
+            )
+        finally:
+            if session is not None:
+                session.close()
+        return ActivityDayState.UNKNOWN
 
     @staticmethod
     def _summarize_sleep(sleep_data: dict[str, Any]) -> dict[str, Any]:
@@ -962,10 +1087,16 @@ class MemoryWriter:
         chronic_activities: list[dict[str, Any]],
     ) -> dict[str, Any]:
         """计算训练负荷 (ACWR)。"""
-        acute = sum(a.get("activity_training_load", 0) or 0 for a in recent)
-        chronic = (
-            sum(a.get("activity_training_load", 0) or 0 for a in chronic_activities)
-        ) / max(len(chronic_activities), 1)
+        def activity_load(activity: dict[str, Any]) -> float:
+            return float(
+                activity.get("training_load")
+                or activity.get("activity_training_load")
+                or 0
+            )
+
+        acute = sum(activity_load(a) for a in recent)
+        # 28 天累计负荷折算为周均，与 7 天急性负荷保持相同时间单位。
+        chronic = sum(activity_load(a) for a in chronic_activities) / 4
 
         if chronic > 0:
             acwr = round(acute / chronic, 2)
@@ -1026,7 +1157,7 @@ class MemoryWriter:
         # HRV 分
         hrv_status = morning.get("hrv_status", "balanced") or "balanced"
         hrv_map = {"balanced": 80, "unbalanced": 50, "low": 30}
-        hrv_score = hrv_map.get(str(hrv_status).upper(), 60)
+        hrv_score = hrv_map.get(str(hrv_status).lower(), 60)
         score += hrv_score * weights["hrv"] / 100
         total_weight += weights["hrv"]
 
@@ -1161,11 +1292,14 @@ class MemoryWriter:
     def _generate_recommendation(
         sleep: dict[str, Any],
         morning: dict[str, Any],
-        activities: list[dict[str, Any]],
+        recent_activities: list[dict[str, Any]],
         chronic_activities: list[dict[str, Any]],
+        session_analyses: list[dict[str, Any]] | None = None,
     ) -> dict[str, Any]:
         """生成今日训练建议。"""
-        load = MemoryWriter._calc_training_load(activities, chronic_activities)
+        load = MemoryWriter._calc_training_load(
+            recent_activities, chronic_activities,
+        )
         recovery = MemoryWriter._calc_recovery_score(sleep, morning)
 
         ready = (
@@ -1201,12 +1335,19 @@ class MemoryWriter:
         if resting_hr > 55:
             cautions.append(f"晨起心率偏高 ({resting_hr} bpm)，注意观察身体反应")
 
+        follow_up_constraints = []
+        for analysis in session_analyses or []:
+            for implication in analysis.get("training_implications", []):
+                if implication not in follow_up_constraints:
+                    follow_up_constraints.append(implication)
+
         return {
             "ready_to_train": ready,
             "training_advice": advice,
             "intensity": intensity,
             "caution": cautions,
             "focus_areas": ["技术动作", "核心力量"],
+            "follow_up_constraints": follow_up_constraints,
         }
 
     @staticmethod
@@ -1369,7 +1510,10 @@ class MemoryWriter:
         total_load = activity.get("total_training_load", 0)
         activity_level = activity.get("activity_level", "sedentary")
 
-        if is_rest:
+        activity_state = activity.get("activity_state")
+        if activity_state == ActivityDayState.UNKNOWN:
+            observations.append("运动数据尚未同步，无法判断当天是否训练或休息")
+        elif is_rest:
             if activity_level == "very_active":
                 observations.append("昨天虽无正式训练，但全天活动量很高（步数 >20000），相当于一次中等强度有氧")
             elif activity_level == "active":
@@ -1576,10 +1720,27 @@ class MemoryWriter:
         session_analyses = fm.get("session_analyses", [])
         if session_analyses:
             lines.extend(["", "## 🔬 训练细节分析", ""])
-            for analysis_text in session_analyses:
-                lines.append(analysis_text)
+            for analysis in session_analyses:
+                if isinstance(analysis, str):
+                    lines.append(analysis)
+                    continue
+                lines.append(
+                    f"### {analysis.get('activity_name') or '训练'} · "
+                    f"{analysis.get('display_name') or '训练内容待识别'}"
+                )
+                lines.append(
+                    f"- 置信度: {float(analysis.get('confidence', 0)):.0%} | "
+                    f"算法: {analysis.get('algorithm_version', '—')}"
+                )
+                for evidence in analysis.get("evidence", []):
+                    lines.append(f"- 依据: {evidence}")
+                for implication in analysis.get("training_implications", []):
+                    lines.append(f"- 后续影响: {implication}")
+                lines.append("")
 
-        if ya.get("is_rest_day"):
+        if ya.get("activity_state") == ActivityDayState.UNKNOWN:
+            lines.append("**运动数据未同步** — 暂时无法判断当天是否训练或休息。")
+        elif ya.get("is_rest_day"):
             activity_level = ya.get("activity_level", "sedentary")
             steps = ya.get("daily_steps", 0)
             dist = ya.get("daily_distance_km", 0)
@@ -1848,6 +2009,106 @@ class MemoryStore:
     def generate_recovery_summary(self, user_id: str,
                                    target_date: date | None = None) -> Memory:
         return self.writer.generate_recovery_summary(user_id, target_date)
+
+    def get_training_history_entries(
+        self,
+        user_id: int | None = None,
+        days: int = 30,
+        end_date: date | None = None,
+    ) -> list[dict[str, Any]]:
+        """直接从 SQLite 构建完整训练史，不依赖历史日报文件。"""
+        days = max(1, min(int(days), 90))
+        end_date = end_date or date.today()
+        start_date = end_date - timedelta(days=days - 1)
+        db = self.writer._db()
+        if user_id is None:
+            try:
+                from sqlalchemy import text
+
+                session = db.get_session()
+                row = session.execute(text("""
+                    SELECT user_id FROM activities
+                    UNION ALL
+                    SELECT user_id FROM daily_health_metrics
+                    LIMIT 1
+                """)).fetchone()
+                session.close()
+                user_id = int(row[0]) if row else None
+            except Exception:
+                user_id = None
+        if user_id is None:
+            return []
+        activities = self.writer._safe_get_activities(
+            db, user_id, start_date, end_date,
+        )
+        try:
+            health_rows = db.get_health_metrics(user_id, start_date, end_date) or []
+        except Exception:
+            health_rows = []
+
+        # 历史分析直接基于原始活动生成，不要求对应日期已有日报。
+        self.writer._analyze_training_sessions(
+            db, user_id, activities, activities, {},
+        )
+
+        activities_by_date: dict[str, list[dict[str, Any]]] = {}
+        for activity in activities:
+            key = str(
+                activity.get("activity_date")
+                or activity.get("start_time")
+                or ""
+            )[:10]
+            if key:
+                activities_by_date.setdefault(key, []).append(activity)
+
+        health_by_date: dict[str, dict[str, Any]] = {}
+        for health in health_rows:
+            key = str(
+                health.get("metric_date")
+                or health.get("date")
+                or ""
+            )[:10]
+            if key:
+                health_by_date[key] = health
+
+        entries = []
+        for offset in range(days):
+            current = end_date - timedelta(days=offset)
+            key = str(current)
+            daily_activities = activities_by_date.get(key, [])
+            health = health_by_date.get(key, {})
+            activity_state = self.writer._get_activity_day_state(
+                db, user_id, current, daily_activities,
+            )
+            activity_summary = self.writer._summarize_activities(
+                daily_activities, health, activity_state=activity_state,
+            )
+            sleep = self.writer._summarize_sleep(health)
+            morning = self.writer._summarize_morning(health)
+            recovery = self.writer._calc_recovery_score(health, health) if health else {}
+            training_types = []
+            for session in activity_summary.get("sessions", []):
+                analysis = session.get("training_analysis") or {}
+                display = analysis.get("display_name")
+                if display and display not in training_types:
+                    training_types.append(display)
+            entries.append({
+                "date": key,
+                "activity_state": activity_summary["activity_state"],
+                "is_rest": activity_summary.get("is_rest_day", False),
+                "duration": activity_summary.get("total_duration_min", 0) or 0,
+                "distance": activity_summary.get("total_distance_km", 0) or 0,
+                "load": activity_summary.get("total_training_load", 0) or 0,
+                "sleep_h": sleep.get("total_hours", 0) or 0,
+                "sleep_score": sleep.get("sleep_score"),
+                "hrv": morning.get("hrv_ms"),
+                "rhr": morning.get("resting_hr"),
+                "bb": morning.get("body_battery_morning"),
+                "recovery": recovery.get("overall_score"),
+                "readiness": morning.get("training_readiness_score"),
+                "training_types": training_types,
+            })
+        return entries
 
     def rebuild_index(self, category: str) -> None:
         return self.writer.rebuild_index(category)
