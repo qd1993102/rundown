@@ -79,7 +79,8 @@ def _active_user(tmp_path):
     return manager, user
 
 
-def test_healthz_is_public_and_supports_get_and_head(tmp_path):
+def test_healthz_is_public_and_supports_get_and_head(tmp_path, monkeypatch):
+    monkeypatch.setenv("NEURUN_RELEASE_SHA", "a" * 40)
     manager = mock.Mock()
     server = _FakeServer()
     config = Config(data_dir=str(tmp_path))
@@ -93,7 +94,7 @@ def test_healthz_is_public_and_supports_get_and_head(tmp_path):
     )))
 
     assert get_response.status_code == 200
-    assert json.loads(get_response.body) == {"status": "ok"}
+    assert json.loads(get_response.body) == {"status": "ok", "release": "a" * 40}
     assert get_response.headers["cache-control"] == "no-store"
     assert head_response.status_code == 200
     assert head_response.body == b""

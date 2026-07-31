@@ -251,7 +251,7 @@ class UserManager:
 # 基础设施路由（无会话、用户数据或外部服务依赖）
 @server.custom_route("/healthz", methods=["GET", "HEAD"])
 async def healthz(request): ...
-    # GET → 200 {"status": "ok"}
+    # GET → 200 {"status": "ok", "release": "<commit-or-development>"}
     # HEAD → 200，无响应体
 
 # 页面路由（服务端渲染 HTML）
@@ -331,7 +331,7 @@ async def api_logout(request): ...
 **为什么不用 Flask/FastAPI？** FastMCP 内置的 uvicorn + Starlette 完全够用，
 `custom_route` 注册路由。零额外依赖。
 
-`/healthz` 是进程存活检查，不是业务就绪检查：它不得读取 Cookie、用户注册表、SQLite，
+`/healthz` 是进程存活与 release 身份检查，不是业务就绪检查：它不得读取 Cookie、用户注册表、SQLite，
 也不得调用 Garmin、Coros、Huawei 或 DeepSeek。负载均衡只用它判断 Web 进程能否响应 HTTP；
 业务依赖故障应由各 API 自身的错误和监控暴露。所有同步中的阻塞式网络和磁盘工作
 必须在受控工作线程中执行，不得占用运行 `/healthz` 的 asyncio 事件循环。
@@ -658,11 +658,17 @@ docker compose exec neurun neurun invite create --output json
 /var/lib/neurun/                              # 跨版本持久化的用户数据
 ```
 
-发布必须先确认暂存区存在 `pyproject.toml`，将源码复制到新 release，在该 release 的独立
-虚拟环境中完成依赖安装和导入检查，然后才允许切换 `neurun-current` 并重启服务。Git 下载
+发布入口必须从平台工作目录显式传入 `SOURCE_DIR`，刷新目标 `DEPLOY_REF` 后把取得的完整 Git SHA
+作为 `EXPECTED_COMMIT` 传给发布脚本。脚本必须确认暂存区是干净 Git 工作树、`HEAD` 与
+`EXPECTED_COMMIT` 完全一致且存在 `pyproject.toml`，不得只因文件存在就接受缓存或残留 checkout。
+校验通过后将源码复制到新 release，在该 release 的独立虚拟环境中完成依赖安装和导入检查，然后
+才允许切换 `neurun-current` 并重启服务。Git 下载
 失败、暂存区不完整、Python 版本不合格或依赖安装失败时，脚本必须在修改当前软链接和
 调用 `systemctl restart` 之前退出，不删除、停止或覆盖旧应用。新版本重启后若未通过
-`/healthz` 检查，有旧 release 时必须恢复软链接并重启旧版本。
+`/healthz` 检查，有旧 release 时必须恢复软链接并重启旧版本。每个 release 写入不可变 Commit
+标记，systemd 通过 `NEURUN_RELEASE_SHA` 注入运行版本；`/healthz` 返回该 SHA，发布成功必须同时
+满足存活和版本完全一致，不能由旧进程或另一并发发布的响应代替。发布流程使用全局非阻塞锁，
+同一时刻只允许一个任务构建、切换和验证。
 控制台的启动脚本只需从当前工作目录定位
 `code_deploy_application/scripts/deploy-ecs.sh`；文件不存在时直接返回非零，不得尝试
 `systemctl stop/restart` 或清理任何 release。完整入口示例见 README。
@@ -670,6 +676,8 @@ docker compose exec neurun neurun invite create --output json
 不存在；应先用绝对路径验证 `pyproject.toml` 和发布脚本，再 `exec` 发布脚本。发布脚本
 不得复用指向暂存区的共享 `/opt/neurun-venv`，也不得删除旧 release。只有候选 release 的
 独立虚拟环境安装和入口导入检查全部成功后，才允许原子切换当前软链接并重启 systemd。
+`NEURUN_COROS_CREDENTIAL_KEY` 仍由运维在持久化环境文件中一次性配置，发布不得自动生成或轮换；
+缺失时发布可以继续，但必须输出自动鉴权不可用的明确告警。
 
 CLB 通过 ECS 私网地址访问后端，因此 Web 服务必须监听所有网卡，而不是仅监听回环地址：
 
@@ -737,7 +745,7 @@ CLB 后端服务器端口配置为 `8080`，HTTP 健康检查使用：
 ```bash
 # 本地
 docker compose up -d
-curl -fsS http://localhost:8080/healthz  # → {"status":"ok"}
+curl -fsS http://localhost:8080/healthz  # → {"status":"ok","release":"development"}
 curl -I http://localhost:8080/healthz    # → HTTP 200
 # 浏览器完成邀请码注册、数据源绑定与对话
 

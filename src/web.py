@@ -571,7 +571,13 @@ def register_web_routes(server, user_manager: UserManager, config: Config):
         headers = {"Cache-Control": "no-store"}
         if request.method == "HEAD":
             return Response(status_code=200, headers=headers)
-        return JSONResponse({"status": "ok"}, headers=headers)
+        return JSONResponse(
+            {
+                "status": "ok",
+                "release": os.getenv("NEURUN_RELEASE_SHA", "development"),
+            },
+            headers=headers,
+        )
 
     @server.custom_route("/contact/qr", methods=["GET"])
     async def contact_qr(request: Request) -> Response:

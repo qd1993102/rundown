@@ -7,6 +7,11 @@ neurun 项目变更日志，按日期倒序。
 ## 2026-07-31
 
 ### Fixed
+- **ECS 旧 Git checkout 被误报为成功发布**: 发布入口刷新目标分支并显式传入期望 Commit；发布脚本
+  校验干净 Git 工作树与完整 SHA，使用全局锁拒绝并发发布，并让 release 标记、systemd 运行环境和
+  `/healthz` 共同返回同一 Commit。旧暂存代码、错误源码目录或其他进程的存活响应不再满足成功条件。
+- **影响范围**: scripts/deploy-ecs.sh, src/web.py, tests/test_packaging.py, tests/test_web.py, README.md, docs/design/
+- **关联文档**: [ECS 部署设计](design/13-sae-deployment.md), [Bug 记录](bugfixes/2026-07-31-ecs-stale-checkout-release.md), [README](../README.md)
 - **Coros 自动鉴权默认勾选状态显示不清晰**: 首次绑定、运动重新授权和睡眠重新授权表单改用
   独立复选框样式，避免继承账号输入框的内边距、背景和边框而遮住勾选标记；重新授权页面同时移除
   重复 Provider 初始化，单次进入只请求一次安全存储能力。

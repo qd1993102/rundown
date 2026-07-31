@@ -165,7 +165,7 @@ sudo systemctl restart neurun.service
 
 相关 Web API：
 
-- `GET|HEAD /healthz`：无鉴权的 Web 进程存活检查，不读取用户数据或访问外部平台；
+- `GET|HEAD /healthz`：无鉴权的 Web 进程存活与 release SHA 检查，不读取用户数据或访问外部平台；
 - `POST /api/invitations/validate`：验证邀请码，不预占名额；
 - `POST /api/register`：提交 `invite_code`、`nickname`、`email`、`password`；
 - `POST /api/login`：提交应用账号 `email`、`password`。
@@ -192,6 +192,7 @@ curl -fsS http://<ECS_PRIVATE_IP>:8080/healthz
 set -Eeuo pipefail
 WORK_DIR="${WORK_DIR:-$(pwd)}"
 SOURCE_DIR="${WORK_DIR}/code_deploy_application"
+DEPLOY_REF="${DEPLOY_REF:-feature/huawei}"
 DEPLOY_SCRIPT="${SOURCE_DIR}/scripts/deploy-ecs.sh"
 
 if [ ! -f "${SOURCE_DIR}/pyproject.toml" ] || [ ! -f "${DEPLOY_SCRIPT}" ]; then
@@ -199,7 +200,15 @@ if [ ! -f "${SOURCE_DIR}/pyproject.toml" ] || [ ! -f "${DEPLOY_SCRIPT}" ]; then
   exit 1
 fi
 
-exec env WORK_DIR="${WORK_DIR}" SOURCE_DIR="${SOURCE_DIR}" bash "${DEPLOY_SCRIPT}"
+git -C "${SOURCE_DIR}" fetch origin "${DEPLOY_REF}"
+EXPECTED_COMMIT="$(git -C "${SOURCE_DIR}" rev-parse FETCH_HEAD)"
+git -C "${SOURCE_DIR}" merge --ff-only "${EXPECTED_COMMIT}"
+
+exec env \
+  WORK_DIR="${WORK_DIR}" \
+  SOURCE_DIR="${SOURCE_DIR}" \
+  EXPECTED_COMMIT="${EXPECTED_COMMIT}" \
+  bash "${DEPLOY_SCRIPT}"
 ```
 
 不要在上述校验前执行 `cd ./code_deploy_application`，也不要再使用共享的
@@ -207,6 +216,8 @@ exec env WORK_DIR="${WORK_DIR}" SOURCE_DIR="${SOURCE_DIR}" bash "${DEPLOY_SCRIPT
 失败不会切换 `/opt/neurun-current`，也不会调用 `systemctl restart`。如果阿里云部署平台
 自身配置了“部署前停止应用”的生命周期动作，需要在控制台关闭该动作；仓库内脚本只能保证
 自己不会提前停止服务，无法撤销平台在脚本执行前已经完成的停机。
+发布脚本拒绝缺少 `EXPECTED_COMMIT`、源码 `HEAD` 不一致、脏工作树或并发发布；成功信息和
+`GET /healthz` 都包含实际 release SHA。Git 刷新失败或版本校验不一致时，在线 release 保持不变。
 部署脚本生成的 `neurun.service` 由 systemd 直接守护 Python 进程，使用
 `Restart=on-failure` 自动拉起异常退出，并设置 `LimitNOFILE=8192`；该部署不依赖 Docker。
 
