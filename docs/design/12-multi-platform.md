@@ -283,6 +283,9 @@ Huawei API 返回字段存在嵌套差异，Provider 对 ID、名称、类型、
   `UserRecord.token_status=active`。响应仅包含 `coros_secure_credential_storage` 等非敏感布尔能力；
   首次绑定与重新授权页面统一通过该接口初始化复选框，不再借用 `/api/profile`。未登录返回 401，
   已登录但尚未绑定运动平台的用户仍返回 200。
+- 设置页使用专用 `.check-row input[type=checkbox]` 规则重置通用 `.form-group input` 的内边距，
+  固定可点击尺寸和勾选色，使 HTML `checked` 与能力响应写入的 `checked=true` 均能被明确显示。
+  重新授权分支只调整标题与说明，Provider 统一由页面末尾初始化一次，避免重复能力请求产生竞态。
 - Training Hub 重放对象包含 `account`、按账号类型确定的 `accountType`、`pwd=MD5(password)` 和
   `region`；Mobile 重放对象使用上游生成的 AES 登录载荷。两者都是可直接重放的密码等价物，必须
   分域整体加密，不得出现在 `UserRecord`、`coros-auth.json`、日志、异常或 API 响应中。

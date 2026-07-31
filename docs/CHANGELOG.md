@@ -4,6 +4,15 @@ neurun 项目变更日志，按日期倒序。
 
 ---
 
+## 2026-07-31
+
+### Fixed
+- **Coros 自动鉴权默认勾选状态显示不清晰**: 首次绑定、运动重新授权和睡眠重新授权表单改用
+  独立复选框样式，避免继承账号输入框的内边距、背景和边框而遮住勾选标记；重新授权页面同时移除
+  重复 Provider 初始化，单次进入只请求一次安全存储能力。
+- **影响范围**: web/templates/setup.html, tests/test_web.py, README.md, docs/product/, docs/design/
+- **关联文档**: [数据源同步产品方案](product/data-source-sync.md), [多平台设计](design/12-multi-platform.md), [Bug 记录](bugfixes/2026-07-31-coros-auto-refresh-checkbox-visibility.md), [README](../README.md)
+
 ## 2026-07-30
 
 ### Fixed

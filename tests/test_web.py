@@ -232,6 +232,11 @@ def test_coros_sleep_reauthorization_is_exposed_to_existing_users():
     assert "searchParams.get('rebind')" in setup_html
     assert "body.rebind = true" in setup_html
     assert 'id="coros-auto-relogin"' in setup_html
+    assert '<label class="check-row">' in setup_html
+    assert ".form-group label.check-row{display:flex;" in setup_html
+    assert ".check-row input[type=checkbox]{flex:0 0 18px;width:18px;height:18px;" in setup_html
+    assert "padding:0;accent-color:#4caf50" in setup_html
+    assert "appearance:auto;background:initial;border:initial;border-radius:initial" in setup_html
     assert "body.auto_refresh" in setup_html
     assert "加密保存" in setup_html
     assert "fetch('/api/setup/capabilities')" in setup_html
@@ -243,6 +248,7 @@ def test_coros_sleep_reauthorization_is_exposed_to_existing_users():
     init_script = setup_html.split("// ── Init ──", 1)[1]
     assert "selectProvider(rebindProvider==='coros'?'coros':'garmin');" in init_script
     assert "selectProvider('garmin');" not in init_script
+    assert "selectProvider('coros');" not in setup_html
 
 
 def test_active_coros_user_can_open_sleep_reauthorization_page(tmp_path):

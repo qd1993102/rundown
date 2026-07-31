@@ -94,9 +94,11 @@ p.desc{font-size:14px;color:#777;margin-bottom:28px;line-height:1.5}
 @keyframes spin{to{transform:rotate(360deg)}}
 
 /* ── Checkbox ── */
-.check-row{display:flex;align-items:center;gap:10px;margin-bottom:18px}
-.check-row input[type=checkbox]{width:18px;height:18px;accent-color:#4caf50}
-.check-row label{font-size:14px;color:#ccc;margin:0}
+.form-group label.check-row{display:flex;align-items:flex-start;gap:9px;margin:0;cursor:pointer}
+.check-row input[type=checkbox]{flex:0 0 18px;width:18px;height:18px;margin:2px 0 0;
+  padding:0;accent-color:#4caf50;appearance:auto;background:initial;border:initial;border-radius:initial;
+  cursor:pointer}
+.check-row span{font-size:14px;color:#ccc;margin:0}
 
 /* ── Responsive ── */
 @media(max-width:480px){
@@ -162,8 +164,8 @@ p.desc{font-size:14px;color:#777;margin-bottom:28px;line-height:1.5}
       <input id="password" type="password" placeholder="密码" autocomplete="current-password">
     </div>
     <div class="form-group" id="coros-auto-relogin-group" style="display:none">
-      <label style="display:flex;align-items:flex-start;gap:9px;text-transform:none;letter-spacing:0;cursor:pointer">
-        <input id="coros-auto-relogin" type="checkbox" checked style="width:auto;margin-top:3px">
+      <label class="check-row">
+        <input id="coros-auto-relogin" type="checkbox" checked>
         <span id="coros-auto-relogin-label">允许 Training Hub Token 失效后自动鉴权</span>
       </label>
       <div class="form-hint" id="coros-auto-relogin-hint">默认开启。登录重放对象只在本机加密保存，可在「我的」按认证域随时删除；明文密码不会落盘。</div>
@@ -370,7 +372,6 @@ function selectProvider(p){
 }
 
 if(rebindProvider==='coros'){
-  selectProvider('coros');
   document.querySelector('.provider-list').style.display='none';
   document.querySelector('#step1 h1').textContent=authScope==='sleep'?'😴 认证 Coros 睡眠数据':'🏃 认证 Coros 运动数据';
   document.querySelector('#step1 .desc').textContent=authScope==='sleep'?'请输入可登录 Coros App 的邮箱和密码；该操作只更新睡眠认证，不影响运动数据认证。':'请输入 Coros Training Hub 的邮箱或手机号、密码，并选择账号区域；该操作只更新运动数据认证。';
