@@ -4,7 +4,6 @@ set -Eeuo pipefail
 
 WORK_DIR="${WORK_DIR:-/opt/neurun-deploy}"
 SOURCE_DIR="${SOURCE_DIR:-}"
-EXPECTED_COMMIT="${EXPECTED_COMMIT:-}"
 RELEASES_DIR="${RELEASES_DIR:-/opt/neurun-releases}"
 CURRENT_LINK="${CURRENT_LINK:-/opt/neurun-current}"
 DATA_DIR="${DATA_DIR:-/var/lib/neurun}"
@@ -39,16 +38,6 @@ if [ ! -f "${SOURCE_DIR}/pyproject.toml" ]; then
   exit 1
 fi
 
-if [ -z "${EXPECTED_COMMIT}" ]; then
-  echo "错误：必须由发布任务传入完整 EXPECTED_COMMIT；拒绝发布未确认版本" >&2
-  exit 1
-fi
-
-if [[ ! "${EXPECTED_COMMIT}" =~ ^[0-9a-f]{40}$ ]]; then
-  echo "错误：EXPECTED_COMMIT 必须是 40 位小写 Git SHA；当前应用保持运行" >&2
-  exit 1
-fi
-
 if ! command -v git >/dev/null 2>&1 \
   || ! git -C "${SOURCE_DIR}" rev-parse --is-inside-work-tree >/dev/null 2>&1
 then
@@ -57,8 +46,8 @@ then
 fi
 
 SOURCE_COMMIT="$(git -C "${SOURCE_DIR}" rev-parse HEAD)"
-if [ "${SOURCE_COMMIT}" != "${EXPECTED_COMMIT}" ]; then
-  echo "错误：候选提交与预期不一致；actual=${SOURCE_COMMIT} expected=${EXPECTED_COMMIT}；当前应用保持运行" >&2
+if [[ ! "${SOURCE_COMMIT}" =~ ^[0-9a-f]{40}$ ]]; then
+  echo "错误：平台 checkout HEAD 不是 40 位小写 Git SHA；当前应用保持运行" >&2
   exit 1
 fi
 

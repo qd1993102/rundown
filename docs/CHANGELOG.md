@@ -12,6 +12,9 @@ neurun 项目变更日志，按日期倒序。
 - **关联文档**: [训练体验产品方案](product/training-experience.md), [数据源同步产品方案](product/data-source-sync.md), [训练系统技术设计](design/training-system.md), [多平台数据合同](design/12-multi-platform.md), [记忆系统设计](design/memory-system.md), [AI 教练设计](design/ai-coaching.md), [开发过程](process/2026-07-31-training-session-analysis.md), [README](../README.md)
 
 ### Fixed
+- **ECS 旧预期 SHA 不再阻断平台 checkout**: 发布脚本移除 `EXPECTED_COMMIT` 强制门禁，始终以阿里云发布任务已 checkout 的干净 `HEAD` 为候选版本；旧控制台入口即使仍传入错误 SHA 也不再拦截，完整 SHA、并发锁、候选构建、健康检查和回滚保护保持不变。
+- **影响范围**: scripts/deploy-ecs.sh, tests/test_packaging.py, README.md, docs/design/13-sae-deployment.md
+- **关联文档**: [Bug 记录](bugfixes/2026-07-31-ecs-legacy-expected-commit-blocks-checkout.md), [ECS 部署设计](design/13-sae-deployment.md), [README](../README.md)
 - **ECS 平台选定的新提交被固定分支拒绝**: 控制台入口不再额外固定或刷新 `feature/huawei`，直接把发布平台已 checkout 的干净 `HEAD` 作为候选 Commit；完整 SHA、并发锁与发布后版本健康检查保持不变。
 - **影响范围**: README.md, docs/design/13-sae-deployment.md, tests/test_packaging.py
 - **关联文档**: [Bug 记录](bugfixes/2026-07-31-ecs-fixed-deploy-ref-rejects-selected-commit.md), [ECS 部署设计](design/13-sae-deployment.md), [README](../README.md)

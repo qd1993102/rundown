@@ -199,12 +199,9 @@ if [ ! -f "${SOURCE_DIR}/pyproject.toml" ] || [ ! -f "${DEPLOY_SCRIPT}" ]; then
   exit 1
 fi
 
-EXPECTED_COMMIT="$(git -C "${SOURCE_DIR}" rev-parse HEAD)"
-
 exec env \
   WORK_DIR="${WORK_DIR}" \
   SOURCE_DIR="${SOURCE_DIR}" \
-  EXPECTED_COMMIT="${EXPECTED_COMMIT}" \
   bash "${DEPLOY_SCRIPT}"
 ```
 
@@ -214,9 +211,9 @@ exec env \
 自身配置了“部署前停止应用”的生命周期动作，需要在控制台关闭该动作；仓库内脚本只能保证
 自己不会提前停止服务，无法撤销平台在脚本执行前已经完成的停机。
 发布任务在控制台选择本次 revision（包括最新提交），启动入口以平台已 checkout 的干净 `HEAD`
-作为唯一候选版本，不另外固定或刷新远程分支。发布脚本拒绝缺少 `EXPECTED_COMMIT`、源码 `HEAD`
-不一致、脏工作树或并发发布；成功信息和 `GET /healthz` 都包含实际 release SHA。版本校验不一致时，
-在线 release 保持不变。
+作为唯一候选版本，不另外固定或刷新远程分支。发布脚本忽略旧入口可能残留的 `EXPECTED_COMMIT`
+环境变量，仍拒绝非完整 `HEAD` SHA、脏工作树或并发发布；成功信息和 `GET /healthz` 都包含实际
+release SHA。候选构建失败时，在线 release 保持不变。
 部署脚本生成的 `neurun.service` 由 systemd 直接守护 Python 进程，使用
 `Restart=on-failure` 自动拉起异常退出，并设置 `LimitNOFILE=8192`；该部署不依赖 Docker。
 

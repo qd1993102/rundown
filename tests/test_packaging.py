@@ -104,7 +104,7 @@ def test_ecs_deploy_uses_release_directory_instead_of_download_checkout():
     script = (_ROOT / "scripts" / "deploy-ecs.sh").read_text(encoding="utf-8")
 
     assert 'SOURCE_DIR="${SOURCE_DIR:-}"' in script
-    assert 'EXPECTED_COMMIT="${EXPECTED_COMMIT:-}"' in script
+    assert "EXPECTED_COMMIT" not in script
     assert 'git -C "${SOURCE_DIR}" rev-parse HEAD' in script
     assert 'flock -n 9' in script
     assert 'RELEASES_DIR="${RELEASES_DIR:-/opt/neurun-releases}"' in script
@@ -125,15 +125,14 @@ def test_ecs_console_entry_deploys_platform_selected_checkout_without_fixed_bran
     entry_end = readme.index("不要在上述校验前执行", entry_start)
     entry = readme[entry_start:entry_end]
 
-    assert 'EXPECTED_COMMIT="$(git -C "${SOURCE_DIR}" rev-parse HEAD)"' in entry
-    assert 'EXPECTED_COMMIT="${EXPECTED_COMMIT}"' in entry
+    assert "EXPECTED_COMMIT" not in entry
     assert "DEPLOY_REF" not in entry
     assert "git -C \"${SOURCE_DIR}\" fetch" not in entry
     assert "git -C \"${SOURCE_DIR}\" merge" not in entry
 
 
-def test_ecs_deploy_rejects_stale_source_commit_before_systemd(tmp_path):
-    """平台给出旧 checkout 时不得把它当作成功候选版本。"""
+def test_ecs_deploy_ignores_legacy_expected_commit_for_platform_checkout(tmp_path):
+    """旧入口传入的预期 SHA 不得阻断平台已 checkout 的 HEAD。"""
     source_dir = tmp_path / "work" / "code_deploy_application"
     actual_commit = _init_git_source(source_dir)
     expected_commit = "0" * 40
@@ -143,7 +142,7 @@ def test_ecs_deploy_rejects_stale_source_commit_before_systemd(tmp_path):
     bin_dir.mkdir()
     systemctl_log = tmp_path / "systemctl.log"
     fake_systemctl = _write_fake_systemctl(bin_dir, systemctl_log)
-    _write_fake_flock(bin_dir)
+    _write_fake_flock(bin_dir, exit_code=1)
 
     env = os.environ.copy()
     env.update({
@@ -165,9 +164,9 @@ def test_ecs_deploy_rejects_stale_source_commit_before_systemd(tmp_path):
     )
 
     assert result.returncode != 0
-    assert "候选提交与预期不一致" in result.stderr
-    assert actual_commit in result.stderr
-    assert expected_commit in result.stderr
+    assert "已有 neurun 发布任务正在执行" in result.stderr
+    assert "候选提交与预期不一致" not in result.stderr
+    assert expected_commit not in result.stderr
     assert not systemctl_log.exists()
 
 
