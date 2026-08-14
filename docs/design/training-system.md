@@ -1,6 +1,6 @@
 # 技术设计 — 交互式训练方案系统
 
-> 版本: v0.60 · 日期: 2026-08-10
+> 版本: v0.61 · 日期: 2026-08-14
 > 状态: 训练方案主线与本轮精简规则已完成核心运行时收敛：生效/草稿方案门禁新目标、同日单活动高置信度匹配、执行状态移除 substituted、疼痛安全指引只读覆盖、长期可训练日反馈生成同一 plan_id 的下周 Scheme Version、排期取消退回草稿、目标改期预览/确认、AI 候选失败不产生半份版本已实现；Provider 真实验收、严格 journal 级跨文件原子恢复、完整阶段状态机和进程决策自动生成方案级提案仍待完成。未引入伤病管理、Safety Hold 生命周期、暂停态、课程编辑器、新设置页或规则版完整方案。
 > 产品真相源: [training-experience.md](../product/training-experience.md)
 
@@ -932,7 +932,45 @@ Presenter 只并列展示这些值，不把 partial、unmatched 或 unplanned �
 
 普通训练详情的 Presenter 只返回当前方案版本、生效信息和最近一次调整摘要；不返回 `scheme_versions[]`、版本时间线、差异、撤销或恢复操作。不可变历史版本、调整提案和审计记录仍由 Repository 保留，供按日期解析历史课次、故障追溯和内部支持使用；Web、CLI 与 MCP 不提供用户浏览历史版本的独立入口。
 
-训练首页按“今日怎么跑 → 接下来三天 → 本周节奏 → 计划与数据”渲染。今日使用 `today` 的完整处方；接下来三天由同一 `week.workouts` 列表按当前日期之后排序并截取三个项目，不新增 API 或写模型。本周节奏只读 `week.progress`、关键训练和训练刺激摘要，完整七日课表放在默认关闭的 `details` 容器内。每个非休息 `Planned Workout` 必须可通过客户端的 `data-session-detail` 和目标面板 ID 定位，并在同页的 `upcomingSessionPanel` 或 `weekSessionPanel` 渲染完整 `training_prescription`；该交互只读取现有周计划，不产生方案、反馈或报告写入。长期方案、`capacity_profile` 和 `sync_coverage` 收纳在默认关闭的“计划与数据”，必须标注为能力参考和事实截止时间，不得称为本周实际跑量或训练推进。待确认调整仍在折叠区之外，以免隐藏需要用户决策的写入动作。
+训练首页按“今日怎么跑 → 本周怎么跑/进度如何 → 后面几周安排如何”渲染。今日使用 `today` 的完整处方；本周怎么跑/进度如何使用 `week` 的完整七日课表，默认先展示 `week.progress`、关键训练和训练刺激摘要，完整七日课表放在默认关闭的 `details` 容器内。每个非休息 `Planned Workout` 必须可通过客户端的 `data-session-detail` 和目标面板 ID 定位，并在同页的 `upcomingSessionPanel` 或 `weekSessionPanel` 渲染完整 `training_prescription`；该交互只读取现有周计划，不产生方案、反馈或报告写入。长期方案、`capacity_profile` 和 `sync_coverage` 收纳在“后面几周安排如何”，必须标注为能力参考和事实截止时间，不得称为本周实际跑量或训练推进。待确认调整仍在折叠区之外，以免隐藏需要用户决策的写入动作。
+
+### 7.2 周进度数据新鲜度与手动刷新（已确认）
+
+**动机**：同步完成后周进度不会自动重算。为消除“同步了但进度不变”的困惑，两个板块提供用户主动更新入口 + 明确数据状态引导，不引入自动重算或 AI 风暴。
+
+**数据源（全部已有，无新存储）**：
+
+| 字段 | 来源 | 用途 |
+|---|---|---|
+| `checkpoint/report.data_as_of` | `create_weekly_report` 中 `capacity_profile.facts_cutoff` | 进度数据截止日 |
+| `user.last_sync` | `/api/user`；`/api/reports/weekly` POST 响应附带 | 最近同步日 |
+| `sync_coverage.incomplete_dates` | 周复盘 `data_quality`、训练首页 `home.sync_coverage` | 未同步日期 |
+| `home.sync_coverage.checked_through/covered_days/expected_days` | 训练首页 | 训练板块状态行 |
+
+**新鲜度判定（前端纯函数，日期字符串按 `YYYY-MM-DD` 字典序比较）**：
+
+```text
+incomplete = len(sync_coverage.incomplete_dates) > 0
+stale      = last_sync 存在 且 data_as_of 存在 且 last_sync > data_as_of
+fresh      = 其余情况
+```
+
+**报告板块（reports.html 周 tab）**：
+
+- 进度结果区新增数据新鲜度徽标（三态：🟢 已是最新 / 🟠 检测到新训练数据 / 🔴 仍有 N 天未同步），徽标内直接呈现 `data_as_of` 与 `last_sync`；
+- 操作按钮按渐进披露切换形态：`stale` → 高亮“更新进度”主按钮；`fresh` → 弱化“重新生成进度”；`incomplete` → 引导“补齐同步数据”（深链 `sync_url`）；
+- 重新生成复用既有 `POST /api/reports/weekly` + `ai_inference_coordinator` 任务状态机制（生成中/等待/45 秒确定性兑底），不新增并发控制外的逻辑；
+- 已归档自然周允许重新生成，提交前 `confirm` 提示“将覆盖当前归档版本”；
+- 页面加载时 `GET /api/user` 获取 `last_sync` 存入全局，`POST` 响应附带的 `last_sync` 用于即时刷新判定。
+
+**训练板块（training.html “本周怎么跑/进度如何”卡）**：
+
+- 卡操作区保留“查看本周进度”深链，新增“刷新进度”按钮：重新 `GET /api/training/home` 并仅替换该卡区域（`weekRhythmCardMarkup` + 重新绑定卡内 `data-session-detail` 事件），不整页刷新、不触发周复盘生成；
+- 卡内新增数据状态行：`进度统计至 {checked_through} · 已覆盖 {covered}/{expected} 天`；存在未同步日期时切换警示样式并提示“先同步数据再刷新进度”。
+
+**后端改动**：仅 `/api/reports/weekly` POST 的 `result_mapper` 返回值增加 `last_sync: user.last_sync`，一行；训练板块零后端改动。
+
+**测试**：模板断言（两个模板包含新函数与按钮）、Playwright 桌面/移动端验证三态徽标与按钮形态、全量 pytest。
 
 ## 8. 写入与版本流程
 

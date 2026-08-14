@@ -790,6 +790,19 @@ def test_daily_templates_are_mobile_first_and_support_local_png_export():
     assert "function refreshAIStatus()" in reports
     assert "[hidden]{display:none!important}" in reports
     assert ".weekly-review-details:not([open])>.weekly-review-body{display:none}" in reports
+    # 周进度数据新鲜度与手动刷新（渐进披露）
+    assert "function weeklyFreshnessLevel(report)" in reports
+    assert "function weeklyFreshnessMarkup(report,refreshButton)" in reports
+    assert "class=\"weekly-freshness" in reports
+    assert "更新进度" in reports
+    assert "重新生成进度" in reports
+    assert "补齐同步数据" in reports
+    assert "onclick=\"genWeeklyReport()\"" in reports
+    assert "archivedWeeks" in reports
+    assert "将覆盖当前归档版本" in reports
+    assert "lastSync" in reports
+    assert "fetch('/api/user')" in reports
+    assert "if(j.last_sync)lastSync=j.last_sync" in reports
     assert "质量课总结" in reports
     assert "task.message" in reports
     assert "未关联训练方案" in reports
@@ -842,6 +855,15 @@ def test_daily_templates_are_mobile_first_and_support_local_png_export():
     assert "计划时间线" in training
     assert "训练基础与数据状态" in training
     assert "这是计划时间线" in training
+    # 本周节奏卡：刷新进度按钮 + 数据状态行
+    assert "function weekRhythmCardMarkup()" in training
+    assert "async function refreshWeekProgress(button)" in training
+    assert "onclick=\"refreshWeekProgress(this)\"" in training
+    assert "刷新进度" in training
+    assert 'class="week-sync-status' in training
+    assert "进度统计至" in training
+    assert "先同步数据再刷新进度" in training
+    assert "weekRhythmCard" in training
     assert "当前教练定位" not in training
     assert "function modeBannerMarkup" not in training
 
@@ -1444,6 +1466,7 @@ def test_weekly_report_routes_require_explicit_generation(tmp_path):
         "max_session_minutes": 90,
     })
     service.activate(draft["plan_id"])
+    manager.update(user.api_key, last_sync="2026-08-13")
     register_web_routes(server, manager, config)
 
     listed = asyncio.run(server.routes[("/api/reports/weekly", "GET")](
@@ -1460,6 +1483,8 @@ def test_weekly_report_routes_require_explicit_generation(tmp_path):
     assert payload["report"]["type"] == "weekly_checkpoint"
     assert payload["report"]["progression_decision"]["action"] == "not_final"
     assert payload["report"]["training_url"].startswith("/training?")
+    # 周进度数据新鲜度：响应必须携带最近同步时间，供前端判定是否提示“更新进度”
+    assert payload["last_sync"] == "2026-08-13"
     task_response = asyncio.run(server.routes[("/api/ai/tasks/current", "GET")](_request(
         "/api/ai/tasks/current", {}, user.api_key, method="GET",
     )))

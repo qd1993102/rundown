@@ -2029,7 +2029,12 @@ def register_web_routes(server, user_manager: UserManager, config: Config):
                 operation="weekly_review",
                 result_mapper=lambda generated: {"report": generated},
             )
-            return JSONResponse({"status": "ok", "report": report})
+            return JSONResponse({
+                "status": "ok",
+                "report": report,
+                # 供前端判定周进度数据新鲜度（last_sync > data_as_of 时有新数据）
+                "last_sync": user.last_sync,
+            })
         except AIInferenceInProgressError as exc:
             return ai_in_progress_failure(exc)
         except AIInferenceCapacityExceededError as exc:
