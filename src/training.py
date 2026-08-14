@@ -2329,6 +2329,15 @@ class TrainingService:
                 for item in completed for actual in item.get("actual_activities", [])
             ), 1),
             "target_km": scheme.get("weekly_mileage_target"),
+            # 本周实际运动事实：周内全部已同步活动（含计划外/部分完成），
+            # 与报告页 actual_summary 口径一致，供卡片并列展示计划执行 vs 实际量。
+            "actual_sessions": len(activities),
+            "actual_running_km": round(sum(
+                float(a.get("distance_meters") or 0) / 1000
+                for a in activities
+                if "run" in str(a.get("activity_type") or "").lower()
+                or "跑" in str(a.get("activity_name") or "")
+            ), 1),
         }
         today_item = next((item for item in week["workouts"] if item["date"] == str(today)), None)
         coverage_end = min(today, end)

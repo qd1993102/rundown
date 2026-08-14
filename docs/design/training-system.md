@@ -966,9 +966,10 @@ fresh      = 其余情况
 **训练板块（training.html “本周怎么跑/进度如何”卡）**：
 
 - 卡操作区保留“查看本周进度”深链，新增“刷新进度”按钮：重新 `GET /api/training/home` 并仅替换该卡区域（`weekRhythmCardMarkup` + 重新绑定卡内 `data-session-detail` 事件），不整页刷新、不触发周复盘生成；
-- 卡内新增数据状态行：`进度统计至 {checked_through} · 已覆盖 {covered}/{expected} 天`；存在未同步日期时切换警示样式并提示“先同步数据再刷新进度”。
+- 卡内新增数据状态行：`进度统计至 {checked_through} · 已覆盖 {covered}/{expected} 天`；存在未同步日期时切换警示样式并提示“先同步数据再刷新进度”；
+- `week.progress` 除计划执行（`completed_sessions` / `completed_km` / `target_km`，仅 `completed` 计划课及其实际距离）外，并列提供实际运动事实 `actual_sessions`（周内全部已同步活动数）与 `actual_running_km`（周内全部跑步距离，含计划外/部分完成课），口径与报告页 `actual_summary` 一致；前端以 `.pill.fact`（accent 色）区分“实际”与计划执行数字，两套口径差异一目了然。
 
-**后端改动**：仅 `/api/reports/weekly` POST 的 `result_mapper` 返回值增加 `last_sync: user.last_sync`，一行；训练板块零后端改动。
+**后端改动**：`/api/reports/weekly` POST 响应增加 `last_sync`（`user.last_sync`）；`home()` 的 `week.progress` 增加 `actual_sessions` / `actual_running_km`（基于周内活动列表计算，无新存储）。
 
 **测试**：模板断言（两个模板包含新函数与按钮）、Playwright 桌面/移动端验证三态徽标与按钮形态、全量 pytest。
 

@@ -156,6 +156,41 @@ def test_create_confirm_and_read_realtime_training_home(tmp_path):
     assert stat.S_IMODE((tmp_path / "memory/plans/active-plan.md").stat().st_mode) == 0o600
 
 
+def test_week_progress_exposes_actual_facts_besides_plan_execution(tmp_path):
+    """训练页周进度除计划课执行外，并列展示周内实际运动事实
+    （全部已同步活动，含计划外/部分完成），口径与报告页 actual_summary 一致。"""
+    from datetime import timedelta
+
+    def loader(start, end):
+        start = date.fromisoformat(str(start))
+        activities = [
+            {"activity_id": "run-1", "activity_type": "running", "activity_name": "早跑",
+             "activity_date": str(start), "distance_meters": 8000, "duration_seconds": 3000},
+            {"activity_id": "ride-1", "activity_type": "cycling", "activity_name": "骑行",
+             "activity_date": str(start), "distance_meters": 20000, "duration_seconds": 1800},
+            {"activity_id": "run-2", "activity_type": "running", "activity_name": "晚跑",
+             "activity_date": str(start + timedelta(days=1)), "distance_meters": 5000,
+             "duration_seconds": 1800},
+        ]
+        states = {
+            str(start + timedelta(days=i)): "synced"
+            for i in range((end - start).days + 1)
+        }
+        return activities, states
+
+    service = TrainingService(tmp_path / "memory", activity_loader=loader)
+    draft = _draft(service)
+    active = service.activate(draft["plan_id"])
+    home = service.home(today=_next_training_date(active))
+    progress = home["week"]["progress"]
+
+    assert "completed_sessions" in progress
+    assert "completed_km" in progress
+    # 实际量：3 次活动（2 跑 + 1 骑行），跑步距离 8 + 5 = 13 km，骑行不计入跑步距离
+    assert progress["actual_sessions"] == 3
+    assert progress["actual_running_km"] == 13.0
+
+
 def test_plan_timeline_keeps_bridge_week_outside_phase_progress(tmp_path):
     service = TrainingService(tmp_path / "memory")
     scheme = {

@@ -839,9 +839,9 @@ def test_daily_templates_are_mobile_first_and_support_local_png_export():
     assert "intensityZoneLabel" in training
     assert "Z2 轻松有氧" in training
     assert "今日怎么跑" in training
-    assert "接下来三天" in training
-    assert "本周节奏" in training
-    assert "计划与数据" in training
+    assert "接下来几天" in training
+    assert "本周怎么跑" in training
+    assert "后面几周安排如何" in training
     assert "upcomingSessionPanel" in training
     assert "data-session-detail" in training
     assert "data-session-detail-panel" in training
@@ -864,6 +864,12 @@ def test_daily_templates_are_mobile_first_and_support_local_png_export():
     assert "进度统计至" in training
     assert "先同步数据再刷新进度" in training
     assert "weekRhythmCard" in training
+    # 周进度并列展示实际运动事实（计划执行 vs 实际量）
+    assert "actual_sessions" in training
+    assert "actual_running_km" in training
+    assert 'pill fact' in training
+    assert "实际" in training
+    assert "跑步" in training
     assert "当前教练定位" not in training
     assert "function modeBannerMarkup" not in training
 

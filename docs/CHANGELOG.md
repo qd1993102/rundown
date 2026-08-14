@@ -8,6 +8,10 @@
 - **影响范围**: 训练主界面信息架构、首屏渲染、本周安排展示、方案详情展示
 - **关联文档**: [训练体验产品方案](product/training-experience.md)、[训练系统技术设计](design/training-system.md)
 
+- **改动描述**: 训练页“本周怎么跑 / 进度如何”卡并列展示两套口径：计划执行（完成 X 次 / 已跑 X km，仅 `completed` 计划课）与实际运动事实（实际 X 次 / 跑步 X km，周内全部已同步活动，含计划外/部分完成，accent 色标识），口径与报告页周进度 `actual_summary` 一致；`week.progress` 新增 `actual_sessions` / `actual_running_km`，两套数字差异一目了然。
+- **影响范围**: `src/training.py`、`web/templates/training.html`、`tests/test_training.py`、`tests/test_web.py`
+- **关联文档**: [训练系统技术设计 §7.2](design/training-system.md)、[训练体验产品方案](product/training-experience.md)
+
 
 ### Fixed
 
