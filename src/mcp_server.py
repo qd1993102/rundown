@@ -12,6 +12,13 @@ from pathlib import Path
 from typing import Any
 
 from .local_files import atomic_write_private, ensure_private_dir, restrict_private_file
+from .memory import get_daily_activities
+from .report_readiness import (
+    DailyReportReadinessError,
+    DailyReportReadinessService,
+    enforce_report_readiness,
+)
+from .training import TrainingError, TrainingService
 from .training_analysis import ActivityDayState, natural_week_bounds
 
 logger = logging.getLogger(__name__)
@@ -37,19 +44,21 @@ def create_server(
         instructions="""你已接入 neurun——一个 运动数据 + AI 跑步教练系统。
 
 ## 核心能力
-- **每日综合报告**：包含昨日训练详情（分段配速、步频、功率、心率、触地时间）、昨夜睡眠质量、今晨恢复状态（HRV、静息心率、身体电量）、训练负荷（ACWR）、7日趋势、异常检测、今日训练建议。
+- **每日综合报告**：包含报告日训练详情（分段配速、步频、功率、心率、触地时间）、昨夜睡眠质量、今晨恢复状态（HRV、静息心率、身体电量）、训练负荷（ACWR）、7日趋势、异常检测、当日训练建议。
 - **训练细节分析**：每项活动的分段数据，包括配速变化、步频、功率、触地时间、步幅、垂直振幅、爬升等。
 - **历史查询**：前30天的活动列表、健康指标趋势、任意日期的日报。
 - **静态HTML报告**：可生成三主题（运动/清新/暗黑）完整HTML日报，包含趋势图，浏览器直接打开。
 
 ## 何时主动触发
-- 用户提到"今天状态"、"昨天训练"、"睡眠"、"恢复"、"HRV"、"跑步数据"→ 读取 `neurun://daily/latest`
+- 用户提到"今天状态"、"当日训练"、"睡眠"、"恢复"、"HRV"、"跑步数据"→ 读取 `neurun://daily/latest`
 - 用户问"最近一周"、"趋势"、"负荷"、"训练量" → 读取 `neurun://context/full`
 - 用户问"活动详情"、"配速"、"步频"、"功率"、"分段" → 调用 `get_activity_detail`
 - 用户说"生成报告"、"日报"、"HTML" → 调用 `generate_report` 或 `generate_html_report`
 - 用户说"截图"、"生成图片"、"分享"、"导出图片"、"打卡" → 调用 `generate_image`（可选 theme: fresh/sport/dark）
 - 用户问"目标"、"5K"、"备赛"、"PB" → 读取 `neurun://goals/active`
-- 用户要"更新资料"、"设置目标"、"输入身高体重" → 调用 `update_profile` 或 `set_goal`
+- 用户要"更新资料"、"输入身高体重" → 调用 `update_profile`；训练目标由训练方案建立向导统一管理
+- 用户问"今天练什么"、"本周安排"、"训练方案" → 调用 `get_training_home`
+- 用户反馈时间、疲劳、疼痛或日程约束 → 先调用 `submit_training_feedback` 和 `propose_training_adjustment`；只有用户明确确认后才调用 `approve_training_adjustment`
 
 ## 典型对话示例
 - 用户："早上好，今天状态怎么样？" → 你读取 daily/latest，用自然语言总结状态并给出训练建议
@@ -63,15 +72,34 @@ def create_server(
 - 活动详情随时可查""",
     )
 
+    def generate_local_report(d: date, mode: str = "complete"):
+        readiness = DailyReportReadinessService(
+            storage, provider_type=config.provider_type,
+        ).check(user_id, d)
+        enforce_report_readiness(readiness, mode)
+        from .training_service_factory import build_capacity_athlete_context
+
+        athlete_context = build_capacity_athlete_context(
+            config, d, omitted_sections=readiness.omitted_sections,
+        )
+        return memory_store.generate_daily_report(
+            str(user_id),
+            d,
+            ai_insight={} if readiness.omitted_sections else None,
+            readiness=readiness.to_dict(),
+            athlete_context=athlete_context,
+        )
+
     # ═══════════════════════════════════════════════════════
     # Resources: 只读数据，自动注入 AI 上下文
     # ═══════════════════════════════════════════════════════
 
     @mcp.resource("neurun://daily/latest")
     def get_latest_daily() -> str:
-        """【最常用】最新每日综合报告。包含：昨日训练详情（类型/时长/距离/配速/心率/负荷）、
+        """【最常用】最新每日综合报告。包含：报告日训练详情（类型/时长/距离/配速/心率/负荷）、
         昨夜睡眠（时长/质量/深睡占比）、今晨恢复状态（HRV/静息心率/身体电量/训练准备）、
-        训练负荷ACWR、7日趋势、异常提醒、今日训练建议、AI教练洞察。"""
+        训练负荷ACWR、运动员能力背景参考（可持续周跑量/长距离/参考配速）、7日趋势、异常提醒、
+        报告日训练建议、AI教练洞察。"""
         mem = memory_store.get_latest("daily_report")
         if mem is None:
             return "暂无日报，请先运行 neurun sync"
@@ -163,6 +191,31 @@ def create_server(
     # Tools: AI 可调用的查询/分析函数
     # ═══════════════════════════════════════════════════════
 
+    def current_training_service() -> TrainingService:
+        memory_dir = getattr(config, "memory_dir", None)
+        if not memory_dir:
+            memory_dir = getattr(getattr(memory_store, "reader", None), "_root", "memory")
+        return TrainingService(memory_dir)
+
+    def training_json(action) -> str:
+        try:
+            return json.dumps({"status": "ok", "data": action()}, ensure_ascii=False)
+        except TrainingError as exc:
+            return json.dumps({
+                "status": "error", "code": exc.code, "message": str(exc),
+                "suggestion": "刷新训练方案后，按提示补全信息或重新生成提案。",
+            }, ensure_ascii=False)
+        except (TypeError, ValueError) as exc:
+            return json.dumps({
+                "status": "error", "code": "invalid_input", "message": str(exc),
+            }, ensure_ascii=False)
+        except Exception as exc:
+            logger.exception("训练工具执行失败")
+            return json.dumps({
+                "status": "error", "code": "training_internal_error",
+                "message": "训练服务暂时不可用，请稍后重试。",
+            }, ensure_ascii=False)
+
     if enable_admin_tools:
         from .invitations import InvitationStore
 
@@ -216,6 +269,175 @@ def create_server(
                 f"load{a.get('training_load', 0)}"
             )
         return "\n".join(lines)
+
+    @mcp.tool()
+    def get_training_home() -> str:
+        """读取实时训练首页：当前方案、今日/本周逐段处方（组数、工作/恢复段和分段目标）、个人配速依据、执行状态和待确认提案。"""
+        return training_json(lambda: current_training_service().home())
+
+    @mcp.tool()
+    def get_training_plan(target_date: str = "") -> str:
+        """读取实时方案；提供日期时返回当时生效版本及含 Workout Steps 的具体课次。"""
+        target = date.fromisoformat(target_date) if target_date else None
+        return training_json(
+            lambda: current_training_service().plan(target_date=target)
+        )
+
+    @mcp.tool()
+    def get_training_session_brief(target_date: str = "") -> str:
+        """读取指定日期训练前说明；提供组数、快慢段顺序、分段配速/体感、降级和停止条件，不修改方案。"""
+        target = date.fromisoformat(target_date) if target_date else date.today()
+        return training_json(
+            lambda: current_training_service().session_brief(target=target)
+        )
+
+    @mcp.tool()
+    def get_athlete_capacity_profile(target_date: str = "") -> str:
+        """读取能力档案：近期可持续能力、用户确认历史能力、同步覆盖与首周负荷边界。历史高峰不会直接作为首周跑量。"""
+        target = date.fromisoformat(target_date) if target_date else date.today()
+        return training_json(lambda: current_training_service().capacity_profile(target=target))
+
+    @mcp.tool()
+    def preview_training_activation(
+        plan_id: str,
+        start_mode: str = "today",
+        effective_from: str = "",
+        entry_strategy: str = "recommended",
+    ) -> str:
+        """只读预览草稿的启用日期、衔接周、同步事实截点和入门策略；不会激活方案或转换教练模式。"""
+        payload = {"start_mode": start_mode, "entry_strategy": entry_strategy}
+        if effective_from:
+            payload["effective_from"] = effective_from
+        return training_json(lambda: current_training_service().activation_preview(plan_id, payload))
+
+    @mcp.tool()
+    def cancel_training_activation(plan_id: str) -> str:
+        """取消尚未生效的排期，并将同一方案退回预览草稿；不会创建新方案。"""
+        return training_json(
+            lambda: current_training_service().cancel_scheduled_activation(plan_id)
+        )
+
+    @mcp.tool()
+    def preview_goal_rescheduling(target_date: str, target_time: str = "") -> str:
+        """生成不生效的目标改期预览与替代草稿；不会改写当前目标或方案。"""
+        return training_json(lambda: current_training_service().preview_goal_rescheduling({
+            "target_date": target_date,
+            "target_time": target_time or None,
+        }))
+
+    @mcp.tool()
+    def confirm_goal_rescheduling(preview_id: str, idempotency_key: str) -> str:
+        """确认仍有效的改期预览，废弃旧方案并返回同一 plan_id 的新草稿。"""
+        return training_json(lambda: current_training_service().confirm_goal_rescheduling(
+            preview_id, idempotency_key=idempotency_key,
+        ))
+
+    @mcp.tool()
+    def prepare_race_strategy(
+        course: str = "", weather: str = "", fueling_experience: str = "",
+    ) -> str:
+        """在已确认赛事方案的赛前 21 天内生成比赛策略；缺失事实会显式保留为不确定性。"""
+        return training_json(lambda: current_training_service().race_strategy({
+            "course": course,
+            "weather": weather,
+            "fueling_experience": fueling_experience,
+        }))
+
+    @mcp.tool()
+    def submit_training_feedback(
+        feedback_type: str,
+        target_date: str = "",
+        note: str = "",
+        available_minutes: int = 0,
+        affected_dates: list[str] | None = None,
+        new_available_days: list[int] | None = None,
+        planned_workout_id: str = "",
+        completion_status: str = "",
+        idempotency_key: str = "",
+        pain_location: str = "",
+        pain_severity: int = 0,
+        pain_affects_daily_life: bool = False,
+    ) -> str:
+        """记录训练反馈但不修改方案。feedback_type 使用 constraint_change、fatigue、pain、post_workout；长期星期变化填写 new_available_days。疼痛必须提供部位和 1–10 严重程度；训练后只有明确 skipped 才能写入。"""
+        payload = {
+            "feedback_type": feedback_type,
+            "target_date": target_date or str(date.today()),
+            "note": note,
+            "available_minutes": available_minutes or None,
+            "affected_dates": affected_dates,
+            "new_available_days": new_available_days,
+            "planned_workout_id": planned_workout_id or None,
+            "completion_status": completion_status or None,
+            "idempotency_key": idempotency_key or None,
+            "pain": {
+                "location": pain_location,
+                "severity": pain_severity or None,
+                "affects_daily_life": pain_affects_daily_life,
+            } if feedback_type == "pain" else {},
+        }
+        return training_json(
+            lambda: current_training_service().submit_feedback(payload)
+        )
+
+    @mcp.tool()
+    def propose_training_adjustment(feedback_id: str) -> str:
+        """根据一条已记录反馈生成结构化待确认提案；不会改写当前训练方案。"""
+        return training_json(
+            lambda: current_training_service().propose(feedback_id)
+        )
+
+    @mcp.tool()
+    def propose_training_adjustment_from_report(
+        week_id: str, effective_from: str = "",
+    ) -> str:
+        """将已归档周复盘的加速/降载/重规划建议转成训练域待确认方案提案；不会直接生效。"""
+        return training_json(
+            lambda: current_training_service().propose_from_weekly_report(
+                week_id,
+                effective_from=(date.fromisoformat(effective_from) if effective_from else None),
+            )
+        )
+
+    @mcp.tool()
+    def propose_training_scheme_revision(
+        reason: str,
+        trigger: str = "execution_deviation",
+        available_days: list[int] | None = None,
+        max_session_minutes: int = 0,
+    ) -> str:
+        """为连续偏离、长期停训、目标或固定日程变化生成完整方案重规划提案；不会直接生效。"""
+        constraints = {}
+        if available_days is not None:
+            constraints["available_days"] = available_days
+        if max_session_minutes:
+            constraints["max_session_minutes"] = max_session_minutes
+        return training_json(
+            lambda: current_training_service().propose_scheme_revision({
+                "reason": reason,
+                "trigger": trigger,
+                "constraints": constraints,
+            })
+        )
+
+    @mcp.tool()
+    def approve_training_adjustment(
+        proposal_id: str,
+        base_version: int,
+        idempotency_key: str,
+    ) -> str:
+        """仅在用户明确确认后，按 base_version 批准提案并生成新方案版本；禁止自动调用。"""
+        return training_json(lambda: current_training_service().approve(
+            proposal_id,
+            base_version=base_version,
+            idempotency_key=idempotency_key,
+        ))
+
+    @mcp.tool()
+    def reject_training_adjustment(proposal_id: str, reason: str = "") -> str:
+        """拒绝待确认提案并保持当前训练方案不变。"""
+        return training_json(
+            lambda: current_training_service().reject(proposal_id, reason=reason)
+        )
 
     @mcp.tool()
     def query_current_week_progress(target_date: str = "") -> str:
@@ -323,7 +545,11 @@ def create_server(
         return "\n".join(lines)
 
     @mcp.tool()
-    def generate_image(target_date: str = "", theme: str = "fresh") -> str:
+    def generate_image(
+        target_date: str = "",
+        theme: str = "fresh",
+        mode: str = "complete",
+    ) -> str:
         """将指定日期的 HTML 日报截图导出为 PNG 图片。路径 output/{date}.png。
         theme: fresh(清新默认) | sport(运动橙) | dark(暗黑)。
         用户说"生成图片"、"截图"、"分享"、"导出图片"时调用。"""
@@ -334,7 +560,10 @@ def create_server(
 
         mem = memory_store.get(str(d))
         if mem is None:
-            mem = memory_store.generate_daily_report(str(user_id), d)
+            try:
+                mem = generate_local_report(d, mode)
+            except DailyReportReadinessError as exc:
+                raise RuntimeError(json.dumps(exc.to_dict(), ensure_ascii=False)) from exc
 
         from .image import render_daily_image
         out = f"output/{d}.png"
@@ -434,66 +663,21 @@ def create_server(
         return f"✅ 个人资料已更新。身高 {info['height_cm']}cm 体重 {info['weight_kg']}kg，最佳: {list(pbs.keys())}"
 
     @mcp.tool()
-    def set_goal(
-        name: str,
-        distance: str,
-        target_time: str,
-        target_date: str = "",
-        weekly_km: int = 50,
-    ) -> str:
-        """创建或更新训练目标。"""
-        from datetime import datetime
-        from .memory import build_memory_file
-
-        if not target_date:
-            target_date = str(date.today().replace(year=date.today().year + 1))
-
-        goal_id = f"goal-{date.today().year}-{distance}"
-        fm = {
-            "type": "goal",
-            "id": goal_id,
-            "goal_type": "time_based",
-            "category": "running",
-            "status": "active",
-            "priority": "high",
-            "created": str(date.today()),
-            "target_date": target_date,
-            "review_cycle": "weekly",
-            "metrics": {
-                f"target_{distance}": target_time,
-                "weekly_mileage_km": weekly_km,
-            },
-            "tags": [distance, str(date.today().year), "active"],
-        }
-        body = f"""# {name}
-
-## 目标
-- 距离: {distance}
-- 目标成绩: {target_time}
-- 截止日期: {target_date}
-- 周跑量: {weekly_km} km
-
-## 进度
-创建于 {date.today()}。
-"""
-
-        path = Path(config.memory_dir) / "goals" / "active" / f"{goal_id}.md"
-        atomic_write_private(path, build_memory_file(fm, body))
-        logger.info("Goal created via MCP: %s", goal_id)
-        return f"✅ 目标已创建: {name} — {distance} {target_time} (截止 {target_date})"
-
-    @mcp.tool()
-    def generate_report(target_date: str = "") -> str:
+    def generate_report(target_date: str = "", mode: str = "complete") -> str:
         """生成指定日期的运动日报（默认今天）。用户说"生成日报"、"帮我看看今天的报告"、
-        "分析一下昨天的训练"时调用。成功后返回训练/睡眠/恢复/HRV的摘要数据。"""
+        "分析指定日期的训练"时调用。mode 默认 complete；只有用户明确接受数据缺口时才用 limited。
+        成功后返回训练/睡眠/恢复/HRV的摘要数据。"""
         if target_date:
             d = date.fromisoformat(target_date)
         else:
             d = date.today()
 
-        mem = memory_store.generate_daily_report(str(user_id), d)
+        try:
+            mem = generate_local_report(d, mode)
+        except DailyReportReadinessError as exc:
+            raise RuntimeError(json.dumps(exc.to_dict(), ensure_ascii=False)) from exc
         fm = mem.front_matter
-        ya = fm.get("yesterday_activities", {})
+        ya = get_daily_activities(fm)
         sleep = fm.get("last_night_sleep", {})
         rec = fm.get("recovery", {})
 
@@ -509,7 +693,9 @@ def create_server(
         )
 
     @mcp.tool()
-    def generate_html_report(target_date: str = "") -> str:
+    def generate_html_report(
+        target_date: str = "", mode: str = "complete",
+    ) -> str:
         """生成静态 HTML 运动日报到 output/ 目录。绿黑色潮流风格，包含状态面板、
         训练卡片、ACWR可视化、SVG趋势图、AI洞察。浏览器直接打开，无需服务器。
         用户说"生成HTML"、"导出日报"、"给我一个网页版"时调用。"""
@@ -521,7 +707,10 @@ def create_server(
         # 确保日报存在
         mem = memory_store.get(str(d))
         if mem is None:
-            mem = memory_store.generate_daily_report(str(user_id), d)
+            try:
+                mem = generate_local_report(d, mode)
+            except DailyReportReadinessError as exc:
+                raise RuntimeError(json.dumps(exc.to_dict(), ensure_ascii=False)) from exc
 
         from .render import render_daily_html
         output_dir = Path("output")
@@ -539,7 +728,7 @@ def _format_memory(mem) -> str:
     parts = [mem.body]
 
     # 附加关键 Front Matter 数据
-    ya = fm.get("yesterday_activities", {})
+    ya = get_daily_activities(fm)
     if ya.get("activity_state") == ActivityDayState.UNKNOWN:
         parts.append("\n运动数据: 未同步，训练/休息状态未知")
     elif ya and not ya.get("is_rest_day"):

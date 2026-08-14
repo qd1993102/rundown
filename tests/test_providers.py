@@ -195,6 +195,87 @@ class TestProviderRegistry:
         result = p.activities.fetch_activities(date.today(), date.today())
         assert result == []
 
+    def _coros_auth_with_token(self, tmp_path, *, region="cn") -> "CorosAuth":
+        from src.providers.coros import CorosAuth
+
+        token_path = tmp_path / "tokens" / "coros-auth.json"
+        token_path.parent.mkdir(parents=True, exist_ok=True)
+        token_path.write_text(json.dumps({
+            "access_token": "test-access-token",
+            "user_id": "12345",
+            "region": region,
+            "timestamp": int(time.time() * 1000),
+        }), encoding="utf-8")
+        return CorosAuth(str(tmp_path / "tokens"))
+
+    def test_coros_fetch_activity_detail_keeps_high_frequency_fields(self, tmp_path):
+        """Coros detail 拉取保留 graphList/frequencyList 等高频字段（不再被 strip）。"""
+        from src.providers.coros import CorosActivity as CorosActivities
+
+        auth = self._coros_auth_with_token(tmp_path)
+        activities = CorosActivities(auth)
+
+        class _Resp:
+            status_code = 200
+
+            def json(self):
+                return {"result": "0000", "data": {
+                    "summary": {"duration": 600, "distance": 3000},
+                    "graphList": [{"x": 0, "y": 150}],
+                    "frequencyList": [{"t": 0, "hr": 150, "pace": 300}],
+                    "gpsLightDuration": 1,
+                    "lapList": [{"lapItemList": []}],
+                }}
+
+        with mock.patch("httpx.post", return_value=_Resp()) as post:
+            detail = activities.fetch_activity_detail("act-1", sport_type=100)
+        assert post.call_args.kwargs["data"]["sportType"] == "100"
+        assert detail["graphList"] == [{"x": 0, "y": 150}]
+        assert detail["frequencyList"] == [{"t": 0, "hr": 150, "pace": 300}]
+        assert detail["gpsLightDuration"] == 1
+        assert detail["lapList"] == [{"lapItemList": []}]
+
+    def test_coros_fetch_activity_detail_returns_empty_on_error(self, tmp_path):
+        from src.providers.coros import CorosActivity as CorosActivities
+
+        auth = self._coros_auth_with_token(tmp_path)
+        activities = CorosActivities(auth)
+
+        class _Resp:
+            status_code = 200
+
+            def json(self):
+                return {"result": "1001", "message": "token 无效"}
+
+        with mock.patch("httpx.post", return_value=_Resp()):
+            assert activities.fetch_activity_detail("act-1") == {}
+
+    def test_coros_health_parses_lthr_ltsp_into_extra(self, tmp_path):
+        """Coros /analyse/query 的 lthr/ltsp（平台自算乳酸阈值）进入 DailyHealth.extra。"""
+        from src.providers.coros import CorosHealth
+
+        auth = self._coros_auth_with_token(tmp_path)
+        health = CorosHealth(auth)
+        target = date(2026, 7, 29)
+        day = target.strftime("%Y%m%d")
+        with (
+            mock.patch.object(health, "_get_analyse_data", return_value={
+                "dayList": [{
+                    "happenDay": day, "rhr": 52, "distance": 8000,
+                    "duration": 2500, "trainingLoad": 120, "tiredRate": 30,
+                    "lthr": 175, "ltsp": 285,
+                }],
+                "t7dayList": [],
+            }),
+            mock.patch.object(health, "_get_hrv_data", return_value=[]),
+            mock.patch.object(health, "_load_sleep_range", return_value=None),
+        ):
+            h = health.fetch_daily_health(target)
+        assert h is not None
+        assert h.resting_heart_rate == 52
+        assert h.extra.get("lthr") == 175
+        assert h.extra.get("ltsp") == 285
+
     def test_coros_auth_persists_and_restores_per_user_token(self, tmp_path):
         from coros_mcp.models import StoredAuth
         from src.providers.coros import CorosAuth
@@ -354,12 +435,14 @@ class TestProviderRegistry:
             "workoutTime": 3600,
             "distance": 10000,
             "avgHr": 145,
+            "calorie": 495255,
         })
 
         assert activity.duration_seconds == 3600
         assert activity.extra["total_time_seconds"] == 4200
         assert activity.extra["workout_time_seconds"] == 3600
         assert activity.extra["paused_seconds"] == 600
+        assert activity.calories == 495
 
     def test_coros_activity_falls_back_to_total_time(self):
         from src.providers.coros import _parse_activity_item
@@ -749,3 +832,36 @@ class TestProviderRegistry:
             {"activityRecordId": "record-1"},
         )]
         assert detail == {"id": "record-1", "splits": [{"distance": 1000}]}
+
+
+def test_new_provider_adapter_feeds_existing_summary_without_consumer_changes():
+    from src.providers.normalization import (
+        normalize_activity_detail, register_detail_adapter,
+    )
+    from src.summary_extraction import build_session_summary
+
+    register_detail_adapter(
+        "fixture-provider",
+        lambda detail: detail.get("vendor") == "fixture-provider",
+        lambda detail: {
+            "summaryDTO": {
+                "distance": detail["meters"], "duration": detail["seconds"],
+            },
+            "lapDTOs": detail["vendor_laps"],
+        },
+    )
+    raw = {
+        "vendor": "fixture-provider", "meters": 2000, "seconds": 600,
+        "vendor_laps": [
+            {"distance": 1000, "duration": 290, "averageHR": 150},
+            {"distance": 1000, "duration": 310, "averageHR": 155},
+        ],
+    }
+
+    canonical = normalize_activity_detail(raw)
+    facts = build_session_summary(raw)
+
+    assert canonical["_neurun_provider"] == "fixture-provider"
+    assert facts.volume.distance_m == 2000
+    assert facts.pace_profile is not None
+    assert facts.pace_profile.avg_pace_sec_per_km == 300

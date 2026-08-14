@@ -46,8 +46,8 @@ button{-webkit-tap-highlight-color:transparent;touch-action:manipulation}
 .app-header{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:0 0 12px}
 .app-brand{display:flex;align-items:center;gap:8px;color:var(--text);font-size:14px;font-weight:800;letter-spacing:.2px}
 .app-brand-mark{display:grid;place-items:center;width:32px;height:32px;border-radius:11px;background:var(--accent);color:#fff;font-size:17px;font-weight:900}
-.app-nav{position:fixed;z-index:50;left:50%;bottom:calc(10px + env(safe-area-inset-bottom));transform:translateX(-50%);width:min(calc(100% - 24px),520px);display:grid;grid-template-columns:repeat(3,1fr);gap:4px;padding:6px;border:1px solid var(--border-subtle);border-radius:22px;background:color-mix(in srgb,var(--bg-card) 92%,transparent);box-shadow:0 12px 40px rgba(0,0,0,.22);-webkit-backdrop-filter:blur(18px);backdrop-filter:blur(18px)}
-.app-nav-item{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;min-width:0;min-height:54px;padding:6px 10px;border-radius:16px;color:var(--text-muted);text-decoration:none;transition:color .2s,background .2s;-webkit-tap-highlight-color:transparent;touch-action:manipulation}
+.app-nav{position:fixed;z-index:50;left:50%;bottom:calc(10px + env(safe-area-inset-bottom));transform:translateX(-50%);width:min(calc(100% - 24px),520px);display:grid;grid-template-columns:repeat(4,1fr);gap:4px;padding:6px;border:1px solid var(--border-subtle);border-radius:22px;background:color-mix(in srgb,var(--bg-card) 92%,transparent);box-shadow:0 12px 40px rgba(0,0,0,.22);-webkit-backdrop-filter:blur(18px);backdrop-filter:blur(18px)}
+.app-nav-item{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;min-width:0;min-height:54px;padding:6px 5px;border-radius:16px;color:var(--text-muted);text-decoration:none;transition:color .2s,background .2s;-webkit-tap-highlight-color:transparent;touch-action:manipulation}
 .app-nav-item[aria-current="page"]{background:var(--accent-glow);color:var(--accent)}
 .app-nav-icon{width:21px;height:21px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
 .app-nav-label{font-size:10px;font-weight:750;line-height:1;letter-spacing:.2px}
@@ -85,9 +85,13 @@ button{-webkit-tap-highlight-color:transparent;touch-action:manipulation}
 .plan-item{flex:1;text-align:center}
 .plan-val{display:block;font-family:-apple-system,'SF Pro Display','Helvetica Neue',sans-serif;font-size:15px;font-weight:700;color:var(--text)}
 .plan-lbl{display:block;font-size:10px;color:var(--text-muted);margin-top:2px;text-transform:uppercase;letter-spacing:.5px}
+.plan-execution-summary{display:grid;gap:10px;margin-bottom:16px;padding:16px;border-radius:16px;background:var(--bg-card);box-shadow:var(--card-shadow);border-left:3px solid var(--accent)}
+.plan-execution-summary h2{font-size:16px}.plan-execution-summary p{color:var(--text-secondary);font-size:13px}.plan-execution-meta{display:flex;flex-wrap:wrap;gap:7px}.plan-execution-meta span{padding:4px 8px;border-radius:999px;background:var(--bg-subtle);color:var(--text-secondary);font-size:11px;font-weight:700}
+.plan-execution-guidance{margin:0;color:var(--text-secondary);font-size:13px}.plan-execution-summary ul.plan-execution-guidance{margin:0;padding-left:18px}
+.today-conclusion{display:grid;gap:8px;margin:0 0 16px;padding:16px;border-radius:16px;background:var(--accent-glow);border:1px solid var(--border-subtle)}.today-conclusion h2{font-size:16px}.today-conclusion p{font-size:14px;color:var(--text-secondary);line-height:1.7}.report-evidence{margin-top:24px;border-radius:16px;background:var(--bg-card);box-shadow:var(--card-shadow)}.report-evidence summary{min-height:52px;display:flex;align-items:center;padding:0 16px;cursor:pointer;color:var(--text);font-size:14px;font-weight:750}.report-evidence-body{padding:0 12px 14px}.report-evidence .section-title{margin:18px 4px 10px}
 
 /* ── Hero Grid ── */
-.hero-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;margin-bottom:16px}
+.hero-grid{display:grid;grid-template-columns:repeat(var(--visible-count,3),minmax(0,1fr));gap:8px;margin-bottom:16px}
 .hero-card{min-width:0;background:var(--bg-card);border-radius:14px;padding:16px 6px;box-shadow:var(--card-shadow);text-align:center;transition:transform .15s,box-shadow .15s}
 .hero-value{font-family:-apple-system,'SF Pro Display','Helvetica Neue',sans-serif;font-size:clamp(23px,8vw,30px);font-weight:800;letter-spacing:-1px;line-height:1;margin-bottom:5px;white-space:nowrap}
 .hero-value span{font-size:10px;font-weight:500;opacity:.55;margin-left:2px}
@@ -96,13 +100,14 @@ button{-webkit-tap-highlight-color:transparent;touch-action:manipulation}
 .hero-sub{font-size:10px;color:var(--text-muted);margin-top:2px;text-transform:capitalize;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 
 /* ── Metric Strip ── */
-.metric-strip{display:grid;grid-template-columns:repeat(2,1fr);gap:8px;margin-bottom:24px}
+.metric-strip{display:grid;grid-template-columns:repeat(min(var(--visible-count,2),2),minmax(0,1fr));gap:8px;margin-bottom:24px}
 .metric-item{background:var(--bg-card);border-radius:12px;padding:16px 10px;text-align:center;box-shadow:var(--card-shadow)}
 .metric-val{font-family:-apple-system,'SF Pro Display','Helvetica Neue',sans-serif;font-size:23px;font-weight:700;letter-spacing:-.5px;line-height:1}
 .metric-val.hrv{color:var(--hrv)}.metric-val.rhr{color:var(--performance)}.metric-val.bb{color:var(--accent)}.metric-val.stress{color:var(--sleep)}
 .metric-lbl{font-size:10px;color:var(--text-muted);margin-top:4px;font-weight:600;text-transform:uppercase;letter-spacing:.5px}
 
 /* ── Section Titles ── */
+.deep-table{width:100%;border-collapse:collapse;margin:4px 0 10px}.deep-table td{padding:5px 8px;font-size:13px;border-bottom:1px solid var(--border-subtle)}.deep-table td:first-child{color:var(--text-muted);white-space:nowrap;width:100px}.deep-block-title{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:1px;color:var(--text-muted);margin:12px 4px 4px}.deep-p{margin:4px 4px;font-size:13px;color:var(--text-secondary);line-height:1.7}
 .section-title{font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:1.2px;color:var(--text-muted);margin:24px 0 10px}
 
 /* ── Session Cards ── */
@@ -137,6 +142,7 @@ button{-webkit-tap-highlight-color:transparent;touch-action:manipulation}
 
 /* ── Plan Execution Card ── */
 .plan-exec-card{background:var(--bg-card);border-radius:16px;padding:16px;box-shadow:var(--card-shadow);margin-bottom:12px;border-left:3px solid var(--accent)}
+.quality-banner{margin-bottom:12px;padding:10px 12px;border-radius:12px;background:var(--bg-subtle);border:1px solid var(--border-subtle);color:var(--text-secondary);font-size:12px}
 .pe-row{display:grid;grid-template-columns:72px minmax(0,1fr);gap:10px;padding:5px 0;font-size:13px}
 .pe-label{color:var(--text-muted);min-width:64px}
 .pe-val{color:var(--text);font-weight:500;text-align:right}
@@ -177,7 +183,7 @@ button{-webkit-tap-highlight-color:transparent;touch-action:manipulation}
   .hero-value span{font-size:16px;margin-left:4px}
   .hero-label{font-size:13px}
   .hero-sub{font-size:11px}
-  .metric-strip{grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:32px}
+  .metric-strip{grid-template-columns:repeat(var(--visible-count,4),minmax(0,1fr));gap:10px;margin-bottom:32px}
   .metric-item{padding:18px 12px}
   .metric-val{font-size:26px}
   .session-card{grid-template-columns:44px minmax(0,1fr) auto;padding:18px 20px;gap:16px}
@@ -210,13 +216,17 @@ button{-webkit-tap-highlight-color:transparent;touch-action:manipulation}
 <header class="app-header">
   <div class="app-brand" aria-hidden="true"><span class="app-brand-mark">n</span><span>neurun</span></div>
   <nav class="app-nav" aria-label="主要导航">
-    <a href="/sync" class="app-nav-item" data-nav-item>
-      <svg class="app-nav-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M20 7h-3.5A7 7 0 0 0 5 9M20 3v4h-4M4 17h3.5A7 7 0 0 0 19 15M4 21v-4h4"/></svg>
-      <span class="app-nav-label">同步</span>
+    <a href="/training" class="app-nav-item" data-nav-item>
+      <svg class="app-nav-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 12h3l2-5 4 10 2-5h5"/><path d="M5 4h14a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2Z"/></svg>
+      <span class="app-nav-label">训练</span>
     </a>
     <a href="/reports" class="app-nav-item" data-nav-item aria-current="page">
       <svg class="app-nav-icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="3" width="14" height="18" rx="2"/><path d="M9 8h6M9 12h6M9 16h4"/></svg>
-      <span class="app-nav-label">日报</span>
+      <span class="app-nav-label">报告</span>
+    </a>
+    <a href="/sync" class="app-nav-item" data-nav-item>
+      <svg class="app-nav-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M20 7h-3.5A7 7 0 0 0 5 9M20 3v4h-4M4 17h3.5A7 7 0 0 0 19 15M4 21v-4h4"/></svg>
+      <span class="app-nav-label">同步</span>
     </a>
     <a href="/profile" class="app-nav-item" data-nav-item>
       <svg class="app-nav-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="8" r="3.5"/><path d="M5 21c.5-4 3-6 7-6s6.5 2 7 6"/></svg>
@@ -254,51 +264,29 @@ button{-webkit-tap-highlight-color:transparent;touch-action:manipulation}
 
   <main id="reportContent" style="display:none">
 
-  <!-- Plan Status -->
-  <div class="plan-strip" id="planStrip" style="display:none">
-    <div class="plan-item"><span class="plan-val" id="planPhase">—</span><span class="plan-lbl">阶段</span></div>
-    <div class="plan-item"><span class="plan-val" id="planWeek">—</span><span class="plan-lbl">剩余周数</span></div>
-    <div class="plan-item"><span class="plan-val" id="planTarget">—</span><span class="plan-lbl">周目标 km</span></div>
-    <div class="plan-item"><span class="plan-val" id="planNote">—</span><span class="plan-lbl">大纲状态</span></div>
-  </div>
+  <div class="quality-banner" id="qualityBanner" hidden></div>
+  <section class="today-conclusion" id="todayConclusion" hidden></section>
+  <section class="plan-execution-summary" id="planExecutionSummary" hidden></section>
 
-  <!-- Hero Grid -->
-  <div class="hero-grid">
-    <div class="hero-card">
-      <div class="hero-value sleep" id="heroSleep">—<span>h</span></div>
-      <div class="hero-label">睡眠</div>
-      <div class="hero-sub" id="heroSleepQuality">—</div>
-    </div>
-    <div class="hero-card">
-      <div class="hero-value recovery" id="heroRecovery">—<span>/100</span></div>
-      <div class="hero-label">恢复评分</div>
-      <div class="hero-sub" id="heroRecoveryLevel">—</div>
-    </div>
-    <div class="hero-card">
-      <div class="hero-value readiness" id="heroReadiness">—</div>
-      <div class="hero-label">训练准备</div>
-      <div class="hero-sub" id="heroReadinessLevel">—</div>
-    </div>
-  </div>
-
-  <!-- Metric Strip -->
-  <div class="metric-strip">
-    <div class="metric-item"><div class="metric-val hrv" id="metHrv">—</div><div class="metric-lbl">HRV ms</div></div>
-    <div class="metric-item"><div class="metric-val rhr" id="metRhr">—</div><div class="metric-lbl">静息心率</div></div>
-    <div class="metric-item"><div class="metric-val bb" id="metBb">—</div><div class="metric-lbl">身体电量</div></div>
-    <div class="metric-item"><div class="metric-val stress" id="metStress">—</div><div class="metric-lbl">压力</div></div>
-  </div>
-
-  <!-- AI Insight -->
-  <div id="aiArea"></div>
-
-  <!-- Training -->
-  <div class="section-title">🏃 昨日训练</div>
+  <div class="section-title">🏃 当日训练事实</div>
   <div id="trainingArea"></div>
 
-  <!-- Load -->
-  <div class="section-title">📈 训练负荷</div>
-  <div class="load-card">
+  <details class="report-evidence">
+    <summary>查看数据依据：恢复、负荷与教练观察</summary>
+    <div class="report-evidence-body">
+      <div class="hero-grid">
+        <div class="hero-card"><div class="hero-value sleep" id="heroSleep">—<span>h</span></div><div class="hero-label">睡眠</div><div class="hero-sub" id="heroSleepQuality">—</div></div>
+        <div class="hero-card"><div class="hero-value recovery" id="heroRecovery">—<span>/100</span></div><div class="hero-label">恢复评分</div><div class="hero-sub" id="heroRecoveryLevel">—</div></div>
+        <div class="hero-card"><div class="hero-value readiness" id="heroReadiness">—</div><div class="hero-label">训练准备</div><div class="hero-sub" id="heroReadinessLevel">—</div></div>
+      </div>
+      <div class="metric-strip">
+        <div class="metric-item"><div class="metric-val hrv" id="metHrv">—</div><div class="metric-lbl">HRV ms</div></div>
+        <div class="metric-item"><div class="metric-val rhr" id="metRhr">—</div><div class="metric-lbl">静息心率</div></div>
+        <div class="metric-item"><div class="metric-val bb" id="metBb">—</div><div class="metric-lbl">身体电量</div></div>
+        <div class="metric-item"><div class="metric-val stress" id="metStress">—</div><div class="metric-lbl">压力</div></div>
+      </div>
+      <div class="section-title">📈 训练负荷</div>
+      <div class="load-card">
     <div class="load-header">
       <h3>负荷与恢复</h3>
       <div class="load-score" id="loadAcwr">—</div>
@@ -308,7 +296,9 @@ button{-webkit-tap-highlight-color:transparent;touch-action:manipulation}
       <div class="load-stat"><div class="val" id="loadAcute">—</div><div class="lbl">急性负荷</div></div>
       <div class="load-stat"><div class="val" id="loadStatus">—</div><div class="lbl">状态</div></div>
     </div>
-  </div>
+      </div>
+    </div>
+  </details>
 
     <div class="footer">Built with <span>neurun</span></div>
   </main>
@@ -317,7 +307,7 @@ button{-webkit-tap-highlight-color:transparent;touch-action:manipulation}
   <div class="empty-state" id="emptyState" style="display:none">
     <div class="icon">📡</div>
     <h2>暂无数据</h2>
-    <p>先同步数据，再前往「日报」页选择日期生成。</p>
+    <p>先同步数据，再前往「报告」页选择日期生成。</p>
   </div>
 </div>
 
@@ -325,6 +315,7 @@ button{-webkit-tap-highlight-color:transparent;touch-action:manipulation}
 
 <script>
 function $(id){return document.getElementById(id)}
+function esc(v){return String(v==null?'':v).replace(/[&<>"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]})}
 var currentReport=null;
 
 // ── Theme ──
@@ -345,6 +336,7 @@ function setTheme(t){
 // ── Render ──
 function render(d){
   currentReport=d&&d.has_data?d:null;
+  var report=currentReport||{};
   $('loading').style.display='none';
   $('dashboard').style.display='block';
   $('reportContent').style.display=currentReport?'block':'none';
@@ -357,57 +349,77 @@ function render(d){
     return;
   }
   $('reportDateLabel').textContent=(d.report_date||'最新')+' · 训练与恢复概览';
+  var quality=report.data_readiness||'unknown',qualityBanner=$('qualityBanner');
+  if(quality==='complete'){qualityBanner.hidden=true}
+  else{qualityBanner.hidden=false;qualityBanner.textContent=quality==='limited'?'这是一份数据不完整的受限报告，部分结论已省略。':'这份旧报告没有数据完整性快照，可信范围未知。'}
 
-  // Plan context
-  var pc=d.plan_context||{};
-  if(pc.exists){
-    $('planStrip').style.display='grid';
-    $('planPhase').textContent=pc.phase||'—';
-    $('planWeek').textContent=pc.weeks_to_race||'—';
-    $('planTarget').textContent=(pc.weekly_km_target||'—')+' km';
-    $('planNote').textContent='📋 大纲已生效';
-  }else{
-    $('planStrip').style.display='none';
-  }
+  var execution=d.plan_execution_summary||{},executionArea=$('planExecutionSummary');
+  if(execution.headline){
+    var executionGoal=execution.goal||{},executionWeek=execution.week||{},executionPlanned=execution.planned||{},executionActual=execution.actual||{};
+    var meta=[];
+    if(executionGoal.name)meta.push('<span>'+esc(executionGoal.name)+(executionGoal.target_date?' · '+esc(executionGoal.target_date):'')+'</span>');
+    if(executionGoal.days_to_goal!=null)meta.push('<span>'+(executionGoal.days_to_goal>=0?'距目标 '+esc(executionGoal.days_to_goal)+' 天':'目标日已过')+'</span>');
+    if(execution.phase&&execution.phase.name)meta.push('<span>'+esc(execution.phase.name)+'</span>');
+    if(executionWeek.target_km!=null)meta.push('<span>本周已记录 '+esc(executionWeek.recorded_km||0)+' / '+esc(executionWeek.target_km)+' km</span>');
+    if(executionPlanned.title)meta.push('<span>计划：'+esc(executionPlanned.title)+'</span>');
+    if(executionActual.summary)meta.push('<span>实际：'+esc(executionActual.summary)+'</span>');
+    var comparison=execution.comparison||{},prescription=executionPlanned.training_prescription||{},prescriptionTargets=prescription.targets||{},feel=prescriptionTargets.feel||{};
+    if(comparison.target!=null)meta.push('<span>'+esc(comparison.primary_metric||'目标')+' '+esc(comparison.actual==null?'—':comparison.actual)+' / '+esc(comparison.target)+'</span>');
+    if(feel.label)meta.push('<span>强度：'+esc(feel.label)+'</span>');
+    var prescriptionHtml='';
+    if((prescription.blocks||[]).length){var criteria=prescription.completion_criteria||[],criteriaItems=Array.isArray(criteria)?criteria:[criteria.minimum_completed_repetitions?'最低完成 '+criteria.minimum_completed_repetitions+' 组':'',criteria.quality_rule||''].filter(Boolean),structure=comparison.planned_structure||prescription.blocks.map(function(block){return (({warmup:'热身',main:'主体',recovery:'恢复段',cooldown:'放松'})[block.role]||block.role)+'：'+(block.duration_minutes?block.duration_minutes+' 分钟 · ':'')+(block.instruction||'按处方完成')}).join('；');prescriptionHtml='<div class="plan-exec-card"><div class="pe-row"><span class="pe-label">课程结构</span><span class="pe-val">'+esc(structure)+'</span></div><div class="pe-row"><span class="pe-label">完成要求</span><span class="pe-val">'+criteriaItems.map(esc).join('；')+'</span></div></div>'}
+    var action=execution.sync_url?'<a class="btn primary" href="'+esc(execution.sync_url)+'">补齐同步数据</a>':'<a class="btn" href="'+esc(execution.training_url||'/training')+'">查看训练安排</a>';
+    var advice=execution.guidance?'<p class="plan-execution-guidance">调整建议：'+esc(execution.guidance)+'</p>':'';
+    var cautions=(execution.caution||[]).map(function(item){return '<li>'+esc(item)+'</li>'}).join('');
+    if(cautions)advice+='<ul class="plan-execution-guidance">'+cautions+'</ul>';
+    executionArea.innerHTML='<h2>🎯 计划执行与目标进展</h2><p>'+esc(execution.headline)+'</p><div class="plan-execution-meta">'+meta.join('')+'</div>'+prescriptionHtml+advice+action;
+    executionArea.hidden=false;
+  }else{executionArea.hidden=true;executionArea.replaceChildren()}
 
   var sl=d.last_night_sleep||{}, rc=d.recovery||{}, mo=d.this_morning||{};
-  var ya=d.yesterday_activities||{}, ld=d.training_load||{}, ai=d.ai_insight||{};
+  var ya=d.daily_activities||d.yesterday_activities||{}, ld=d.training_load||{}, ai=d.ai_insight||{};
 
-  // ── AI Insight (置顶) ──
-  var aiHtml='';
-  if(ai.conclusion){
-    aiHtml+='<div class="section-title" style="margin-top:0">🤖 AI 教练洞察</div>';
-    var pe=ai.plan_execution||{};
-    if(pe.today_planned){
-      var mc=pe.today_match==='完全执行'?'var(--performance)':pe.today_match==='部分执行'?'var(--warning)':'var(--danger)';
-      aiHtml+='<div class="plan-exec-card">';
-      aiHtml+='<div class="pe-row"><span class="pe-label">大纲要求</span><span class="pe-val">'+pe.today_planned+'</span></div>';
-      aiHtml+='<div class="pe-row"><span class="pe-label">实际执行</span><span class="pe-val">'+pe.today_actual+'</span></div>';
-      aiHtml+='<div class="pe-row"><span class="pe-label">执行状态</span><span class="pe-val" style="color:'+mc+'">'+pe.today_match+'</span></div>';
-      if(pe.week_completion)aiHtml+='<div class="pe-row"><span class="pe-label">本周完成</span><span class="pe-val">'+pe.week_completion+'</span></div>';
-      if(pe.deviation_note)aiHtml+='<div class="pe-row"><span class="pe-label">偏离说明</span><span class="pe-val">'+pe.deviation_note+'</span></div>';
-      aiHtml+='</div>';
-    }
-    aiHtml+='<div class="ai-section">';
-    aiHtml+='<div class="ai-conclusion">'+ai.conclusion+'</div>';
-    (ai.observations||[]).forEach(function(o){aiHtml+='<div class="ai-block"><ul><li>'+o+'</li></ul></div>'});
-    if(ai.model)aiHtml+='<div class="ai-model">模型: '+ai.model+(ai.plan_adjusted?' | 大纲已调整':'')+'</div>';
-    aiHtml+='</div>';
-  }
-  $('aiArea').innerHTML=aiHtml;
+  var conclusion=$('todayConclusion'),conclusionText=ai.conclusion||execution.headline||'当日事实已整理，可结合训练安排决定下一步。';
+  // ── 今日结论 = 结论 + 教练观察四块话语（不再单独占区块，避免重复强调） ──
+  var aiObs=(ai.observations||[]).filter(function(o){return o.indexOf('训练结构识别')!==0});
+  var conclusionHtml='<h2>今天对计划意味着什么</h2><p class="ai-conclusion">'+esc(conclusionText)+'</p>';
+  if(aiObs.length){conclusionHtml+='<div class="observation-list">'+aiObs.map(function(o){return '<div class="ai-block"><ul><li>'+esc(o)+'</li></ul></div>'}).join('')+'</div>';}
+  if(ai.model)conclusionHtml+='<div class="ai-model">模型: '+ai.model+(ai.plan_adjusted?' | 已生成训练调整建议':'')+'</div>';
+  conclusion.innerHTML=conclusionHtml;
+  conclusion.hidden=false;
 
-  // ── Hero ──
-  $('heroSleep').innerHTML=(sl.total_hours||'—')+'<span>h</span>';
-  $('heroSleepQuality').textContent=sl.quality||'—';
-  $('heroRecovery').innerHTML=(rc.overall_score||'—')+'<span>/100</span>';
-  $('heroRecoveryLevel').textContent=rc.level||'—';
-  $('heroReadiness').textContent=mo.training_readiness_score||'—';
-  $('heroReadinessLevel').textContent=mo.training_readiness_level||'—';
+  // ── Hero（睡眠 / 恢复评分 / 训练准备）──
+  // 没有数据的模块直接隐藏卡片，避免出现只有“—”的空白块；
+  // 整组都无数据时隐藏整块区域，受限报告由顶部质量横幅说明省略项。
+  var hasVal=function(v){return v!==null&&v!==undefined&&String(v).trim()!==''&&String(v)!=='—'};
+  var sleepOk=hasVal(sl.total_hours),recoveryOk=hasVal(rc.overall_score),readinessOk=hasVal(mo.training_readiness_score);
+  $('heroSleep').innerHTML=sleepOk?(sl.total_hours)+'<span>h</span>':'—';
+  $('heroSleepQuality').textContent=sleepOk?(sl.quality||'—'):'暂无数据';
+  $('heroRecovery').innerHTML=recoveryOk?(rc.overall_score)+'<span>/100</span>':'—';
+  $('heroRecoveryLevel').textContent=recoveryOk?(rc.level||'—'):'暂无数据';
+  $('heroReadiness').textContent=readinessOk?mo.training_readiness_score:'—';
+  $('heroReadinessLevel').textContent=readinessOk?(mo.training_readiness_level||'—'):'暂无数据';
+  var heroGrid=$('heroSleep').closest('.hero-grid');
+  [['heroSleep',sleepOk],['heroRecovery',recoveryOk],['heroReadiness',readinessOk]].forEach(function(pair){
+    $(pair[0]).closest('.hero-card').style.display=pair[1]?'':'none';
+  });
+  var anyHero=sleepOk||recoveryOk||readinessOk;
+  if(heroGrid){var visibleCount=[sleepOk,recoveryOk,readinessOk].filter(Boolean).length;heroGrid.style.setProperty('--visible-count',String(visibleCount));}
+  if(!anyHero&&heroGrid)heroGrid.style.display='none';
 
-  $('metHrv').textContent=mo.hrv_ms||'—';
-  $('metRhr').textContent=mo.resting_hr||'—';
-  $('metBb').textContent=mo.body_battery_morning!=null?mo.body_battery_morning:'—';
-  $('metStress').textContent=mo.avg_stress||'—';
+  // ── 指标条（HRV / 静息心率 / 身体电量 / 压力）──
+  var hrvOk=hasVal(mo.hrv_ms),rhrOk=hasVal(mo.resting_hr),bbOk=hasVal(mo.body_battery_morning),stressOk=hasVal(mo.avg_stress);
+  $('metHrv').textContent=hrvOk?mo.hrv_ms:'暂无数据';
+  $('metRhr').textContent=rhrOk?mo.resting_hr:'暂无数据';
+  $('metBb').textContent=bbOk?mo.body_battery_morning:'暂无数据';
+  $('metStress').textContent=stressOk?mo.avg_stress:'暂无数据';
+  var metricStrip=$('metHrv').closest('.metric-strip');
+  [['metHrv',hrvOk],['metRhr',rhrOk],['metBb',bbOk],['metStress',stressOk]].forEach(function(pair){
+    $(pair[0]).closest('.metric-item').style.display=pair[1]?'':'none';
+  });
+  var anyMetric=hrvOk||rhrOk||bbOk||stressOk;
+  if(metricStrip){var visibleCount=[hrvOk,rhrOk,bbOk,stressOk].filter(Boolean).length;metricStrip.style.setProperty('--visible-count',String(visibleCount));}
+  if(!anyMetric&&metricStrip)metricStrip.style.display='none';
 
   // Training
   var t='';
@@ -446,11 +458,86 @@ function render(d){
   }
   $('trainingArea').innerHTML=t;
 
-  // Load
-  $('loadAcwr').textContent=ld.acwr||'—';
-  $('loadChronic').textContent=ld.chronic_load||'—';
-  $('loadAcute').textContent=ld.acute_load||'—';
-  $('loadStatus').textContent=ld.acwr_status||'—';
+
+// ── 训练深度分析（整体水平 / 强度分布 / 配速节奏 / 结构判定） ──
+function _paceText(sec){if(!sec)return '—';var m=Math.floor(sec/60),s=Math.round(sec%60);if(s===60){m++;s=0}return m+"'"+String(s).padStart(2,'0')+'\"';}
+function _durText(sec){if(!sec)return '—';var h=Math.floor(sec/3600),m=Math.floor(sec%3600/60);return h?h+'h'+String(m).padStart(2,'0')+'min':m+'min';}
+function _marathonEst(sec){if(!sec)return '';var total=sec*42.195,h=Math.floor(total/3600),m=Math.floor(total%3600/60),s=Math.round(total%60);if(s===60){m++;s=0}if(m===60){h++;m=0}return h+':'+String(m).padStart(2,'0')+':'+String(s).padStart(2,'0');}
+function _bandLabel(key,isPace){var low,high;if(key.indexOf('-inf')===0){low=null;high=parseFloat(key.slice(5));}else{var sp=key.split('-');low=parseFloat(sp[0]);high=sp[1]==='inf'?null:parseFloat(sp[1]);}
+  var fmt=isPace?_paceText:String;if(low===null)return '<'+fmt(high);if(high===null)return '>'+fmt(low);return fmt(low)+'–'+fmt(high);}
+function _deepBandHtml(bands,isPace){if(!bands)return '';return Object.keys(bands).sort(function(a,b){var al=parseFloat(a.split('-')[0])||0,bl=parseFloat(b.split('-')[0])||0;return al-bl}).map(function(k){return _bandLabel(k,isPace)+': '+bands[k]+'%'}).join(' · ');}
+function _bandLabel(key,isPace){var low,high;if(key.indexOf('-inf')===0){low=null;high=parseFloat(key.slice(5));}else{var sp=key.split('-');low=parseFloat(sp[0]);high=sp[1]==='inf'?null:parseFloat(sp[1]);}
+  var fmt=isPace?_paceText:String;if(low===null)return '<'+fmt(high);if(high===null)return '>'+fmt(low);return fmt(low)+'–'+fmt(high);}
+function _topBand(bands,isPace){if(!bands)return '';var best=null,label='';Object.keys(bands).forEach(function(k){if(!best||bands[k]>bands[best]){best=k;label=_bandLabel(k,isPace);}});return best?(label+'（'+bands[best]+'%占比）'):'';}
+function _bandOrder(bands,isPace){if(!bands)return '';return Object.keys(bands).sort(function(a,b){var al=parseFloat(a.split('-')[0])||0,bl=parseFloat(b.split('-')[0])||0;return al-bl}).map(function(k){return _bandLabel(k,isPace)+' '+bands[k]+'%'}).join('，');}
+function deepAnalysisHtml(analyses){
+  if(!analyses||!analyses.length)return '';
+  var paras=[];
+  analyses.forEach(function(a){
+    var ss=a.session_summary||{},vol=ss.volume||{},eff=ss.effect||{},elev=ss.elevation_profile||{};
+    var pp=ss.pace_profile||{},st=ss.structure||{};
+    var clf=a.structure_classification||{},inten=ss.intensity||{};
+    var dist=(vol.distance_m||0)/1000,dur=vol.duration_s||0,elapsed=vol.elapsed_duration_s;
+    var durT=_durText(dur);
+    if(elapsed&&elapsed>dur+5)durT+='（总 '+_durText(elapsed)+'，含暂停）';
+    else if(elapsed&&Math.abs(elapsed-dur)<=5)durT+='（无暂停）';
+    // ① 整体水平
+    var s1=dist.toFixed(2)+' km 用时 '+durT+'，平均配速 '+_paceText(pp.avg_pace_sec_per_km)+'/km';
+    if(pp.avg_pace_sec_per_km){var m=_marathonEst(pp.avg_pace_sec_per_km);if(m)s1+='（折全马约 '+m+'）';}
+    if(pp.fastest_pace_sec_per_km)s1+='，最快 '+_paceText(pp.fastest_pace_sec_per_km)+'/km';
+    if(elev.ascent_m!=null||elev.descent_m!=null){s1+='，累计爬升 '+(elev.ascent_m||0)+'m / 下降 '+(elev.descent_m||0)+'m';if(elev.max_elevation_m!=null&&elev.min_elevation_m!=null)s1+='（海拔 '+elev.min_elevation_m+'~'+elev.max_elevation_m+'m）';}
+    if(st.avg_cadence){s1+='。步频 '+Math.round(st.avg_cadence)+' spm'+(st.max_cadence?'（最大 '+Math.round(st.max_cadence)+'）':'')+'，步幅 '+Math.round(st.avg_stride||0)+'cm';}
+    if(vol.calories!=null){var te=eff.aerobic_training_effect!=null?('有氧 '+Number(eff.aerobic_training_effect).toFixed(1)+(eff.estimated?'（估算）':'')+'/'+(eff.anaerobic_training_effect!=null?'无氧 '+Number(eff.anaerobic_training_effect).toFixed(1):'')):'';s1+='。热量 '+Math.round(vol.calories)+' kcal'+(te?'，训练效果 '+te:'');}
+    if(s1[s1.length-1]!=='。')s1+='。';
+    paras.push(s1);
+    // ② 结构 + 强度
+    if(clf.structure_type&&clf.structure_type!=='unknown'){
+      var s2='本课识别为'+esc(clf.label||clf.structure_type);
+      if(clf.alternations)s2+='（'+clf.alternations+' 组快慢交替'+(clf.confidence!=null?('，置信 '+Math.round(clf.confidence*100)+'%'):'')+'）';
+      var groups=clf.work_recovery_groups||[];
+      if(groups.length){var gtxt=groups.map(function(g){return '第'+g.group+'组 '+_paceText(g.work_pace_sec_per_km)+'→'+_paceText(g.recovery_pace_sec_per_km)}).join('，');s2+='：'+gtxt;}
+      s2+='。';
+      if(clf.quantity_reliable===false)s2+='（分段距离/时长与总量偏差，仅强度模式有效）';
+      if(inten.pace_bands_pct)s2+='强度上以'+_topBand(inten.pace_bands_pct,true)+'的配速为主';
+      if(inten.hr_bands_pct)s2+='，心率集中在'+_topBand(inten.hr_bands_pct,false)+'。';
+      paras.push(s2);
+    }
+    // ③ 节奏 + 疲劳
+    var s3='';
+    if(pp.half_pace_diff_s!=null){s3+='后半程比前半程'+(pp.half_pace_diff_s>0?'慢 ':'快 ')+_paceText(Math.abs(pp.half_pace_diff_s))+'/km';}
+    if(pp.cv_pct!=null){var stab=pp.cv_pct<8?'配速控制力强':pp.cv_pct<15?'配速有一定波动':'配速波动明显';s3+=(s3?'，':'')+stab+'（CV '+pp.cv_pct+'%）';}
+    if(s3)s3+='。';
+    var fatigue=clf.fatigue_signal||{};
+    if(fatigue.detected)s3+='存在疲劳信号：'+esc(fatigue.note||'');
+    if(s3)paras.push(s3);
+  });
+  return paras;
+}
+  // Load（负荷与恢复）：急性/慢性负荷都为 0 或缺失时不展示，避免无效 ACWR 空白块
+  var loadHas=Number(ld.acute_load_7d)>0||Number(ld.chronic_load_28d)>0;
+  $('loadAcwr').textContent=loadHas&&hasVal(ld.acwr)?ld.acwr:'—';
+  $('loadChronic').textContent=loadHas&&hasVal(ld.chronic_load_28d)?ld.chronic_load_28d:'—';
+  $('loadAcute').textContent=loadHas&&hasVal(ld.acute_load_7d)?ld.acute_load_7d:'—';
+  $('loadStatus').textContent=loadHas&&hasVal(ld.acwr_status)?ld.acwr_status:'—';
+  var loadCard=document.querySelector('.load-card'),loadTitle=loadCard?loadCard.previousElementSibling:null;
+  if(!loadHas){
+    if(loadCard)loadCard.style.display='none';
+    if(loadTitle&&loadTitle.classList&&loadTitle.classList.contains('section-title'))loadTitle.style.display='none';
+  }
+
+  // 依据折叠区整体为空时收拢为一行说明，避免大片空白区域
+  var evidenceBody=document.querySelector('.report-evidence-body');
+  if(evidenceBody){
+    var evidenceGroups=evidenceBody.querySelectorAll('.hero-grid,.metric-strip,.load-card'),anyEvidence=false;
+    evidenceGroups.forEach(function(el){if(el.style.display!=='none')anyEvidence=true});
+    if(!anyEvidence){
+      var evidence=evidenceBody.parentElement;
+      if(evidence){
+        var evidenceSummary=evidence.querySelector('summary');
+        if(evidenceSummary)evidenceSummary.textContent='查看数据依据：当日睡眠、恢复与负荷数据暂缺（受限版）';
+      }
+    }
+  }
 
 }
 
@@ -504,7 +591,7 @@ function buildReportCanvas(report){
   var colors=reportPalette();
   var font='-apple-system,BlinkMacSystemFont,"PingFang SC","Microsoft YaHei",sans-serif';
   var measure=document.createElement('canvas').getContext('2d');
-  var ai=report.ai_insight||{},ya=report.yesterday_activities||{};
+  var ai=report.ai_insight||{},ya=report.daily_activities||report.yesterday_activities||{};
   measure.font='500 22px '+font;
   var insightLines=wrapCanvasText(measure,ai.conclusion||'',inner-40);
   measure.font='400 18px '+font;
@@ -528,7 +615,7 @@ function buildReportCanvas(report){
 
   var y=38;
   ctx.font='800 13px '+font;ctx.fillStyle=colors.accent;ctx.fillText('NEURUN DAILY',pad,y);
-  ctx.font='800 34px '+font;ctx.fillStyle=colors.text;ctx.fillText('训练日报',pad,y+42);
+  ctx.font='800 34px '+font;ctx.fillStyle=colors.text;ctx.fillText('当日训练',pad,y+42);
   ctx.font='500 16px '+font;ctx.textAlign='right';ctx.fillStyle=colors.secondary;ctx.fillText(report.report_date||'最新日报',width-pad,y+37);ctx.textAlign='left';
   y=105;
 

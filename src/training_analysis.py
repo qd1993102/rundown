@@ -139,39 +139,56 @@ class AthleteBaselineBuilder:
         if len(eligible) < 3:
             eligible = [activity for _, activity in candidates]
 
-        paces = []
-        heart_rates = []
-        for activity in eligible:
-            duration = _first_number(activity, "duration_seconds", "duration") or 0
-            distance = _first_number(activity, "distance_meters", "distance") or 0
-            pace = duration / (distance / 1000) if distance > 0 else None
-            if pace and 120 <= pace <= 900:
-                paces.append(pace)
-            hr = _first_number(activity, "avg_heart_rate", "average_hr")
-            if hr and 70 <= hr <= 230:
-                heart_rates.append(hr)
-
+        # 个人阈值只来自档案：显式阈值心率/配速优先，其次由最大心率（可选叠加
+        # 静息心率，Karvonen 公式，LT2≈88% 心率储备）推导；两者都没有时不得用
+        # 近期训练平均心率/配速分位猜测——训练构成（大量轻松跑）会拉低基准，
+        # 导致同一心率被高估为“阈值贴边”。
         profile = profile or {}
+        personal = profile.get("personal_info") or {}
+        personal_bests = profile.get("personal_bests") or {}
         profile_pace = _first_number(
             profile, "threshold_pace_sec_per_km", "lactate_threshold_pace"
         )
         profile_hr = _first_number(
             profile, "threshold_heart_rate", "lactate_threshold_heart_rate"
         )
+        profile_max_hr = _first_number(
+            personal, "max_heart_rate", "maximum_heart_rate", "hr_max", "max_hr"
+        )
+        profile_rest_hr = _first_number(
+            personal, "resting_heart_rate", "rest_hr", "resting_hr"
+        )
 
-        threshold_pace = profile_pace or _percentile(paces, 0.25)
-        threshold_hr = profile_hr or _percentile(heart_rates, 0.85)
+        threshold_pace = profile_pace
+        if profile_hr:
+            threshold_hr = profile_hr
+        elif profile_max_hr and profile_rest_hr:
+            threshold_hr = round(
+                profile_rest_hr + 0.88 * (profile_max_hr - profile_rest_hr)
+            )
+        elif profile_max_hr:
+            threshold_hr = round(profile_max_hr * 0.88)
+        else:
+            threshold_hr = None
+
+        # PB 兜底锚点：无显式阈值配速但档案填过 PB 时，用 PB 推导阈值配速
+        # （半马配速最接近阈值，10K/5K 按经验差折算）。经验折算可靠度低于实测，
+        # 通过 source 标记区分，不参与心率锚点的混算。
+        source = "profile" if (threshold_pace or threshold_hr) else "unavailable"
+        if not threshold_pace and personal_bests:
+            from .training_pace import _derive_threshold_pace
+            derived_pace = _derive_threshold_pace(personal_bests)
+            if derived_pace:
+                threshold_pace = derived_pace
+                source = "personal_bests"
         sample_count = len(eligible)
-        sufficient = sample_count >= 3 and bool(threshold_pace or threshold_hr)
-        source = "profile" if profile_pace or profile_hr else "recent_activities"
-        if not threshold_pace and not threshold_hr:
-            source = "unavailable"
+        sufficient = bool(threshold_pace or threshold_hr)
 
         return AthleteBaseline(
             threshold_pace_sec_per_km=(
                 round(threshold_pace, 1) if threshold_pace else None
             ),
-            threshold_heart_rate=(round(threshold_hr) if threshold_hr else None),
+            threshold_heart_rate=threshold_hr,
             sample_count=sample_count,
             status="sufficient" if sufficient else "insufficient",
             source=source,
@@ -417,6 +434,9 @@ class TrainingSessionAnalyzer:
             intensity_evidence = (
                 f"平均配速强度为个人阈值配速的 {intensity:.0%}"
             )
+        elif facts.avg_hr or facts.avg_pace_sec_per_km:
+            # 无个人阈值：不猜测强度，明确标注评估不可用，避免“阈值贴边”类误导。
+            intensity_evidence = "缺少个人阈值心率/配速，强度评估不可用"
 
         if (
             facts.duration_sec >= self.policy.min_running_duration_sec
@@ -441,6 +461,9 @@ class TrainingSessionAnalyzer:
         if any(token in name for token in ("有氧", "轻松", "easy")):
             return "aerobic", 0.56, ["活动名称提示有氧跑，但个人强度证据不足"]
 
+        if intensity_evidence:
+            # 有平均心率/配速但无个人阈值（或未落入既有强度带）：如实说明评估不可用
+            return "unknown", 0.35, [intensity_evidence]
         return "unknown", 0.35, ["缺少足够分段或个人强度证据，保守返回未知"]
 
     @staticmethod
@@ -696,7 +719,8 @@ def get_latest_training_analysis(
         row = session.execute(text("""
             SELECT analysis_id, algorithm_version, primary_type, terrain,
                    confidence, specialties_json, evidence_json,
-                   data_quality_json, implications_json, analyzed_at
+                   data_quality_json, implications_json, analyzed_at,
+                   features_json
             FROM activity_analyses
             WHERE user_id = :user_id AND activity_id = :activity_id
             ORDER BY analyzed_at DESC, rowid DESC
@@ -723,6 +747,7 @@ def get_latest_training_analysis(
         "data_quality": json.loads(row[7]),
         "training_implications": json.loads(row[8]),
         "analyzed_at": str(row[9]),
+        "features": json.loads(row[10]),
     }
     if override:
         result["automatic_primary_type"] = result["primary_type"]

@@ -19,7 +19,7 @@
 | **Phase 9** | 记忆 CLI：memory 子命令（list / show / summarize / goal / plan / case / profile / check / index） | P0 |
 | **Phase 9.5** | HTML 日报渲染：render.py — Markdown + YAML → 静态 HTML，绿黑色风格，output/YYYY-MM-DD.html | P0 |
 | **Phase 10** | MCP Server 核心：mcp 子命令，Resources 暴露（daily/latest、context/full）、Tools 暴露（查询+分析） | P0 |
-| **Phase 11** | AI 教练对话：对话上下文注入、System Prompt 模板、AI 可写入洞察（add_coaching_insight）、OpenClaw 配置生成 | P0 |
+| **Phase 11** | AI 教练集成：显式 Coach Skill、结构化 JSON 输出、MCP 事实与工具接口、OpenClaw 配置 | P0 |
 | **Phase 12** | 记忆模板：各类型记忆的 Markdown 模板，`memory goal create` / `memory plan create` 交互式问答 | P1 |
 | **Phase 13** | 导出功能：exporter.py，CSV / JSON 导出 | P1 |
 | **Phase 14** | 定时任务：cron/launchd 配置模板，每日自动 sync + 生成日报 | P1 |

@@ -4,7 +4,7 @@ import asyncio
 import json
 import threading
 import time
-from datetime import date
+from datetime import date, timedelta
 from pathlib import Path
 from types import SimpleNamespace
 from unittest import mock
@@ -285,6 +285,20 @@ def test_authenticated_page_attributes_rum_to_pseudonymous_account(tmp_path):
     assert user.api_key not in html
     assert user.email not in html
     assert user.nickname not in html
+
+
+def test_web_routes_expose_dashboard_but_no_generic_chat_endpoint(tmp_path):
+    manager, user = _active_user(tmp_path)
+    server = _FakeServer()
+    register_web_routes(server, manager, Config(data_dir=str(tmp_path)))
+
+    response = asyncio.run(server.routes[("/", "GET")](_request(
+        "/", {}, user.api_key, method="GET",
+    )))
+
+    assert response.status_code == 200
+    assert 'id="todayConclusion"' in response.body.decode()
+    assert ("/api/chat/stream", "POST") not in server.routes
 
 
 def test_legacy_coros_token_migrates_only_for_single_active_user(tmp_path):
@@ -714,7 +728,7 @@ def test_sync_template_contains_accessible_calendar_contract():
 def test_daily_templates_are_mobile_first_and_support_local_png_export():
     from pathlib import Path
 
-    dashboard = Path("web/templates/chat.html").read_text(encoding="utf-8")
+    dashboard = Path("web/templates/dashboard.html").read_text(encoding="utf-8")
     reports = Path("web/templates/reports.html").read_text(encoding="utf-8")
 
     assert 'id="saveImageBtn"' in dashboard
@@ -725,13 +739,163 @@ def test_daily_templates_are_mobile_first_and_support_local_png_export():
     assert "navigator.canShare" in dashboard
     assert "navigator.share" in dashboard
     assert "URL.createObjectURL" in dashboard
-    assert "$('planStrip').style.display='grid'" in dashboard
+    assert 'id="qualityBanner"' in dashboard
+    assert "report.data_readiness" in dashboard
+    assert 'id="todayConclusion"' in dashboard
+    assert 'class="report-evidence"' in dashboard
+    assert "style.setProperty('--visible-count',String(visibleCount))" in dashboard
+    assert "repeat(var(--visible-count,3),minmax(0,1fr))" in dashboard
+    assert "repeat(min(var(--visible-count,2),2),minmax(0,1fr))" in dashboard
+    assert "今天对计划意味着什么" in dashboard
     assert "@media(min-width:641px)" in dashboard
     assert "min-height:44px" in dashboard
+    assert "🏃 当日训练" in dashboard
+    assert "ctx.fillText('当日训练'" in dashboard
+    assert "d.daily_activities||d.yesterday_activities" in dashboard
+    assert 'id="planExecutionSummary"' in dashboard
+    assert "plan_execution_summary" in dashboard
+    assert "execution.comparison" in dashboard
+    assert "课程结构" in dashboard
+    assert "调整建议：" in dashboard
+    assert "补齐同步数据" in dashboard
+    assert "🏃 昨日训练" not in dashboard
 
     assert "@media(min-width:641px)" in reports
     assert "min-height:44px" in reports
     assert 'aria-live="polite"' in reports
+    assert 'id="dailyStatus"' in reports
+    assert "/api/reports/readiness?date=" in reports
+    assert "genReport(\\'limited\\')" in reports
+    assert 'data-report-tab="daily"' in reports
+    assert 'data-report-tab="weekly"' in reports
+    assert 'data-report-tab="adjustments"' not in reports
+    assert "weekly_checkpoint" in reports
+    assert "#single-sync" in reports
+    assert "requestedDate=new URLSearchParams(location.search).get('date')" in reports
+    assert 'id="genDateLabel"' in reports
+    assert 'id="genDateHint"' in reports
+    assert 'id="weekDateLabel"' in reports
+    assert 'class="report-date-input"' in reports
+    assert "function shiftDailyDate(offset)" in reports
+    assert "function shiftWeekDate(offset)" in reports
+    assert "document.getElementById('genDate').max=todayStr" in reports
+    assert 'id="dailyPagination"' in reports
+    assert 'id="weeklyPagination"' in reports
+    assert "function renderPagination(kind,pagination)" in reports
+    assert "function loadReportPage(kind,page)" in reports
+    assert "/api/reports?" in reports
+    assert "/api/reports/weekly?" in reports
+    assert 'id="aiTaskStatus"' in reports
+    assert "/api/ai/tasks/current" in reports
+    assert "function refreshAIStatus()" in reports
+    assert "[hidden]{display:none!important}" in reports
+    assert ".weekly-review-details:not([open])>.weekly-review-body{display:none}" in reports
+    assert "质量课总结" in reports
+    assert "task.message" in reports
+    assert "未关联训练方案" in reports
+    assert "制定训练方案（可选）" in reports
+    assert "查看完整复盘" in reports
+    assert "近期变化" in reports
+    assert "恢复与风险" in reports
+    assert "下周行动" in reports
+    training = Path("web/templates/training.html").read_text(encoding="utf-8")
+    assert "function sessionBriefMarkup" in training
+    assert "sessionBriefMarkup(data.brief)" in training
+    assert "findingMarkup(data.brief)" not in training
+    assert "pace_result" in training
+    assert "recommendationExplanationMarkup(f.explanation)" in training
+    assert "explanation.sample_count" in training
+    assert "function timelineMarkup(timeline)" in training
+    assert "function prescriptionMarkup(session,compact=false)" in training
+    assert "训练处方" in training
+    assert "blockLabel" in training
+    assert "function stepsCompactSummary(steps)" in training
+    assert "function stepMarkup(step)" in training
+    assert "逐段处方 · Workout Steps v2" in training
+    assert "prescription-repeat" in training
+    assert "快 ${stepDoseLabel(work.dose)}" in training
+    assert "安排待修正" in training
+    assert "pacing_guard" in training
+    assert "pace_guidance" in training
+    assert "function recommendationExplanationMarkup" in training
+    assert 'class="recommendation-explanation"' in training
+    assert "为什么这样建议" in training
+    assert "为什么这样安排" in training
+    assert '<p class="why">${esc(session.reason)}</p>' not in training
+    assert '<p class="why">${esc(t?.reason' not in training
+    assert "intensityZoneLabel" in training
+    assert "Z2 轻松有氧" in training
+    assert "今日怎么跑" in training
+    assert "接下来三天" in training
+    assert "本周节奏" in training
+    assert "计划与数据" in training
+    assert "upcomingSessionPanel" in training
+    assert "data-session-detail" in training
+    assert "data-session-detail-panel" in training
+    assert "week-overview" in training
+    assert "secondary-info" in training
+    assert 'id="adjustmentPagination"' in training
+    assert "function loadAdjustmentRecords" in training
+    assert "/api/training/adjustments?page=" in training
+    assert "openWeekSessionDetail" in training
+    assert "weekSessionPanel" in training
+    assert "计划时间线" in training
+    assert "训练基础与数据状态" in training
+    assert "这是计划时间线" in training
+    assert "当前教练定位" not in training
+    assert "function modeBannerMarkup" not in training
+
+
+def test_training_pace_result_is_visible_and_reasons_are_expandable():
+    from pathlib import Path
+
+    training = Path("web/templates/training.html").read_text(encoding="utf-8")
+
+    assert "pace_guidance" in training
+    assert "pace_result" in training
+    assert "function recommendationExplanationMarkup" in training
+    assert '<details class="recommendation-explanation">' in training
+    assert "recommendationExplanationMarkup(f.explanation)" in training
+    assert "为什么这样建议" in training
+    assert "为什么这样安排" in training
+    assert '<p class="why">${esc(session.reason)}</p>' not in training
+    assert '<p class="why">${esc(t?.reason' not in training
+
+
+def test_report_sync_handoff_preserves_and_anchors_target_date():
+    from pathlib import Path
+
+    sync = Path("web/templates/sync.html").read_text(encoding="utf-8")
+
+    assert 'id="single-sync"' in sync
+    assert "requestedReportDate=new URLSearchParams(location.search).get('date')" in sync
+    assert "document.getElementById('singleDate').value=requestedReportDate||today" in sync
+    assert "initialCalendarDate=requestedReportDate" in sync
+    assert "function anchorRequestedSyncDate()" in sync
+    assert "anchorRequestedSyncDate();" in sync
+    assert "action.href='/reports?tab=daily'+(returnDate?'&date='" in sync
+    assert 'id="singleDateLabel"' in sync
+    assert 'id="singleDateHint"' in sync
+    assert 'class="date-input-label"' in sync
+    assert '日历中的选择会自动带到这里' in sync
+    assert "function shiftSingleDate(offset)" in sync
+    assert "function setSingleDateOffset(offset)" in sync
+    assert "document.getElementById('singleDate').max=today" in sync
+    assert "calendarDaysByDate" in sync
+
+
+def test_training_owns_goal_management_not_profile():
+    from pathlib import Path
+
+    training = Path("web/templates/training.html").read_text(encoding="utf-8")
+    profile = Path("web/templates/profile.html").read_text(encoding="utf-8")
+
+    assert "创建并使用这个目标" in training
+    assert "编辑当前目标" in training
+    assert "调整目标或重规划" in training
+    assert 'id="goalsList"' not in profile
+    assert "/api/goals" not in profile
+    assert "训练目标" not in profile
 
 
 def test_report_list_keeps_scores_on_the_summary_row_on_mobile():
@@ -753,7 +917,7 @@ def test_primary_navigation_uses_one_mobile_bottom_bar_contract():
 
     templates = {
         name: Path(f"web/templates/{name}.html").read_text(encoding="utf-8")
-        for name in ("sync", "chat", "reports", "profile")
+        for name in ("training", "sync", "dashboard", "reports", "profile")
     }
     nav_styles = []
     nav_markup = []
@@ -761,8 +925,9 @@ def test_primary_navigation_uses_one_mobile_bottom_bar_contract():
     for html in templates.values():
         assert 'class="app-nav"' in html
         assert 'aria-label="主要导航"' in html
-        assert html.count("data-nav-item") == 3
+        assert html.count("data-nav-item") == 4
         assert html.count('data-nav-item aria-current="page"') == 1
+        assert 'href="/training"' in html
         assert 'href="/sync"' in html
         assert 'href="/reports"' in html
         assert 'href="/profile"' in html
@@ -784,6 +949,346 @@ def test_primary_navigation_uses_one_mobile_bottom_bar_contract():
     assert len(set(nav_markup)) == 1
 
 
+def test_training_page_reuses_the_shared_three_theme_palette():
+    from pathlib import Path
+
+    templates = {
+        name: Path(f"web/templates/{name}.html").read_text(encoding="utf-8")
+        for name in ("training", "sync", "dashboard", "reports", "profile")
+    }
+    token_names = (
+        "--bg", "--bg-card", "--bg-subtle", "--text", "--text-secondary",
+        "--text-muted", "--accent", "--accent-glow", "--warning", "--danger",
+        "--border-subtle", "--card-shadow",
+    )
+
+    def tokens(html: str, theme: str) -> dict[str, str]:
+        start = html.index(f'[data-theme="{theme}"]')
+        block = html[start:html.index("}", start)]
+        return {
+            name: block.split(f"{name}:", 1)[1].split(";", 1)[0]
+            for name in token_names
+        }
+
+    for theme in ("fresh", "sport", "dark"):
+        expected = tokens(templates["sync"], theme)
+        assert tokens(templates["training"], theme) == expected
+
+
+def test_training_page_and_api_complete_confirmed_adjustment_flow(tmp_path):
+    manager, user = _active_user(tmp_path)
+    server = _FakeServer()
+    register_web_routes(server, manager, Config(data_dir=str(tmp_path)))
+
+    page = asyncio.run(server.routes[("/training", "GET")](
+        _request("/training", {}, user.api_key, method="GET")
+    ))
+    empty = asyncio.run(server.routes[("/api/training/home", "GET")](
+        _request("/api/training/home", {}, user.api_key, method="GET")
+    ))
+    assert page.status_code == 200
+    assert "今天练什么，一眼就知道" in page.body.decode()
+    assert "修改目标" in page.body.decode()
+    assert "修改训练基础" in page.body.decode()
+    assert "修改现实约束" in page.body.decode()
+    assert "还有什么需要教练知道" in page.body.decode()
+    assert "additional_context" in page.body.decode()
+    assert "生成草稿" in page.body.decode()
+    assert "更新方案草稿" in page.body.decode()
+    assert "读取并校验训练事实" in page.body.decode()
+    assert "neurun-training-draft-task" in page.body.decode()
+    assert "之前的草稿任务已失效，请重新生成。" in page.body.decode()
+    assert "error.status=r.status" in page.body.decode()
+    assert "zhPlan" in page.body.decode()
+    assert "fartlek" in page.body.decode()
+    assert "变速跑" in page.body.decode()
+    assert "建议从哪个阶段开始" in page.body.decode()
+    assert "当前切入点" in page.body.decode()
+    assert "方案周期" in page.body.decode()
+    assert "查看依据与不确定性" in page.body.decode()
+    assert "能力依据" in page.body.decode()
+    assert "负荷逻辑" in page.body.decode()
+    assert "周期逻辑" in page.body.decode()
+    assert "draftPaceLabel" in page.body.decode()
+    assert "点击课表中的课程" in page.body.decode()
+    assert "draft-session-details" in page.body.decode()
+    assert "setDraftFormBusy" in page.body.decode()
+    assert json.loads(empty.body)["has_active_plan"] is False
+
+    goal_response = asyncio.run(server.routes[("/api/goals", "POST")](
+        _request("/api/goals", {
+            "name": "半马跑进 100 分钟",
+            "distance": "hm",
+            "target_time": "01:40:00",
+            "target_date": "2026-11-15",
+        }, user.api_key)
+    ))
+    goal_id = json.loads(goal_response.body)["id"]
+    profile_with_goal = asyncio.run(server.routes[("/api/profile", "GET")](
+        _request("/api/profile", {}, user.api_key, method="GET")
+    ))
+    assert json.loads(profile_with_goal.body)["goals"][0]["goal_id"] == goal_id
+    async def create_and_wait():
+        created = await server.routes[("/api/training/plans", "POST")](_request(
+            "/api/training/plans", {
+            "goal_id": goal_id, "available_days": [1, 3, 5, 6],
+            "max_session_minutes": 100,
+            "additional_context": "本周出差两天，长距离尽量安排周末",
+            "request_id": "supplement-test-001",
+            }, user.api_key,
+        ))
+        task_id = json.loads(created.body)["task"]["task_id"]
+        for _ in range(50):
+            response = await server.routes[("/api/training/tasks/{task_id}", "GET")](_request(
+                f"/api/training/tasks/{task_id}", {}, user.api_key,
+                method="GET", path_params={"task_id": task_id},
+            ))
+            task = json.loads(response.body)["task"]
+            if task["state"] in {"succeeded", "failed"}:
+                return created, task
+            await asyncio.sleep(0.01)
+        return created, task
+    created, task = asyncio.run(create_and_wait())
+    assert created.status_code == 202
+    assert task["state"] == "succeeded"
+    pending_home = asyncio.run(server.routes[("/api/training/home", "GET")](
+        _request("/api/training/home", {}, user.api_key, method="GET")
+    ))
+    draft = json.loads(pending_home.body)["pending_scheme_draft"]
+    assert draft["generation_mode"] in {"skill", "deterministic_fallback"}
+    assert draft["inference_source"] in {"ai", "deterministic"}
+    assert draft["validation_status"] in {"passed", "repaired", "fallback"}
+    assert draft["decision_status"] in {
+        "ai_validated", "ai_repaired", "ai_risk_advisory", "deterministic_fallback",
+    }
+    assert draft["supplement"]["request_id"] == "supplement-test-001"
+    assert draft["supplement"]["char_count"] == len("本周出差两天，长距离尽量安排周末")
+    assert len(draft["periodization"]) >= 3
+    assert len(draft["first_four_weeks"]) == 4
+    assert len(draft["near_term_schedule"]) == 2
+    assert all(
+        workout.get("date")
+        for week in draft["near_term_schedule"]
+        for workout in week["workouts"]
+    )
+    async def update_and_wait():
+        updated = await server.routes[(
+            "/api/training/plans/{plan_id}", "PUT",
+        )](_request(
+            f"/api/training/plans/{draft['plan_id']}", {
+                "goal_id": goal_id, "available_days": [0, 2, 6],
+                "max_session_minutes": 80, "reported_weekly_mileage": 35,
+            }, user.api_key, method="PUT", path_params={"plan_id": draft["plan_id"]},
+        ))
+        task_id = json.loads(updated.body)["task"]["task_id"]
+        for _ in range(50):
+            response = await server.routes[("/api/training/tasks/{task_id}", "GET")](_request(
+                f"/api/training/tasks/{task_id}", {}, user.api_key,
+                method="GET", path_params={"task_id": task_id},
+            ))
+            task = json.loads(response.body)["task"]
+            if task["state"] in {"succeeded", "failed"}:
+                return updated, task
+            await asyncio.sleep(0.01)
+        return updated, task
+    updated, task = asyncio.run(update_and_wait())
+    assert updated.status_code == 202
+    assert task["state"] == "succeeded"
+    pending_home = asyncio.run(server.routes[("/api/training/home", "GET")](
+        _request("/api/training/home", {}, user.api_key, method="GET")
+    ))
+    updated_draft = json.loads(pending_home.body)["pending_scheme_draft"]
+    assert updated_draft["plan_id"] == draft["plan_id"]
+    assert updated_draft["weekly_mileage_target"] == 35
+    assert updated_draft["status"] == "draft"
+    activated = asyncio.run(server.routes[(
+        "/api/training/plans/{plan_id}/activate", "POST",
+    )](_request(
+        f"/api/training/plans/{updated_draft['plan_id']}/activate", {}, user.api_key,
+        path_params={"plan_id": updated_draft["plan_id"]},
+    )))
+    assert json.loads(activated.body)["scheme"]["version"] == 1
+
+    brief_response = asyncio.run(server.routes[(
+        "/api/training/session-brief", "GET",
+    )](_request(
+        "/api/training/session-brief", {}, user.api_key, method="GET",
+    )))
+    assert json.loads(brief_response.body)["brief"]["finding"]["recommendations"]
+
+    revision_response = asyncio.run(server.routes[(
+        "/api/training/scheme-revisions", "POST",
+    )](_request(
+        "/api/training/scheme-revisions", {
+            "trigger": "constraints_change",
+            "reason": "未来几周只能安排三个训练日",
+            "constraints": {"available_days": [1, 4, 6], "max_session_minutes": 80},
+        }, user.api_key,
+    )))
+    revision = json.loads(revision_response.body)["proposal"]
+    assert revision["scope"] == "scheme"
+    assert revision["status"] == "pending"
+
+    early_strategy = asyncio.run(server.routes[(
+        "/api/training/race-strategy", "POST",
+    )](_request(
+        "/api/training/race-strategy", {}, user.api_key,
+    )))
+    assert early_strategy.status_code == 409
+
+    feedback_response = asyncio.run(server.routes[(
+        "/api/training/feedback", "POST",
+    )](_request("/api/training/feedback", {
+        "feedback_type": "time_limited",
+        "target_date": str(date.today()),
+        "available_minutes": 25,
+    }, user.api_key)))
+    feedback = json.loads(feedback_response.body)["feedback"]
+    proposal_response = asyncio.run(server.routes[(
+        "/api/training/proposals", "POST",
+    )](_request("/api/training/proposals", {
+        "feedback_id": feedback["feedback_id"],
+    }, user.api_key)))
+    proposal = json.loads(proposal_response.body)["proposal"]
+
+    before = asyncio.run(server.routes[("/api/training/home", "GET")](
+        _request("/api/training/home", {}, user.api_key, method="GET")
+    ))
+    assert json.loads(before.body)["scheme"]["version"] == 1
+
+    approved = asyncio.run(server.routes[(
+        "/api/training/proposals/{proposal_id}/approve", "POST",
+    )](_request(
+        f"/api/training/proposals/{proposal['proposal_id']}/approve",
+        {"base_version": 1, "idempotency_key": "web-confirm-1"}, user.api_key,
+        path_params={"proposal_id": proposal["proposal_id"]},
+    )))
+    payload = json.loads(approved.body)
+    assert payload["scheme"]["version"] == 2
+    assert payload["proposal"]["status"] == "approved"
+
+
+def test_training_api_is_user_isolated_and_requires_active_session(tmp_path):
+    manager, first = _active_user(tmp_path)
+    second = manager.register_account("第二位", "second@example.com", "safe-password")
+    manager.update(second.api_key, token_status="active")
+    server = _FakeServer()
+    register_web_routes(server, manager, Config(data_dir=str(tmp_path)))
+
+    goal = asyncio.run(server.routes[("/api/goals", "POST")](
+        _request("/api/goals", {
+            "name": "第一位用户目标", "distance": "10k",
+            "target_date": "2026-11-01",
+        }, first.api_key)
+    ))
+    first_goal_id = json.loads(goal.body)["id"]
+    asyncio.run(server.routes[("/api/training/plans", "POST")](
+        _request("/api/training/plans", {
+            "goal_id": first_goal_id, "available_days": [1, 3, 6],
+            "max_session_minutes": 90,
+        }, first.api_key)
+    ))
+    first_home = asyncio.run(server.routes[("/api/training/home", "GET")](
+        _request("/api/training/home", {}, first.api_key, method="GET")
+    ))
+    second_home = asyncio.run(server.routes[("/api/training/home", "GET")](
+        _request("/api/training/home", {}, second.api_key, method="GET")
+    ))
+    anonymous = asyncio.run(server.routes[("/api/training/home", "GET")](
+        _request("/api/training/home", {}, "", method="GET")
+    ))
+
+    assert json.loads(first_home.body)["setup"]["active_goals"][0]["goal_id"] == first_goal_id
+    assert json.loads(second_home.body)["setup"]["active_goals"] == []
+    assert anonymous.status_code == 401
+
+
+def test_training_template_supports_320px_and_explicit_confirmation():
+    html = Path("web/templates/training.html").read_text(encoding="utf-8")
+
+    assert "min-width:320px" in html
+    assert "@media(max-width:360px)" in html
+    assert 'aria-live="polite"' in html
+    assert 'data-step="goal"' in html
+    assert 'data-step="baseline"' in html
+    assert 'data-step="constraints"' in html
+    assert 'data-step="review"' in html
+    assert 'data-step="confirm"' in html
+    assert "上一步" in html
+    assert "确认方案并进入备赛" in html
+    assert "保守规则兜底" in html
+    assert "AI 方案 · 已安全规范化" in html
+    assert "AI 风险评估 · 待你选择" in html
+    assert "系统做了哪些安全规范化" in html
+    assert "可选路线" in html
+    assert "首四周负荷" in html
+    assert "near_term_schedule" in html
+    assert "weekRange" in html
+    assert "确认调整" in html
+    assert "保持原计划" in html
+    assert "position:absolute" not in html
+
+
+def test_training_setup_reads_previous_completed_week_and_ignores_dynamic_volume(
+    tmp_path, monkeypatch,
+):
+    import src.web as web
+
+    manager, user = _active_user(tmp_path)
+    config = Config(data_dir=str(tmp_path))
+    user_cfg = config.for_user(user.api_key)
+    Path(user_cfg.db_path).parent.mkdir(parents=True, exist_ok=True)
+    Path(user_cfg.db_path).touch()
+
+    class FakeStorage:
+        def __init__(self, _config):
+            pass
+
+        def get_local_user_id(self):
+            return 7
+
+        def get_activities_range(self, _user_id, _start, _end):
+            return [
+                {
+                    "activity_id": "run-1", "activity_date": str(date.today() - timedelta(days=7)),
+                    "activity_name": "晨跑", "activity_type": "running",
+                    "distance_meters": 12000, "duration_seconds": 3600,
+                },
+                {
+                    "activity_id": "run-dynamic", "activity_date": str(date.today()),
+                    "activity_name": "动态周大跑量", "activity_type": "running",
+                    "distance_meters": 80000, "duration_seconds": 21600,
+                },
+                {
+                    "activity_id": "ride-1", "activity_date": str(date.today()),
+                    "activity_name": "骑行", "activity_type": "cycling",
+                    "distance_meters": 50000, "duration_seconds": 7200,
+                },
+            ]
+
+        def get_sync_calendar(self, _user_id, _start, _end, **_kwargs):
+            return {"days": [], "summary": {"synced": 22, "partial": 6}}
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(web, "Storage", FakeStorage)
+    server = _FakeServer()
+    register_web_routes(server, manager, config)
+
+    response = asyncio.run(server.routes[("/api/training/home", "GET")](
+        _request("/api/training/home", {}, user.api_key, method="GET")
+    ))
+    baseline = json.loads(response.body)["setup"]["baseline"]
+
+    assert baseline["coverage"] == "sufficient"
+    assert baseline["activity_count"] == 1
+    assert baseline["distance_km"] == 12
+    assert baseline["previous_week_km"] == 12
+    assert baseline["reference_window_kind"] == "previous_completed_natural_week"
+    assert baseline["recent_7d_km"] == 0
+
+
 def test_report_route_explicitly_generates_without_sync(tmp_path, monkeypatch):
     import src.web as web
 
@@ -795,7 +1300,11 @@ def test_report_route_explicitly_generates_without_sync(tmp_path, monkeypatch):
     def fake_daily(**kwargs):
         calls.append(kwargs)
         return (
-            SimpleNamespace(id="2026-07-19"),
+            SimpleNamespace(id="2026-07-19", front_matter={
+                "data_readiness": "complete",
+                "report_finality": "final",
+                "data_as_of": "2026-07-19 08:00:00",
+            }),
             SimpleNamespace(),
             SimpleNamespace(),
             SimpleNamespace(),
@@ -815,11 +1324,372 @@ def test_report_route_explicitly_generates_without_sync(tmp_path, monkeypatch):
         "status": "ok",
         "message": "2026-07-19 日报已生成",
         "date": "2026-07-19",
+        "data_readiness": "complete",
+        "report_finality": "final",
+        "data_as_of": "2026-07-19 08:00:00",
     }
     assert len(calls) == 1
     assert calls[0]["target"] == date(2026, 7, 19)
     assert calls[0]["skip_sync"] is True
     assert calls[0]["quiet"] is True
+    assert calls[0]["report_mode"] == "complete"
+
+
+def test_ai_capacity_rejection_prevents_daily_weekly_and_adjustment_work(tmp_path, monkeypatch):
+    import src.web as web
+    from src.ai_inference_coordinator import AIInferenceCapacityExceededError
+
+    manager, user = _active_user(tmp_path)
+    server = _FakeServer()
+    calls = []
+
+    async def reject_when_full(self, user_key, work, **kwargs):
+        del self, user_key, work, kwargs
+        raise AIInferenceCapacityExceededError("满载")
+
+    monkeypatch.setattr(web.AIInferenceCoordinator, "run", reject_when_full)
+    monkeypatch.setattr(web, "_do_daily_sync", lambda **kwargs: calls.append(kwargs))
+    register_web_routes(server, manager, Config(data_dir=str(tmp_path)))
+
+    daily = asyncio.run(server.routes[("/api/reports", "POST")](_request(
+        "/api/reports", {"date": "2026-07-19"}, user.api_key,
+    )))
+    weekly = asyncio.run(server.routes[("/api/reports/weekly", "POST")](_request(
+        "/api/reports/weekly", {"date": "2026-07-19"}, user.api_key,
+    )))
+    adjustment = asyncio.run(server.routes[("/api/training/proposals", "POST")](_request(
+        "/api/training/proposals", {"feedback_id": "not-started"}, user.api_key,
+    )))
+
+    for response in (daily, weekly, adjustment):
+        payload = json.loads(response.body)
+        assert response.status_code == 503
+        assert payload["code"] == "ai_capacity_reached"
+        assert payload["retry_after_seconds"] == 5
+        assert response.headers["retry-after"] == "5"
+    assert calls == []
+
+
+def test_same_user_ai_request_in_progress_returns_429(tmp_path, monkeypatch):
+    import src.web as web
+    from src.ai_inference_coordinator import AIInferenceInProgressError
+
+    manager, user = _active_user(tmp_path)
+    server = _FakeServer()
+
+    async def reject_duplicate(self, user_key, work, **kwargs):
+        del self, user_key, work, kwargs
+        raise AIInferenceInProgressError("重复")
+
+    monkeypatch.setattr(web.AIInferenceCoordinator, "run", reject_duplicate)
+    register_web_routes(server, manager, Config(data_dir=str(tmp_path)))
+
+    response = asyncio.run(server.routes[("/api/reports", "POST")](_request(
+        "/api/reports", {"date": "2026-07-19"}, user.api_key,
+    )))
+    payload = json.loads(response.body)
+
+    assert response.status_code == 429
+    assert payload["code"] == "ai_request_in_progress"
+    assert payload["retry_after_seconds"] == 5
+    assert payload["task_status_url"] == "/api/ai/tasks/current"
+    assert response.headers["retry-after"] == "5"
+
+
+def test_current_ai_task_status_is_scoped_to_logged_in_user(tmp_path, monkeypatch):
+    import src.web as web
+
+    manager, user = _active_user(tmp_path)
+    server = _FakeServer()
+    seen = []
+
+    async def current_status(self, user_key):
+        del self
+        seen.append(user_key)
+        return {
+            "task_id": "task-1",
+            "operation": "weekly_review",
+            "state": "running",
+            "elapsed_seconds": 12,
+            "message": "正在生成周复盘，页面可以安全刷新",
+        }
+
+    monkeypatch.setattr(web.AIInferenceCoordinator, "current_status", current_status)
+    register_web_routes(server, manager, Config(data_dir=str(tmp_path)))
+
+    response = asyncio.run(server.routes[("/api/ai/tasks/current", "GET")](_request(
+        "/api/ai/tasks/current", {}, user.api_key, method="GET",
+    )))
+    payload = json.loads(response.body)
+
+    assert response.status_code == 200
+    assert payload["task"]["operation"] == "weekly_review"
+    assert payload["task"]["state"] == "running"
+    assert seen == [user.api_key]
+    assert response.headers["cache-control"] == "no-store"
+
+
+def test_weekly_report_routes_require_explicit_generation(tmp_path):
+    from src.training import TrainingService
+
+    manager, user = _active_user(tmp_path)
+    server = _FakeServer()
+    config = Config(data_dir=str(tmp_path))
+    service = TrainingService(config.for_user(user.api_key).memory_dir)
+    goal = service.create_goal({
+        "name": "10K 备赛", "distance": "10k", "target_date": "2026-10-18",
+    })
+    draft = service.create_draft({
+        "goal_id": goal["goal_id"], "available_days": [1, 3, 5],
+        "max_session_minutes": 90,
+    })
+    service.activate(draft["plan_id"])
+    register_web_routes(server, manager, config)
+
+    listed = asyncio.run(server.routes[("/api/reports/weekly", "GET")](
+        _request("/api/reports/weekly", {}, user.api_key, method="GET")
+    ))
+    assert json.loads(listed.body) == {"status": "ok", "reports": []}
+
+    created = asyncio.run(server.routes[("/api/reports/weekly", "POST")](
+        _request("/api/reports/weekly", {"date": str(date.today())}, user.api_key)
+    ))
+    payload = json.loads(created.body)
+    assert created.status_code == 200
+    assert payload["status"] == "ok"
+    assert payload["report"]["type"] == "weekly_checkpoint"
+    assert payload["report"]["progression_decision"]["action"] == "not_final"
+    assert payload["report"]["training_url"].startswith("/training?")
+    task_response = asyncio.run(server.routes[("/api/ai/tasks/current", "GET")](_request(
+        "/api/ai/tasks/current", {}, user.api_key, method="GET",
+    )))
+    task = json.loads(task_response.body)["task"]
+    assert task["operation"] == "weekly_review"
+    assert task["state"] == "succeeded"
+    assert task["result"]["report"]["type"] == "weekly_checkpoint"
+    assert ("/api/training/week-review", "GET") not in server.routes
+    assert ("/api/reports/adjustments", "GET") not in server.routes
+
+
+def test_weekly_report_route_does_not_require_training_plan(tmp_path):
+    manager, user = _active_user(tmp_path)
+    server = _FakeServer()
+    register_web_routes(server, manager, Config(data_dir=str(tmp_path)))
+
+    created = asyncio.run(server.routes[("/api/reports/weekly", "POST")](_request(
+        "/api/reports/weekly", {"date": str(date.today())}, user.api_key,
+    )))
+    payload = json.loads(created.body)
+
+    assert created.status_code == 200
+    assert payload["status"] == "ok"
+    assert payload["report"]["type"] == "weekly_checkpoint"
+    assert payload["report"]["plan_context"] is None
+    assert payload["report"]["progression_decision"] is None
+
+
+def test_report_recommendation_route_creates_pending_training_proposal(tmp_path):
+    from datetime import timedelta
+
+    from src.training import TrainingService
+
+    manager, user = _active_user(tmp_path)
+    server = _FakeServer()
+    config = Config(data_dir=str(tmp_path))
+    service = TrainingService(config.for_user(user.api_key).memory_dir)
+    goal = service.create_goal({
+        "name": "10K 备赛", "distance": "10k", "target_date": "2026-10-18",
+        "goal_intent": "performance", "target_time": "00:45:00",
+    })
+    draft = service.create_draft({
+        "goal_id": goal["goal_id"], "available_days": [1, 3, 5],
+        "max_session_minutes": 90,
+    })
+    active = service.activate(draft["plan_id"])
+    week_start = date.today() - timedelta(days=date.today().weekday() + 7)
+    week_id = week_start.strftime("%G-W%V")
+    service.repository.save_weekly_report({
+        "type": "weekly_report", "report_id": f"weekly-{week_start}",
+        "week_id": week_id, "week_start": str(week_start),
+        "week_end": str(week_start + timedelta(days=6)),
+        "plan_id": active["plan_id"], "plan_version": active["version"],
+        "progression_decision": {
+            "decision_id": "decision-web", "action": "deload",
+            "rationale": "恢复下降，下一周先降载",
+        },
+        "adaptation_signal": {"recommendation": "scheme_revision"},
+        "execution_summary": {},
+    })
+    register_web_routes(server, manager, config)
+
+    response = asyncio.run(server.routes[("/api/training/proposals/from-report", "POST")](
+        _request(
+            "/api/training/proposals/from-report", {"week_id": week_id}, user.api_key,
+        )
+    ))
+    payload = json.loads(response.body)
+
+    assert response.status_code == 201
+    assert payload["proposal"]["status"] == "pending"
+    assert payload["proposal"]["source_week_id"] == week_id
+    assert service.plan()["version"] == active["version"]
+
+
+def test_report_archive_reads_paginate_without_hiding_selected_daily_report(tmp_path):
+    from src.memory import Memory, MemoryType
+    from src.training import TrainingService
+
+    manager, user = _active_user(tmp_path)
+    config = Config(data_dir=str(tmp_path))
+    memory_dir = Path(config.for_user(user.api_key).memory_dir)
+    for day in range(1, 10):
+        report_date = f"2026-01-{day:02d}"
+        Memory(
+            id=report_date,
+            type=MemoryType.DAILY_REPORT,
+            path=memory_dir / "auto/daily" / f"{report_date}.md",
+            front_matter={
+                "type": "daily_report", "report_date": report_date,
+                "daily_activities": {
+                    "activity_state": "known", "sessions": [{"type": "跑步"}],
+                    "total_duration_min": 40, "total_distance_km": 7.0,
+                },
+            },
+            body="# 日报",
+        ).save()
+
+    service = TrainingService(memory_dir)
+    for week in range(1, 6):
+        service.repository.save_weekly_report({
+            "type": "weekly_report", "week_id": f"2026-W{week:02d}",
+            "week_start": f"2026-0{week}-02", "week_end": f"2026-0{week}-08",
+        })
+    for index in range(1, 7):
+        service.repository.save_proposal({
+            "type": "adjustment_proposal", "proposal_id": f"adjustment-{index}",
+            "plan_id": "plan-1", "scope": "scheme" if index % 2 else "session",
+            "reason": f"第 {index} 次调整", "status": "approved",
+            "target_date": f"2026-01-{index:02d}", "approved_at": f"2026-02-{index:02d}T08:00:00",
+            "applied_version": index + 1,
+        })
+
+    server = _FakeServer()
+    register_web_routes(server, manager, config)
+
+    daily = asyncio.run(server.routes[("/api/reports", "GET")](_request(
+        "/api/reports", {}, user.api_key, method="GET",
+        query="page=2&per_page=3&date=2026-01-09",
+    )))
+    daily_payload = json.loads(daily.body)
+    assert daily.status_code == 200
+    assert daily_payload["pagination"] == {
+        "page": 2, "per_page": 3, "total": 9, "total_pages": 3,
+    }
+    assert [item["date"] for item in daily_payload["reports"]] == [
+        "2026-01-06", "2026-01-05", "2026-01-04",
+    ]
+    assert daily_payload["selected"]["date"] == "2026-01-09"
+
+    weekly = asyncio.run(server.routes[("/api/reports/weekly", "GET")](_request(
+        "/api/reports/weekly", {}, user.api_key, method="GET",
+        query="page=2&per_page=2",
+    )))
+    weekly_payload = json.loads(weekly.body)
+    assert weekly.status_code == 200
+    assert weekly_payload["pagination"] == {
+        "page": 2, "per_page": 2, "total": 5, "total_pages": 3,
+    }
+    assert [item["week_id"] for item in weekly_payload["reports"]] == [
+        "2026-W03", "2026-W02",
+    ]
+
+    adjustments = asyncio.run(server.routes[("/api/training/adjustments", "GET")](_request(
+        "/api/training/adjustments", {}, user.api_key, method="GET",
+        query="page=2&per_page=2",
+    )))
+    adjustments_payload = json.loads(adjustments.body)
+    assert adjustments.status_code == 200
+    assert adjustments_payload["pagination"] == {
+        "page": 2, "per_page": 2, "total": 6, "total_pages": 3,
+    }
+    assert [item["proposal_id"] for item in adjustments_payload["records"]] == [
+        "adjustment-4", "adjustment-3",
+    ]
+
+
+def test_report_readiness_route_returns_dimension_evidence(tmp_path):
+    from src.storage import Storage
+
+    manager, user = _active_user(tmp_path)
+    server = _FakeServer()
+    config = Config(data_dir=str(tmp_path))
+    user_cfg = config.for_user(user.api_key)
+    storage = Storage(user_cfg)
+    storage.mark_sync_calendar_range(
+        7, date(2026, 7, 19), date(2026, 7, 19), "completed",
+    )
+    storage.close()
+    register_web_routes(server, manager, config)
+
+    response = asyncio.run(server.routes[("/api/reports/readiness", "GET")](
+        _request(
+            "/api/reports/readiness", {}, user.api_key, method="GET",
+            query="date=2026-07-19",
+        )
+    ))
+    payload = json.loads(response.body)
+
+    assert response.status_code == 200
+    assert payload["status"] == "ok"
+    assert payload["readiness"]["status"] == "limited"
+    assert payload["readiness"]["dimensions"]["activity"]["status"] == "complete"
+    assert payload["readiness"]["dimensions"]["sleep"]["status"] == "missing"
+
+
+def test_report_route_returns_409_without_generating_when_gate_blocks(
+    tmp_path, monkeypatch,
+):
+    import src.web as web
+    from src.report_readiness import (
+        CoverageDimension,
+        DailyReportReadiness,
+        DailyReportReadinessError,
+    )
+
+    manager, user = _active_user(tmp_path)
+    server = _FakeServer()
+    config = Config(data_dir=str(tmp_path))
+    readiness = DailyReportReadiness(
+        status="blocked",
+        finality="provisional",
+        data_as_of=None,
+        dimensions={
+            "activity": CoverageDimension(
+                "missing", 0, 1, reason="缺少同步证据", action="sync_day",
+            ),
+        },
+        blockers=("activity",),
+        omitted_sections=(),
+        suggested_actions=("sync_day",),
+    )
+
+    def blocked_daily(**kwargs):
+        raise DailyReportReadinessError(readiness, kwargs["report_mode"])
+
+    monkeypatch.setattr(web, "_do_daily_sync", blocked_daily)
+    register_web_routes(server, manager, config)
+
+    response = asyncio.run(server.routes[("/api/reports", "POST")](
+        _request(
+            "/api/reports", {"date": "2026-07-19", "mode": "limited"},
+            user.api_key,
+        )
+    ))
+    payload = json.loads(response.body)
+
+    assert response.status_code == 409
+    assert payload["code"] == "report_data_incomplete"
+    assert payload["readiness"]["status"] == "blocked"
 
 
 def test_detects_coros_expired_token_error():

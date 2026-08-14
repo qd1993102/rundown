@@ -38,8 +38,8 @@ button,input{font:inherit}
 .app-header{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:0 0 12px}
 .app-brand{display:flex;align-items:center;gap:8px;color:var(--text);font-size:14px;font-weight:800;letter-spacing:.2px}
 .app-brand-mark{display:grid;place-items:center;width:32px;height:32px;border-radius:11px;background:var(--accent);color:#fff;font-size:17px;font-weight:900}
-.app-nav{position:fixed;z-index:50;left:50%;bottom:calc(10px + env(safe-area-inset-bottom));transform:translateX(-50%);width:min(calc(100% - 24px),520px);display:grid;grid-template-columns:repeat(3,1fr);gap:4px;padding:6px;border:1px solid var(--border-subtle);border-radius:22px;background:color-mix(in srgb,var(--bg-card) 92%,transparent);box-shadow:0 12px 40px rgba(0,0,0,.22);-webkit-backdrop-filter:blur(18px);backdrop-filter:blur(18px)}
-.app-nav-item{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;min-width:0;min-height:54px;padding:6px 10px;border-radius:16px;color:var(--text-muted);text-decoration:none;transition:color .2s,background .2s;-webkit-tap-highlight-color:transparent;touch-action:manipulation}
+.app-nav{position:fixed;z-index:50;left:50%;bottom:calc(10px + env(safe-area-inset-bottom));transform:translateX(-50%);width:min(calc(100% - 24px),520px);display:grid;grid-template-columns:repeat(4,1fr);gap:4px;padding:6px;border:1px solid var(--border-subtle);border-radius:22px;background:color-mix(in srgb,var(--bg-card) 92%,transparent);box-shadow:0 12px 40px rgba(0,0,0,.22);-webkit-backdrop-filter:blur(18px);backdrop-filter:blur(18px)}
+.app-nav-item{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;min-width:0;min-height:54px;padding:6px 5px;border-radius:16px;color:var(--text-muted);text-decoration:none;transition:color .2s,background .2s;-webkit-tap-highlight-color:transparent;touch-action:manipulation}
 .app-nav-item[aria-current="page"]{background:var(--accent-glow);color:var(--accent)}
 .app-nav-icon{width:21px;height:21px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
 .app-nav-label{font-size:10px;font-weight:750;line-height:1;letter-spacing:.2px}
@@ -56,6 +56,7 @@ button,input{font:inherit}
 
 /* Card */
 .card{background:var(--bg-card);border-radius:16px;padding:32px;box-shadow:var(--card-shadow);margin-bottom:16px}
+.card.sync-target{scroll-margin-top:16px;border:1px solid var(--accent);box-shadow:0 0 0 3px var(--accent-glow),var(--card-shadow)}
 .card h2{font-size:16px;font-weight:700;color:var(--text);margin-bottom:6px}
 .card-subtitle{font-size:12px;color:var(--text-muted);margin-bottom:20px}
 .mode-badge{display:inline-flex;align-items:center;padding:3px 9px;border-radius:12px;background:var(--accent-glow);color:var(--accent);font-size:10px;font-weight:700;letter-spacing:.5px;margin-left:6px;vertical-align:2px}
@@ -68,6 +69,7 @@ button,input{font:inherit}
 .form-group input[type=date],.form-group input[type=number]{padding:8px 12px;border-radius:10px;border:1px solid var(--border-subtle);background:var(--bg-subtle);color:var(--text);font-size:14px;outline:none;font-family:inherit;transition:border-color .2s}
 .form-group input:focus{border-color:var(--accent)}
 .form-group input[type=number]{width:72px;text-align:center}
+.single-date-picker{display:grid;gap:12px;margin-bottom:16px}.selected-date{display:grid;gap:2px;padding:14px 16px;border:1px solid color-mix(in srgb,var(--accent) 40%,var(--border-subtle));border-radius:14px;background:linear-gradient(135deg,var(--accent-glow),var(--bg-card));}.selected-date span{font-size:10px;font-weight:750;letter-spacing:.6px;color:var(--accent);text-transform:uppercase}.selected-date strong{font-size:18px;color:var(--text);line-height:1.35}.selected-date small{font-size:12px;color:var(--text-secondary)}.date-picker-actions{display:grid;grid-template-columns:44px minmax(0,1fr) 44px;gap:8px;align-items:stretch}.date-step{display:grid;place-items:center;min-height:48px;border:1px solid var(--border-subtle);border-radius:12px;background:var(--bg-subtle);color:var(--text-secondary);font-size:22px;cursor:pointer;transition:border-color .2s,color .2s,background .2s}.date-step:hover:not(:disabled){border-color:var(--accent);color:var(--accent);background:var(--accent-glow)}.date-step:disabled{opacity:.35;cursor:not-allowed}.date-input-label{display:grid;grid-template-columns:auto minmax(0,1fr);align-items:center;gap:9px;min-height:48px;padding:0 12px;border:1px solid var(--border-subtle);border-radius:12px;background:var(--bg-card);color:var(--text-secondary);cursor:pointer}.date-input-label span{font-size:11px;font-weight:700;color:var(--text-muted);white-space:nowrap}.date-input-label input[type=date]{min-width:0;width:100%;border:0;outline:0;background:transparent;color:var(--text);font-size:14px;font-weight:700;cursor:pointer;color-scheme:light}.date-shortcuts{display:flex;align-items:center;flex-wrap:wrap;gap:8px;margin-bottom:18px}.date-shortcuts button{min-height:34px;padding:5px 12px;border:1px solid var(--border-subtle);border-radius:999px;background:var(--bg-subtle);color:var(--text-secondary);font-size:12px;font-weight:650;cursor:pointer;transition:border-color .2s,color .2s,background .2s}.date-shortcuts button:hover{border-color:var(--accent);color:var(--accent);background:var(--accent-glow)}.date-selection-help{flex:1;min-width:150px;color:var(--text-muted);font-size:11px;line-height:1.45;text-align:right}
 .range-arrow{color:var(--text-muted);padding-bottom:9px}
 .check-row{display:flex;gap:20px;flex-wrap:wrap;margin-bottom:20px}
 .check-row label{display:flex;align-items:center;gap:6px;font-size:13px;color:var(--text-secondary);cursor:pointer}
@@ -162,6 +164,7 @@ button,input{font:inherit}
   .calendar-day{border-radius:9px}
   .calendar-day-number{font-size:12px}
   .calendar-day-detail{font-size:7px}
+  .date-selection-help{flex-basis:100%;text-align:left}
 }
 </style>
 </head>
@@ -172,13 +175,17 @@ button,input{font:inherit}
 <header class="app-header">
   <div class="app-brand" aria-hidden="true"><span class="app-brand-mark">n</span><span>neurun</span></div>
   <nav class="app-nav" aria-label="主要导航">
-    <a href="/sync" class="app-nav-item" data-nav-item aria-current="page">
-      <svg class="app-nav-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M20 7h-3.5A7 7 0 0 0 5 9M20 3v4h-4M4 17h3.5A7 7 0 0 0 19 15M4 21v-4h4"/></svg>
-      <span class="app-nav-label">同步</span>
+    <a href="/training" class="app-nav-item" data-nav-item>
+      <svg class="app-nav-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 12h3l2-5 4 10 2-5h5"/><path d="M5 4h14a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2Z"/></svg>
+      <span class="app-nav-label">训练</span>
     </a>
     <a href="/reports" class="app-nav-item" data-nav-item>
       <svg class="app-nav-icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="3" width="14" height="18" rx="2"/><path d="M9 8h6M9 12h6M9 16h4"/></svg>
-      <span class="app-nav-label">日报</span>
+      <span class="app-nav-label">报告</span>
+    </a>
+    <a href="/sync" class="app-nav-item" data-nav-item aria-current="page">
+      <svg class="app-nav-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M20 7h-3.5A7 7 0 0 0 5 9M20 3v4h-4M4 17h3.5A7 7 0 0 0 19 15M4 21v-4h4"/></svg>
+      <span class="app-nav-label">同步</span>
     </a>
     <a href="/profile" class="app-nav-item" data-nav-item>
       <svg class="app-nav-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="8" r="3.5"/><path d="M5 21c.5-4 3-6 7-6s6.5 2 7 6"/></svg>
@@ -220,16 +227,19 @@ button,input{font:inherit}
 </section>
 
 <!-- Single-day Sync -->
-<div class="card">
-  <h2>📅 单日同步 <span class="mode-badge">SINGLE</span></h2>
-  <div class="card-subtitle">只拉取并保存指定日期的数据，不生成日报。</div>
+<div class="card" id="single-sync">
+  <h2>单日补同步</h2>
+  <div class="card-subtitle">从上方日历选择，或直接修改日期；只拉取并保存数据，不生成报告。</div>
 
-  <div class="form-row">
-    <div class="form-group grow">
-      <label>同步日期</label>
-      <input type="date" id="singleDate">
+  <div class="single-date-picker" aria-label="选择单日同步日期">
+    <div class="selected-date" aria-live="polite"><span>本次同步目标</span><strong id="singleDateLabel">—</strong><small id="singleDateHint">可从上方日历改选</small></div>
+    <div class="date-picker-actions">
+      <button class="date-step" id="singleDatePrev" type="button" aria-label="前一天" onclick="shiftSingleDate(-1)">‹</button>
+      <label class="date-input-label" for="singleDate"><span>修改日期</span><input type="date" id="singleDate" aria-label="选择同步日期"></label>
+      <button class="date-step" id="singleDateNext" type="button" aria-label="后一天" onclick="shiftSingleDate(1)">›</button>
     </div>
   </div>
+  <div class="date-shortcuts" role="group" aria-label="同步日期快捷选择"><button type="button" onclick="setSingleDateOffset(-1)">昨天</button><button type="button" onclick="setSingleDateOffset(0)">今天</button><span class="date-selection-help">日历中的选择会自动带到这里</span></div>
 
   <div class="check-row">
     <label><input type="checkbox" id="singleForce"> 强制覆盖该日已有数据</label>
@@ -294,12 +304,6 @@ button,input{font:inherit}
   <div class="status-row" style="font-size:12px;color:var(--text-muted)" id="statusDetail"></div>
 </div>
 
-<!-- Sync History -->
-<div class="card">
-  <h2>📰 最近日报</h2>
-  <div id="historyList" style="color:var(--text-muted);font-size:13px">加载中...</div>
-</div>
-
 <div class="footer">Built with <span>neurun</span></div>
 
 </div>
@@ -316,12 +320,17 @@ function localDateString(d){
 }
 var now=new Date(),today=localDateString(now),monthAgo=new Date(now);
 monthAgo.setDate(monthAgo.getDate()-30);
-document.getElementById('singleDate').value=today;
+var requestedReportDate=new URLSearchParams(location.search).get('date');
+var syncQuery=new URLSearchParams(location.search),syncSource=syncQuery.get('from')||'',requestedReturnTo=syncQuery.get('return_to')||'';
+if(!/^\d{4}-\d{2}-\d{2}$/.test(requestedReportDate||'')||requestedReportDate>today){requestedReportDate=''}
+document.getElementById('singleDate').value=requestedReportDate||today;
+document.getElementById('singleDate').max=today;
 document.getElementById('batchFromDate').value=localDateString(monthAgo);
 document.getElementById('batchToDate').value=today;
 
-var calendarCursor=new Date(now.getFullYear(),now.getMonth(),1);
-var activeSyncTaskId=null,syncPollTimer=null,syncPollFailures=0,syncPollInFlight=false;
+var initialCalendarDate=requestedReportDate?new Date(requestedReportDate+'T00:00:00'):now;
+var calendarCursor=new Date(initialCalendarDate.getFullYear(),initialCalendarDate.getMonth(),1);
+var activeSyncTaskId=null,syncPollTimer=null,syncPollFailures=0,syncPollInFlight=false,calendarDaysByDate={};
 var ACTIVE_SYNC_TASK_KEY='neurun-sync-active-task';
 var calendarLabels={
   synced:'已同步',partial:'部分完成',failed:'同步失败',syncing:'同步中',
@@ -339,16 +348,65 @@ function moveCalendarMonth(offset){
 
 function selectCalendarDate(syncDate){
   document.getElementById('singleDate').value=syncDate;
+  updateSingleDateUI();
   document.querySelectorAll('.calendar-day').forEach(function(day){
     day.classList.toggle('selected',day.dataset.date===syncDate);
   });
   document.getElementById('singleDate').scrollIntoView({behavior:'smooth',block:'center'});
 }
 
+function formatSingleDate(value){
+  var parsed=new Date(value+'T00:00:00');
+  if(isNaN(parsed.getTime()))return '请选择日期';
+  return (parsed.getMonth()+1)+' 月 '+parsed.getDate()+' 日 · '+['周日','周一','周二','周三','周四','周五','周六'][parsed.getDay()];
+}
+function updateSingleDateUI(){
+  var input=document.getElementById('singleDate'),value=input.value,next=document.getElementById('singleDateNext');
+  document.getElementById('singleDateLabel').textContent=formatSingleDate(value);
+  var selectedDay=calendarDaysByDate[value],hint=document.getElementById('singleDateHint');
+  if(selectedDay){
+    var status=calendarLabels[selectedDay.status]||selectedDay.status;
+    var activityCount=Number(selectedDay.running_count)||Number(selectedDay.activity_count)||0;
+    hint.textContent=status+(activityCount?' · 已发现 '+activityCount+(selectedDay.running_count?' 次跑步':' 条运动'):'');
+  }else{hint.textContent='可从上方日历改选';}
+  next.disabled=!value||value>=today;
+  document.querySelectorAll('.calendar-day').forEach(function(day){day.classList.toggle('selected',day.dataset.date===value)});
+}
+function shiftSingleDate(offset){
+  var input=document.getElementById('singleDate'),selected=input.value||today,parsed=new Date(selected+'T00:00:00');
+  parsed.setDate(parsed.getDate()+offset);
+  var value=localDateString(parsed);
+  if(value>today)return;
+  input.value=value;
+  var cursorKey=calendarMonthKey(),nextKey=value.slice(0,7);
+  updateSingleDateUI();
+  if(cursorKey!==nextKey){calendarCursor=new Date(parsed.getFullYear(),parsed.getMonth(),1);loadSyncCalendar()}
+}
+function setSingleDateOffset(offset){
+  var value=localDateString(new Date(now.getFullYear(),now.getMonth(),now.getDate()+offset));
+  document.getElementById('singleDate').value=value;
+  var parsed=new Date(value+'T00:00:00');
+  calendarCursor=new Date(parsed.getFullYear(),parsed.getMonth(),1);
+  updateSingleDateUI();loadSyncCalendar();
+}
+document.getElementById('singleDate').addEventListener('change',function(){
+  var value=this.value;if(!value||value>today){this.value=today}
+  var parsed=new Date(this.value+'T00:00:00');calendarCursor=new Date(parsed.getFullYear(),parsed.getMonth(),1);
+  updateSingleDateUI();loadSyncCalendar();
+});
+
+function anchorRequestedSyncDate(){
+  if(!requestedReportDate)return;
+  var requestedCard=document.getElementById('single-sync');
+  requestedCard.classList.add('sync-target');
+  requestedCard.scrollIntoView({behavior:'smooth',block:'start'});
+}
+
 function renderSyncCalendar(payload){
   var grid=document.getElementById('syncCalendar'),summary=document.getElementById('calendarSummary');
   var parts=payload.month.split('-'),year=Number(parts[0]),month=Number(parts[1]);
   document.getElementById('calendarMonthLabel').textContent=year+' 年 '+month+' 月';
+  calendarDaysByDate={};payload.days.forEach(function(day){calendarDaysByDate[day.date]=day});
   grid.innerHTML='';
 
   var firstWeekday=new Date(year,month-1,1).getDay();
@@ -368,7 +426,7 @@ function renderSyncCalendar(payload){
     else if(day.activity_count){details.push(day.activity_count+' 条运动')}
     if(day.has_health){details.push('有健康数据')}
     button.type='button';
-    button.className='calendar-day status-'+day.status+(day.date===today?' today':'');
+    button.className='calendar-day status-'+day.status+(day.date===today?' today':'')+(day.date===document.getElementById('singleDate').value?' selected':'');
     button.dataset.date=day.date;
     button.disabled=day.status==='future';
     if(day.date===today){button.setAttribute('aria-current','date')}
@@ -396,6 +454,8 @@ function renderSyncCalendar(payload){
 
   var currentMonthStart=new Date(now.getFullYear(),now.getMonth(),1);
   document.getElementById('calendarNext').disabled=calendarCursor>=currentMonthStart;
+  updateSingleDateUI();
+  anchorRequestedSyncDate();
 }
 
 async function loadSyncCalendar(){
@@ -423,30 +483,6 @@ async function loadStatus(){
     var dot=document.getElementById('statusDot'),txt=document.getElementById('statusText'),dtl=document.getElementById('statusDetail');
     if(d.token_status==='active'){dot.className='status-dot ok';txt.textContent='已连接';dtl.textContent=(d.last_sync?'上次同步: '+d.last_sync:'尚未同步')}
     else{dot.className='status-dot';txt.textContent='未连接';dtl.textContent=''}
-  }catch(e){}
-  loadHistory();
-}
-
-var weekdays=['周日','周一','周二','周三','周四','周五','周六'];
-
-async function loadHistory(){
-  try{
-    var r=await fetch('/api/reports');
-    var reports=await r.json();
-    var el=document.getElementById('historyList');
-    if(!reports.length){el.innerHTML='<div style="text-align:center;padding:16px 0">暂无日报</div>';return}
-    var h='';
-    reports.forEach(function(r){
-      var d=new Date(r.date+'T00:00:00'),wd='';
-      if(!isNaN(d.getTime()))wd=weekdays[d.getDay()];
-      h+='<div class="history-row" onclick="location.href=\'/?date='+r.date+'\'" style="cursor:pointer">';
-      h+='<span style="font-weight:600;color:var(--text);min-width:90px">'+r.date+'</span>';
-      h+='<span style="color:var(--text-muted);font-size:11px;min-width:32px">'+(wd||'')+'</span>';
-      h+='<span style="flex:1;color:var(--text-secondary)">'+r.training+'</span>';
-      h+='<span style="color:var(--accent);font-size:12px">→</span>';
-      h+='</div>';
-    });
-    el.innerHTML=h;
   }catch(e){}
 }
 
@@ -517,7 +553,10 @@ function renderSyncTask(task){
 
   var action=document.getElementById('syncTaskAction');action.hidden=true;action.onclick=null;
   if(task.status==='succeeded'){
-    action.hidden=false;action.href='/reports';action.textContent='前往日报页';
+    var returnDate=requestedReportDate||task.to_date||task.from_date||'';
+    action.hidden=false;
+    if(requestedReturnTo&&requestedReturnTo.startsWith('/')){action.href=requestedReturnTo;action.textContent=syncSource==='training'?'返回训练页':'返回上一页'}
+    else{action.href='/reports?tab=daily'+(returnDate?'&date='+encodeURIComponent(returnDate):'');action.textContent='前往报告页'}
   }else if(task.status==='failed'||task.status==='interrupted'){
     action.hidden=false;
     if(task.error&&task.error.action==='reauthorize'){
@@ -603,7 +642,12 @@ function doBatchSync(){
 }
 
 loadSyncCalendar();
+updateSingleDateUI();
 loadStatus();
+if(requestedReportDate){
+  var requestedCard=document.getElementById('single-sync');
+  requestedCard.classList.add('sync-target');
+}
 try{
   var restoredTaskId=localStorage.getItem(ACTIVE_SYNC_TASK_KEY);
   if(restoredTaskId){saveActiveSyncTask(restoredTaskId);setSyncButtonsBusy(true);pollSyncTask(restoredTaskId)}

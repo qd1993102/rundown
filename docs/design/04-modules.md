@@ -270,7 +270,6 @@ target_date: 2025-06-30
 metrics:
   target_5k: "19:30"
   target_10k: "41:00"
-  weekly_mileage_km: 60
 progress:
   last_review: 2025-03-15
   current_5k: "20:15"
@@ -341,17 +340,24 @@ Web 数据同步与日报生成是两个独立动作：
   `Storage.close()` 另行负责 SQLAlchemy engine，关闭失败不得阻断其他资源回收；
 - `POST /api/reports` 由已登录用户显式触发，只读取本地 SQLite 并在工作线程生成指定日期日报；
   不得阻塞 Web 事件循环，也不得隐式访问运动平台；
-- 日报的结构化指标和固定版式由 `memory.py` 生成，在线 AI 洞察由 `coach.py` 使用
-  `prompts/coach.md` 生成；AI 成功后必须重新渲染正文，使 Front Matter 与正文使用同一份洞察；
+- 日报的结构化指标和固定版式由 `memory.py` 在内存中生成，在线 AI 洞察由 `coach.py` 运行一次
+  `review-daily-training` 生成；随后使用最终洞察渲染并落盘一次，使 Front Matter 与正文一致；
+- `training_service_factory.py` 把训练服务的活动加载器与上下文装配固化为共享实现（Web 草稿/训练页、
+  CLI 日报、MCP 报告统一使用），并对外提供 `build_capacity_athlete_context()`：按 `omitted_sections`
+  门禁调用训练域只读 `capacity_profile(D)` 并投影 `athlete_context`，供日报正文与 AI 洞察引用；
+  Web 的 `training_service()` 委托该工厂构建，避免三入口维护两套加载口径；
 - 未配置在线模型或调用失败时，日报仍可使用 `memory.py` 的本地规则洞察完成生成；
-- `sync.html`、`chat.html`、`reports.html` 和 `profile.html` 共用同一导航合同：320–640px
+- `sync.html`、`dashboard.html`、`reports.html` 和 `profile.html` 共用同一导航合同：320–640px
   使用固定底部三项导航（图标、文字、`aria-current="page"`），容器按 `safe-area-inset-bottom`
   预留内容空间；641px 以上恢复静态顶部横向导航；主题选择是独立工具，不属于主导航；
 - 四页普通内容使用 Grid/Flex 文档流，移动端主导航触控目标不小于 54px；
   `min-width:641px` 仅用于增强桌面布局；
+- 日报“数据依据”内恢复与健康指标网格使用实际可见卡片数驱动列数：恢复 Hero 为 1–3 列，健康指标
+  在 320–640px 最多 2 列、641px 以上最多 4 列；Provider 缺失字段只隐藏对应卡片，剩余卡片须自动
+  回填并均分容器，不保留固定网格空位；
 - 日报列表卡片在 320px 起保持“日期 / 可收缩摘要 / 固定评分”单行 Grid；训练摘要使用省略号，
   `report-scores` 禁止换行且不得跨到第二行，避免评分被压缩或改变卡片节奏；
-- 日报图片由 `chat.html` 在浏览器内根据 `GET /api/dashboard` 已返回的数据绘制到 Canvas。
+- 日报图片由 `dashboard.html` 在浏览器内根据 `GET /api/dashboard` 已返回的数据绘制到 Canvas。
   支持文件分享时调用 Web Share API，否则使用 Blob URL 下载 PNG；图片数据不回传服务器，
   不引入外部 CDN，也不修改 `src/image.py` 的 CLI 静态报告截图职责。
 

@@ -38,8 +38,8 @@ button,input,select{font:inherit}
 .app-header{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:0 0 12px}
 .app-brand{display:flex;align-items:center;gap:8px;color:var(--text);font-size:14px;font-weight:800;letter-spacing:.2px}
 .app-brand-mark{display:grid;place-items:center;width:32px;height:32px;border-radius:11px;background:var(--accent);color:#fff;font-size:17px;font-weight:900}
-.app-nav{position:fixed;z-index:50;left:50%;bottom:calc(10px + env(safe-area-inset-bottom));transform:translateX(-50%);width:min(calc(100% - 24px),520px);display:grid;grid-template-columns:repeat(3,1fr);gap:4px;padding:6px;border:1px solid var(--border-subtle);border-radius:22px;background:color-mix(in srgb,var(--bg-card) 92%,transparent);box-shadow:0 12px 40px rgba(0,0,0,.22);-webkit-backdrop-filter:blur(18px);backdrop-filter:blur(18px)}
-.app-nav-item{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;min-width:0;min-height:54px;padding:6px 10px;border-radius:16px;color:var(--text-muted);text-decoration:none;transition:color .2s,background .2s;-webkit-tap-highlight-color:transparent;touch-action:manipulation}
+.app-nav{position:fixed;z-index:50;left:50%;bottom:calc(10px + env(safe-area-inset-bottom));transform:translateX(-50%);width:min(calc(100% - 24px),520px);display:grid;grid-template-columns:repeat(4,1fr);gap:4px;padding:6px;border:1px solid var(--border-subtle);border-radius:22px;background:color-mix(in srgb,var(--bg-card) 92%,transparent);box-shadow:0 12px 40px rgba(0,0,0,.22);-webkit-backdrop-filter:blur(18px);backdrop-filter:blur(18px)}
+.app-nav-item{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;min-width:0;min-height:54px;padding:6px 5px;border-radius:16px;color:var(--text-muted);text-decoration:none;transition:color .2s,background .2s;-webkit-tap-highlight-color:transparent;touch-action:manipulation}
 .app-nav-item[aria-current="page"]{background:var(--accent-glow);color:var(--accent)}
 .app-nav-icon{width:21px;height:21px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
 .app-nav-label{font-size:10px;font-weight:750;line-height:1;letter-spacing:.2px}
@@ -73,12 +73,8 @@ button,input,select{font:inherit}
 .form-group input,.form-group select{width:100%;padding:10px 14px;border-radius:10px;border:1px solid var(--border-subtle);background:var(--bg-subtle);color:var(--text);font-size:14px;outline:none;font-family:inherit;transition:border-color .2s}
 .form-group input:focus,.form-group select:focus{border-color:var(--accent)}
 .form-row{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.form-hint{margin-top:12px;font-size:12px;color:var(--text-muted);line-height:1.6}
 .form-actions{text-align:center;margin-top:20px}
-
-/* Goal card */
-.goal-card{background:var(--bg-subtle);border-radius:12px;padding:16px;margin-bottom:8px}
-.goal-card .gname{font-weight:600;color:var(--text)}
-.goal-card .gdetail{font-size:12px;color:var(--text-muted);margin-top:4px}
 
 /* Loading */
 .loading{text-align:center;padding:60px;color:var(--text-muted)}
@@ -109,13 +105,17 @@ button,input,select{font:inherit}
 <header class="app-header">
   <div class="app-brand" aria-hidden="true"><span class="app-brand-mark">n</span><span>neurun</span></div>
   <nav class="app-nav" aria-label="主要导航">
-    <a href="/sync" class="app-nav-item" data-nav-item>
-      <svg class="app-nav-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M20 7h-3.5A7 7 0 0 0 5 9M20 3v4h-4M4 17h3.5A7 7 0 0 0 19 15M4 21v-4h4"/></svg>
-      <span class="app-nav-label">同步</span>
+    <a href="/training" class="app-nav-item" data-nav-item>
+      <svg class="app-nav-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 12h3l2-5 4 10 2-5h5"/><path d="M5 4h14a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2Z"/></svg>
+      <span class="app-nav-label">训练</span>
     </a>
     <a href="/reports" class="app-nav-item" data-nav-item>
       <svg class="app-nav-icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="3" width="14" height="18" rx="2"/><path d="M9 8h6M9 12h6M9 16h4"/></svg>
-      <span class="app-nav-label">日报</span>
+      <span class="app-nav-label">报告</span>
+    </a>
+    <a href="/sync" class="app-nav-item" data-nav-item>
+      <svg class="app-nav-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M20 7h-3.5A7 7 0 0 0 5 9M20 3v4h-4M4 17h3.5A7 7 0 0 0 19 15M4 21v-4h4"/></svg>
+      <span class="app-nav-label">同步</span>
     </a>
     <a href="/profile" class="app-nav-item" data-nav-item aria-current="page">
       <svg class="app-nav-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="8" r="3.5"/><path d="M5 21c.5-4 3-6 7-6s6.5 2 7 6"/></svg>
@@ -173,6 +173,11 @@ button,input,select{font:inherit}
       <div class="form-group"><label>年龄</label><input id="pfAge" type="number" placeholder="30"></div>
       <div class="form-group"><label>性别</label><select id="pfGender"><option value="male">男</option><option value="female">女</option></select></div>
     </div>
+    <div class="form-row">
+      <div class="form-group"><label>静息心率 (bpm)</label><input id="pfRestHr" type="number" min="30" max="110" placeholder="55"></div>
+      <div class="form-group"><label>最大心率 (bpm)</label><input id="pfMaxHr" type="number" min="100" max="240" placeholder="190"></div>
+    </div>
+    <p class="form-hint">用于校准个人阈值心率（≈88% 心率储备）和强度判断；不填则强度评估降级为“不可用”，不会用近期跑步猜测。</p>
   </div>
 
   <!-- PBs -->
@@ -189,27 +194,6 @@ button,input,select{font:inherit}
     <div class="form-group"><label>VO2max</label><input id="pbVo2" type="number" placeholder="45"></div>
     <div class="form-actions"><button class="btn primary" id="btnProfile" onclick="saveProfile()">保存</button></div>
     <div id="profileMsg" style="text-align:center;font-size:13px;margin-top:8px"></div>
-  </div>
-
-  <!-- Goals -->
-  <div class="card">
-    <h2>🎯 训练目标</h2>
-    <div id="goalsList"></div>
-    <div class="sub" style="margin-top:12px" id="goalFormTitle">新增目标</div>
-    <input type="hidden" id="glEditId">
-    <div class="form-group"><label>目标名称</label><input id="glName" placeholder="例如：全马破4"></div>
-    <div class="form-row">
-      <div class="form-group"><label>距离</label><select id="glDist"><option value="5k">5K</option><option value="10k">10K</option><option value="hm">半马</option><option value="marathon" selected>全马</option></select></div>
-      <div class="form-group"><label>目标成绩</label><input id="glTime" placeholder="H:MM:SS"></div>
-    </div>
-    <div class="form-row">
-      <div class="form-group"><label>目标日期</label><input id="glDate" type="date"></div>
-      <div class="form-group"><label>周跑量 (km)</label><input id="glKm" type="number" placeholder="50"></div>
-    </div>
-    <div class="form-actions" style="display:flex;gap:10px;justify-content:center">
-      <button class="btn primary" id="btnGoal" onclick="saveGoal()">添加目标</button>
-      <button class="btn" id="btnCancelGoal" onclick="cancelEdit()" style="display:none">取消</button>
-    </div>
   </div>
 
   <!-- Preferences -->
@@ -235,9 +219,6 @@ var savedTheme=localStorage.getItem('neurun-theme')||'dark';
 document.body.setAttribute('data-theme',savedTheme);
 document.querySelectorAll('.theme-btn').forEach(function(b){b.classList.toggle('active',b.dataset.theme===savedTheme)});
 function setTheme(t){document.body.setAttribute('data-theme',t);localStorage.setItem('neurun-theme',t);document.querySelectorAll('.theme-btn').forEach(function(b){b.classList.toggle('active',b.dataset.theme===t)})}
-
-var nextYear=new Date();nextYear.setFullYear(nextYear.getFullYear()+1);
-document.getElementById('glDate').value=nextYear.toISOString().slice(0,10);
 
 async function load(){
   try{
@@ -275,26 +256,13 @@ async function load(){
     document.getElementById('pfWeight').value=pi.weight_kg||'';
     document.getElementById('pfAge').value=pi.age||'';
     document.getElementById('pfGender').value=pi.gender||'male';
+    document.getElementById('pfRestHr').value=pi.resting_heart_rate||'';
+    document.getElementById('pfMaxHr').value=pi.max_heart_rate||'';
     document.getElementById('pb5k').value=(pbs['5k']||{}).time||'';
     document.getElementById('pb10k').value=(pbs['10k']||{}).time||'';
     document.getElementById('pbHm').value=(pbs.half_marathon||{}).time||'';
     document.getElementById('pbM').value=(pbs.marathon||{}).time||'';
     document.getElementById('pbVo2').value=pbs.vo2max_estimate||'';
-
-    // Goals
-    var gl=d.goals||[],gh='';
-    gl.forEach(function(g){
-      var m=g.metrics||{},dist=Object.keys(m).find(function(k){return k.startsWith('target_')})||'';
-      dist=dist.replace('target_','');
-      gh+='<div class="goal-card">';
-      gh+='<div style="display:flex;justify-content:space-between;align-items:flex-start">';
-      gh+='<div><div class="gname">'+(g.title||g.id)+'</div><div class="gdetail">'+dist+' | 目标: '+(m['target_'+dist]||'—')+' | 截止: '+(g.target_date||'—')+' | 周跑量: '+(m.weekly_mileage_km||'—')+' km</div></div>';
-      gh+='<div style="display:flex;gap:6px;flex-shrink:0">';
-      gh+='<button class="btn" style="padding:4px 10px;font-size:11px" onclick="editGoal(\''+g.id+'\',\''+(g.title||g.id)+'\',\''+dist+'\',\''+(m['target_'+dist]||'')+'\',\''+(g.target_date||'')+'\',\''+(m.weekly_mileage_km||'')+'\')">编辑</button>';
-      gh+='<button class="btn" style="padding:4px 10px;font-size:11px;border-color:var(--danger);color:var(--danger)" onclick="deleteGoal(\''+g.id+'\')">删除</button>';
-      gh+='</div></div></div>';
-    });
-    document.getElementById('goalsList').innerHTML=gh||'<div style="color:var(--text-muted);font-size:13px">暂无目标</div>';
 
     // Preferences
     var pr=d.preferences||{},tp=pr.training_preferences||{};
@@ -328,6 +296,7 @@ async function saveProfile(){
     var r=await fetch('/api/profile',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({
       height_cm:document.getElementById('pfHeight').value||null,weight_kg:document.getElementById('pfWeight').value||null,
       age:document.getElementById('pfAge').value||null,gender:document.getElementById('pfGender').value,
+      resting_heart_rate:document.getElementById('pfRestHr').value||null,max_heart_rate:document.getElementById('pfMaxHr').value||null,
       pbs:{'5k':document.getElementById('pb5k').value||null,'10k':document.getElementById('pb10k').value||null,
         half_marathon:document.getElementById('pbHm').value||null,marathon:document.getElementById('pbM').value||null,
         vo2max:document.getElementById('pbVo2').value||null}
@@ -336,74 +305,6 @@ async function saveProfile(){
     document.getElementById('profileMsg').innerHTML=d.status==='ok'?'<span style="color:var(--performance)">✅ 已保存</span>':'<span style="color:var(--danger)">❌ '+(d.message||'失败')+'</span>';
   }catch(e){document.getElementById('profileMsg').innerHTML='<span style="color:var(--danger)">网络错误</span>'}
   btn.disabled=false;btn.textContent='保存';
-}
-
-async function saveGoal(){
-  var editId=document.getElementById('glEditId').value;
-  if(editId) return updateGoal(editId);
-
-  var btn=document.getElementById('btnGoal'),n=document.getElementById('glName').value.trim();
-  if(!n){alert('请输入目标名称');return}
-  btn.disabled=true;btn.innerHTML='<span class="spinner"></span>';
-  try{
-    await fetch('/api/goals',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({
-      name:n,distance:document.getElementById('glDist').value,target_time:document.getElementById('glTime').value||null,
-      target_date:document.getElementById('glDate').value||null,weekly_km:document.getElementById('glKm').value||null
-    })});
-    clearGoalForm();
-    load();
-  }catch(e){}
-  btn.disabled=false;btn.textContent='添加目标';
-}
-
-function editGoal(id,title,dist,targetTime,targetDate,weeklyKm){
-  document.getElementById('glEditId').value=id;
-  document.getElementById('glName').value=title||'';
-  document.getElementById('glDist').value=dist||'marathon';
-  document.getElementById('glTime').value=targetTime||'';
-  document.getElementById('glDate').value=targetDate||'';
-  document.getElementById('glKm').value=weeklyKm||'';
-  document.getElementById('btnGoal').textContent='更新目标';
-  document.getElementById('btnCancelGoal').style.display='inline-block';
-  document.getElementById('goalFormTitle').textContent='编辑目标';
-  window.scrollTo({top:document.getElementById('glName').offsetTop-100,behavior:'smooth'});
-}
-
-function cancelEdit(){
-  clearGoalForm();
-  document.getElementById('btnGoal').textContent='添加目标';
-  document.getElementById('btnCancelGoal').style.display='none';
-  document.getElementById('goalFormTitle').textContent='新增目标';
-}
-
-function clearGoalForm(){
-  document.getElementById('glEditId').value='';
-  document.getElementById('glName').value='';
-  document.getElementById('glTime').value='';
-  document.getElementById('glKm').value='';
-}
-
-async function updateGoal(id){
-  var btn=document.getElementById('btnGoal'),n=document.getElementById('glName').value.trim();
-  if(!n){alert('请输入目标名称');return}
-  btn.disabled=true;btn.innerHTML='<span class="spinner"></span>';
-  try{
-    await fetch('/api/goals/'+id,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({
-      name:n,distance:document.getElementById('glDist').value,target_time:document.getElementById('glTime').value||null,
-      target_date:document.getElementById('glDate').value||null,weekly_km:document.getElementById('glKm').value||null
-    })});
-    cancelEdit();
-    load();
-  }catch(e){}
-  btn.disabled=false;btn.textContent='添加目标';
-}
-
-async function deleteGoal(id){
-  if(!confirm('确定删除这个目标吗？'))return;
-  try{
-    await fetch('/api/goals/'+id,{method:'DELETE'});
-    load();
-  }catch(e){alert('删除失败: '+e.message)}
 }
 
 async function savePrefs(){

@@ -3,7 +3,7 @@
 import os
 from unittest import mock
 
-from src.config import Config, ConfigError, _mask_email, get_config
+from src.config import Config, ConfigError, _mask_email, get_ai_config, get_config
 
 
 class TestMaskEmail:
@@ -124,6 +124,41 @@ class TestProviderConfig:
         assert stat.S_IMODE(credential_path.stat().st_mode) == 0o600
 
 
+class TestAIConfig:
+    def test_generic_environment_configures_openai_compatible_endpoint(self):
+        with mock.patch.dict(os.environ, {
+            "NEURUN_AI_API_KEY": "generic-key",
+            "NEURUN_AI_BASE_URL": "https://example.test/v1/",
+            "NEURUN_AI_MODEL": "example-model",
+        }, clear=True):
+            config = get_ai_config()
+
+        assert config.api_key == "generic-key"
+        assert config.base_url == "https://example.test/v1"
+        assert config.chat_completions_url == (
+            "https://example.test/v1/chat/completions"
+        )
+        assert config.model == "example-model"
+        assert "generic-key" not in repr(config)
+
+    def test_full_chat_completions_endpoint_is_not_duplicated(self):
+        config = get_ai_config(
+            api_key="key",
+            base_url="https://example.test/v1/chat/completions/",
+        )
+
+        assert config.chat_completions_url == (
+            "https://example.test/v1/chat/completions"
+        )
+
+    def test_ai_api_key_is_read_from_generic_environment(self):
+        with mock.patch.dict(os.environ, {
+            "NEURUN_AI_API_KEY": "generic-key",
+        }, clear=True):
+            config = get_ai_config()
+
+        assert config.api_key == "generic-key"
+
 class TestInviteCodeConfig:
     def test_invite_codes_default_to_web_data_dir(self, tmp_path):
         config = Config(data_dir=str(tmp_path))
@@ -142,16 +177,25 @@ class TestWebSyncCapacityConfig:
 
         assert config.sync_max_concurrency == 4
         assert config.sync_max_pending == 100
+        assert config.ai_max_concurrency == 32
+        assert config.ai_max_pending == 64
+        assert config.ai_wait_timeout_seconds == 5
 
     def test_environment_overrides_capacity(self):
         with mock.patch.dict(os.environ, {
             "NEURUN_SYNC_MAX_CONCURRENCY": "6",
             "NEURUN_SYNC_MAX_PENDING": "120",
+            "NEURUN_AI_MAX_CONCURRENCY": "3",
+            "NEURUN_AI_MAX_PENDING": "9",
+            "NEURUN_AI_WAIT_TIMEOUT_SECONDS": "2.5",
         }, clear=True):
             config = Config()
 
         assert config.sync_max_concurrency == 6
         assert config.sync_max_pending == 120
+        assert config.ai_max_concurrency == 3
+        assert config.ai_max_pending == 9
+        assert config.ai_wait_timeout_seconds == 2.5
 
 
 def test_rundown_home_does_not_inherit_global_user_credentials(tmp_path):

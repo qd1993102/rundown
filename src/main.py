@@ -34,7 +34,7 @@ from .config import get_config, ConfigError
 from .auth import AuthManager
 from .fetcher import Fetcher
 from .storage import Storage
-from .memory import MemoryStore, MemoryType, MemoryStatus
+from .memory import MemoryStore, MemoryType, MemoryStatus, get_daily_activities
 from .render import render_daily_html
 from .image import render_daily_image
 from .local_files import (
@@ -44,6 +44,12 @@ from .local_files import (
     restrict_private_file,
 )
 from .resource_lifecycle import close_runtime_resources
+from .training_service_factory import build_capacity_athlete_context
+from .report_readiness import (
+    DailyReportReadinessError,
+    DailyReportReadinessService,
+    enforce_report_readiness,
+)
 
 logger = logging.getLogger(__name__)
 console = Console()
@@ -189,12 +195,13 @@ def _get_user_id(auth: AuthManager) -> int:
     raise RuntimeError("无法获取运动平台 user_id，请检查账号配置")
 
 
-def _get_ai_insight(fm: dict[str, Any], target_date: date,
-                    memory_store=None) -> dict[str, Any] | None:
-    """调用 DeepSeek API 获取 AI 教练洞察。"""
+def _get_ai_insight(
+    fm: dict[str, Any], target_date: date,
+) -> dict[str, Any] | None:
+    """调用配置的 AI 服务获取教练洞察。"""
     try:
         from .coach import get_coach_insight
-        return get_coach_insight(fm, target_date, memory_store=memory_store)
+        return get_coach_insight(fm, target_date)
     except Exception as exc:
         logger.warning("AI 洞察生成失败: %s", exc)
         return None
@@ -242,9 +249,10 @@ def cmd_sync(args: argparse.Namespace) -> None:
     storage.reset_pending_metrics(user_id, start, end, force=force)
 
     # 执行同步
-    if config.provider_type == "garmin":
-        # Garmin: 使用 garmy SyncManager（健康数据）+ 直同步活动
-        try:
+    storage.mark_sync_calendar_range(user_id, start, end, "pending")
+    try:
+        if config.provider_type == "garmin":
+            # Garmin: 使用 garmy SyncManager（健康数据）+ 直同步活动
             result = storage.sync_range(user_id, start, end, args.metrics)
             console.print(f"[green]✅ 同步完成[/]")
             if result:
@@ -253,16 +261,17 @@ def cmd_sync(args: argparse.Namespace) -> None:
             # garmy ActivitiesIterator 有状态 bug：按日期升序处理时游标不回退，
             # 导致后续日期的活动被跳过。这里用我们自己的 fetch 直写 DB 作为补充。
             _sync_garmin_activities(provider, storage, user_id, start, end)
-        except Exception as exc:
-            console.print(f"[red]❌ 同步失败: {exc}[/]")
-            return
-    elif config.provider_type in ("coros", "huawei"):
-        # Coros/Huawei: Provider 标准化后直接写入 SQLite
-        try:
+        elif config.provider_type in ("coros", "huawei"):
+            # Coros/Huawei: Provider 标准化后直接写入 SQLite
             _sync_provider(provider, storage, user_id, start, end, config.provider_type)
-        except Exception as exc:
-            console.print(f"[red]❌ 同步失败: {exc}[/]")
-            return
+    except Exception as exc:
+        storage.mark_sync_calendar_range(
+            user_id, start, end, "failed", error_message=str(exc),
+        )
+        console.print(f"[red]❌ 同步失败: {exc}[/]")
+        return
+    else:
+        storage.mark_sync_calendar_range(user_id, start, end, "completed")
 
     console.print("[dim]💡 运行 [bold]neurun daily[/bold] 生成日报[/]")
 
@@ -303,6 +312,24 @@ def _ensure_activity_columns(storage: Storage) -> None:
             session.close()
 
 
+def _ensure_health_threshold_columns(storage: Storage) -> None:
+    """补齐 daily_health_metrics 表的平台乳酸阈值列（lthr/ltsp）。"""
+    from sqlalchemy import text
+
+    for column_sql in (
+        "ALTER TABLE daily_health_metrics ADD COLUMN lthr INTEGER",
+        "ALTER TABLE daily_health_metrics ADD COLUMN ltsp INTEGER",
+    ):
+        session = storage.db.get_session()
+        try:
+            session.execute(text(column_sql))
+            session.commit()
+        except Exception:
+            session.rollback()
+        finally:
+            session.close()
+
+
 def _sync_garmin_activities(provider, storage, user_id: int, start: date, end: date) -> None:
     """Garmin 活动直同步：绕过 garmy ActivitiesIterator 的状态 bug。
 
@@ -323,7 +350,8 @@ def _sync_garmin_activities(provider, storage, user_id: int, start: date, end: d
         row = session.execute(
             text("""
                 SELECT distance_meters, activity_type, elevation_gain,
-                       max_heart_rate, calories, provider_name
+                       max_heart_rate, calories, provider_name,
+                       avg_heart_rate, training_load
                 FROM activities WHERE activity_id = :aid
             """),
             {"aid": a.activity_id}
@@ -357,6 +385,8 @@ def _sync_garmin_activities(provider, storage, user_id: int, start: date, end: d
             or (a.max_heart_rate is not None and row[3] != a.max_heart_rate)
             or (a.calories is not None and row[4] != a.calories)
             or row[5] != "garmin"
+            or (a.avg_heart_rate is not None and row[6] != a.avg_heart_rate)
+            or (a.training_load > 0 and row[7] != a.training_load)
         ):
             # 已有记录：补全标准活动事实，不覆盖未知值。
             session.execute(text("""
@@ -365,6 +395,10 @@ def _sync_garmin_activities(provider, storage, user_id: int, start: date, end: d
                         WHEN :dist > 0 THEN :dist ELSE distance_meters
                     END,
                     activity_type = :atype,
+                    avg_heart_rate = COALESCE(:hr, avg_heart_rate),
+                    training_load = CASE
+                        WHEN :tl > 0 THEN :tl ELSE training_load
+                    END,
                     max_heart_rate = COALESCE(:mhr, max_heart_rate),
                     calories = COALESCE(:cal, calories),
                     elevation_gain = COALESCE(:elev, elevation_gain),
@@ -373,6 +407,7 @@ def _sync_garmin_activities(provider, storage, user_id: int, start: date, end: d
             """), {
                 "dist": a.distance_meters,
                 "atype": a.activity_type,
+                "hr": a.avg_heart_rate, "tl": a.training_load,
                 "mhr": a.max_heart_rate,
                 "cal": a.calories,
                 "elev": a.elevation_gain,
@@ -418,7 +453,8 @@ def _sync_provider(provider, storage, user_id: int, start: date, end: date,
         existing = session.execute(
             text("""
                 SELECT duration_seconds, activity_type, distance_meters,
-                       elevation_gain, max_heart_rate, calories, provider_name
+                       elevation_gain, max_heart_rate, calories, provider_name,
+                       avg_heart_rate, training_load
                 FROM activities WHERE activity_id = :aid
             """),
             {"aid": a.activity_id}
@@ -457,11 +493,17 @@ def _sync_provider(provider, storage, user_id: int, start: date, end: date,
             or (a.max_heart_rate is not None and existing[4] != a.max_heart_rate)
             or (a.calories is not None and existing[5] != a.calories)
             or existing[6] != provider_name
+            or (a.avg_heart_rate is not None and existing[7] != a.avg_heart_rate)
+            or (a.training_load > 0 and existing[8] != a.training_load)
         ):
             session.execute(text("""
                 UPDATE activities
                 SET duration_seconds = :dur,
                     activity_type = :atype,
+                    avg_heart_rate = COALESCE(:hr, avg_heart_rate),
+                    training_load = CASE
+                        WHEN :tl > 0 THEN :tl ELSE training_load
+                    END,
                     distance_meters = CASE
                         WHEN :dist > 0 THEN :dist ELSE distance_meters
                     END,
@@ -473,6 +515,7 @@ def _sync_provider(provider, storage, user_id: int, start: date, end: date,
             """), {
                 "dur": a.duration_seconds,
                 "atype": a.activity_type,
+                "hr": a.avg_heart_rate, "tl": a.training_load,
                 "dist": a.distance_meters,
                 "mhr": a.max_heart_rate,
                 "cal": a.calories,
@@ -492,6 +535,7 @@ def _sync_provider(provider, storage, user_id: int, start: date, end: date,
         progress_callback, "syncing_metrics", 3, 4, "正在同步健康指标",
     )
     console.print("[dim]📥 拉取健康数据...[/]")
+    _ensure_health_threshold_columns(storage)
     stored_health = 0
     updated_health = 0
     if provider_name == "coros" and progress_callback is not None:
@@ -532,10 +576,10 @@ def _sync_provider(provider, storage, user_id: int, start: date, end: date,
                          avg_stress_level, body_battery_high, body_battery_low,
                          total_steps, total_distance_meters, total_calories,
                          active_calories, training_readiness_score,
-                         training_readiness_level, created_at, updated_at)
+                         training_readiness_level, lthr, ltsp, created_at, updated_at)
                     VALUES (:uid, :md, :sl, :ds, :rs, :dp, :rp, :rhr,
                             :hw, :hn, :hs, :as, :bh, :bl,
-                            :ts, :td, :tc, :ac, :trs, :trl,
+                            :ts, :td, :tc, :ac, :trs, :trl, :lthr, :ltsp,
                             datetime('now'), datetime('now'))
                 """), {
                     "uid": user_id, "md": str(d),
@@ -549,6 +593,8 @@ def _sync_provider(provider, storage, user_id: int, start: date, end: date,
                     "tc": health.total_calories, "ac": health.active_calories,
                     "trs": health.training_readiness_score,
                     "trl": health.training_readiness_level,
+                    "lthr": health.extra.get("lthr") if isinstance(health.extra, dict) else None,
+                    "ltsp": health.extra.get("ltsp") if isinstance(health.extra, dict) else None,
                 })
                 stored_health += 1
             else:
@@ -574,6 +620,8 @@ def _sync_provider(provider, storage, user_id: int, start: date, end: date,
                         active_calories = CASE WHEN :ac > 0 THEN :ac ELSE active_calories END,
                         training_readiness_score = COALESCE(:trs, training_readiness_score),
                         training_readiness_level = CASE WHEN :trl != '' THEN :trl ELSE training_readiness_level END,
+                        lthr = COALESCE(:lthr, lthr),
+                        ltsp = COALESCE(:ltsp, ltsp),
                         updated_at = datetime('now')
                     WHERE user_id = :uid AND metric_date = :md
                 """), {
@@ -588,6 +636,8 @@ def _sync_provider(provider, storage, user_id: int, start: date, end: date,
                     "tc": health.total_calories, "ac": health.active_calories,
                     "trs": health.training_readiness_score,
                     "trl": health.training_readiness_level,
+                    "lthr": health.extra.get("lthr") if isinstance(health.extra, dict) else None,
+                    "ltsp": health.extra.get("ltsp") if isinstance(health.extra, dict) else None,
                 })
                 updated_health += 1
             session.commit()
@@ -609,23 +659,76 @@ def _sync_activity_details(
     fetch_detail = getattr(provider.activities, "fetch_activity_detail", None)
     if not callable(fetch_detail):
         return {"total": len(activities), "stored": 0, "failed": 0}
+    fetch_splits = getattr(provider.activities, "fetch_activity_splits", None)
 
     ensure_tables(storage)
     stored = 0
     failed = 0
     for activity in activities:
         try:
-            existing_detail = get_activity_detail(storage, str(activity.activity_id))
-            existing_splits = get_activity_splits(storage, str(activity.activity_id))
-            is_running = "run" in str(activity.activity_type).lower()
-            if existing_detail and (existing_splits or not is_running):
+            activity_id = str(activity.activity_id)
+            existing_detail = get_activity_detail(storage, activity_id)
+            existing_splits = get_activity_splits(storage, activity_id)
+            is_running = "run" in str(activity.activity_type).lower() or "跑" in str(
+                getattr(activity, "activity_name", "") or ""
+            )
+            # 旧结构（session-summary 无 segment_sequence）的跑步活动需要重拉一次，
+            # 补齐 Garmin /splits 官方分段（lapDTOs），否则永远停留在 ×2 坏数据。
+            has_summary = _has_summary_facts(storage, activity_id)
+            needs_provider_normalization = _summary_needs_provider_normalization(
+                storage, activity_id, existing_detail,
+            )
+            needs_relap = (
+                is_running and existing_detail and has_summary
+                and not _summary_has_sequence(storage, activity_id)
+            )
+            # 有 detail 但缺 activity_summary_facts（旧同步或摘要重建失败）：用已有 detail
+            # 重建分段摘要（intensity 配速带 / pace_profile 分位数 / structure），
+            # 不强制重拉 detail——否则【今天对计划意味着什么】永远拿不到分段配速分析。
+            needs_summary = bool(existing_detail) and (
+                not has_summary or needs_provider_normalization
+            )
+            if (
+                existing_detail
+                and (existing_splits or not is_running)
+                and not needs_relap
+                and not needs_summary
+            ):
                 continue
-            detail = fetch_detail(str(activity.activity_id))
+            # Coros 需要活动类型数字（sportType）才能取详情；其他 Provider 忽略。
+            sport_type = 0
+            extra = getattr(activity, "extra", None) or {}
+            if isinstance(extra, dict) and extra.get("provider") == "coros":
+                sport_type = int(extra.get("sport_type") or 0)
+            if needs_summary and not needs_relap:
+                # 仅缺摘要：直接用已有 detail 重建，不重新拉取、不附加 lapDTOs。
+                detail = existing_detail
+            else:
+                try:
+                    detail = fetch_detail(activity_id, sport_type=sport_type)
+                except TypeError:
+                    detail = fetch_detail(activity_id)
             if not isinstance(detail, dict) or not detail:
                 failed += 1
                 continue
+            # 跑步活动：附加官方分段（可信 lapDTOs），供分段分析与结构识别
+            if is_running and callable(fetch_splits):
+                try:
+                    laps = fetch_splits(activity_id)
+                except Exception:
+                    laps = []
+                if laps:
+                    detail["lapDTOs"] = laps
+                elif existing_detail and existing_detail.get("lapDTOs"):
+                    # 重拉失败：保留已有 lapDTOs，避免覆盖已修复的分段数据
+                    detail["lapDTOs"] = existing_detail["lapDTOs"]
+                elif needs_relap:
+                    # needs_relap 就是为了补齐 lapDTOs：本次拉取失败则不覆盖，
+                    # 保持现状等下次同步再试，绝不把已修复/已存在数据降级回旧 schema。
+                    failed += 1
+                    continue
             if store_activity_detail(
-                storage, user_id, str(activity.activity_id), detail,
+                storage, user_id, activity_id, detail,
             ):
                 stored += 1
             else:
@@ -637,6 +740,56 @@ def _sync_activity_details(
                 getattr(activity, "activity_id", ""), type(exc).__name__,
             )
     return {"total": len(activities), "stored": stored, "failed": failed}
+
+
+def _summary_has_sequence(storage, activity_id: str) -> bool:
+    """当前代码产物判定：summary 含 segment_sequence 且段含 duration_s（新 schema 标志）。
+
+    旧表（sequence 无 duration_s / split_type 缺 intensityType）返回 False，
+    触发一次重拉修复；重拉后不再重复。
+    """
+    try:
+        from .activity import get_activity_summary_facts
+
+        facts = get_activity_summary_facts(storage, activity_id)
+    except Exception:
+        return False
+    sequence = (facts or {}).get("segment_sequence") or []
+    return bool(sequence and "duration_s" in (sequence[0] or {}))
+
+
+def _summary_needs_provider_normalization(
+    storage, activity_id: str, detail: dict[str, Any] | None,
+) -> bool:
+    """Detect replayable Coros details created before unit/Hz normalization."""
+    if not isinstance(detail, dict) or not (
+        detail.get("frequencyList") or detail.get("lapList")
+    ):
+        return False
+    try:
+        from .activity import get_activity_summary_facts
+
+        facts = get_activity_summary_facts(storage, activity_id) or {}
+    except Exception:
+        return True
+    volume = facts.get("volume") or {}
+    gate = facts.get("quantity_gate") or {}
+    return bool(
+        facts.get("granularity") != "L2"
+        or not volume.get("duration_s")
+        or not volume.get("distance_m")
+        or gate.get("quantity_reliable") is False
+    )
+
+
+def _has_summary_facts(storage, activity_id: str) -> bool:
+    """活动是否已有 activity_summary_facts（分段摘要）记录。"""
+    try:
+        from .activity import get_activity_summary_facts
+
+        return get_activity_summary_facts(storage, activity_id) is not None
+    except Exception:
+        return False
 
 
 def _do_data_sync(config, target: date | None = None,
@@ -777,37 +930,96 @@ def _local_report_context(config):
 def _do_daily_sync(config, target: date | None = None,
                    skip_sync: bool = False, full_sync: bool = False,
                    force_sync: bool = False, sync_days: int | None = None,
-                   quiet: bool = False):
+                   quiet: bool = False, report_mode: str = "complete"):
     """按需同步后生成日报；``skip_sync`` 时严格只读取本地 SQLite。"""
     target = target or date.today()
 
     if skip_sync:
         provider, storage, memory_store, user_id = _local_report_context(config)
     else:
-        provider, storage, memory_store, user_id = _do_data_sync(
-            config=config,
-            target=target,
-            full_sync=full_sync,
-            force_sync=force_sync,
-            sync_days=sync_days,
-            quiet=quiet,
-        )
+        local_context = None
+        effective_sync_days = sync_days
+        if not full_sync and not force_sync and sync_days is None:
+            try:
+                local_context = _local_report_context(config)
+                _local_provider, local_storage, _local_memory, local_user_id = local_context
+                local_readiness = DailyReportReadinessService(
+                    local_storage, provider_type=config.provider_type,
+                ).check(local_user_id, target)
+                enforce_report_readiness(local_readiness, report_mode)
+            except DailyReportReadinessError as exc:
+                if local_context is not None:
+                    close_runtime_resources(local_context[0], local_context[1])
+                local_context = None
+                actions = set(exc.readiness.suggested_actions)
+                if "sync_28d" in actions:
+                    effective_sync_days = 27
+                elif "sync_7d" in actions:
+                    effective_sync_days = 6
+                else:
+                    effective_sync_days = 0
+            except RuntimeError:
+                if local_context is not None:
+                    close_runtime_resources(local_context[0], local_context[1])
+                local_context = None
+                effective_sync_days = 27 if report_mode == "complete" else 0
+
+        if local_context is not None:
+            provider, storage, memory_store, user_id = local_context
+        else:
+            provider, storage, memory_store, user_id = _do_data_sync(
+                config=config,
+                target=target,
+                full_sync=full_sync,
+                force_sync=force_sync,
+                sync_days=effective_sync_days,
+                quiet=quiet,
+            )
 
     def _log(msg: str) -> None:
         if not quiet:
             console.print(msg)
 
-    _log("[yellow]📰 生成日报...[/]")
-    mem = memory_store.generate_daily_report(user_id, target)
-    if mem is None:
-        raise RuntimeError(f"无法生成 {target} 的日报")
+    try:
+        readiness = DailyReportReadinessService(
+            storage, provider_type=config.provider_type,
+        ).check(user_id, target)
+        enforce_report_readiness(readiness, report_mode)
+        readiness_snapshot = readiness.to_dict()
 
-    ai_result = _get_ai_insight(mem.front_matter, target, memory_store=memory_store)
-    if ai_result:
-        # 使用 coach.md 产出的同一份洞察重新渲染，保持 Front Matter 与正文一致。
+        _log("[yellow]📰 生成日报...[/]")
+        try:
+            athlete_context = build_capacity_athlete_context(
+                config, target, omitted_sections=readiness.omitted_sections,
+            )
+        except Exception:
+            athlete_context = {
+                "status": "unavailable",
+                "reason": "capacity_load_error",
+                "source": "training_domain_capacity_profile",
+            }
         mem = memory_store.generate_daily_report(
-            user_id, target, ai_insight=ai_result,
+            user_id,
+            target,
+            ai_insight=None,
+            readiness=readiness_snapshot,
+            athlete_context=athlete_context,
+            persist=False,
         )
+        if mem is None:
+            raise RuntimeError(f"无法生成 {target} 的日报")
+
+        # 受限版同样生成在线洞察：缺失维度在 Front Matter 中标记 unavailable 并随
+        # omitted_sections 传入 Skill，模型契约要求保留未知、只解释可用事实
+        # （运动概要/当日训练/负荷等）；不因辅助维度缺失整块跳过 AI，避免
+        # “今天对计划意味着什么”在用户有跑步时没有任何跑步分析。
+        ai_result = _get_ai_insight(mem.front_matter, target)
+        if ai_result:
+            mem.front_matter["ai_insight"] = ai_result
+        mem = memory_store.finalize_daily_report(mem)
+    except Exception:
+        close_runtime_resources(provider, storage)
+        raise
 
     return mem, provider, storage, memory_store, user_id
 
@@ -822,21 +1034,33 @@ def cmd_daily(args: argparse.Namespace) -> None:
     full_sync = getattr(args, 'full', False)
     force_sync = getattr(args, 'force', False)
     sync_days = getattr(args, 'sync_days', None)
+    report_mode = getattr(args, 'report_mode', 'complete')
 
     try:
         mem, provider, storage, memory_store, user_id = _do_daily_sync(
             config=config, target=target, skip_sync=skip_sync,
             full_sync=full_sync, force_sync=force_sync,
-            sync_days=sync_days, quiet=False,
+            sync_days=sync_days, quiet=False, report_mode=report_mode,
         )
+    except DailyReportReadinessError as exc:
+        if getattr(args, "format", "md") == "json":
+            import json as _json
+            console.print_json(_json.dumps(exc.to_dict(), ensure_ascii=False))
+        else:
+            console.print(f"[red]{exc}[/]")
+            for action in exc.readiness.suggested_actions:
+                console.print(f"  [dim]建议操作: {action}[/]")
+        raise SystemExit(2) from exc
     except RuntimeError as exc:
         console.print(f"[red]{exc}[/]")
         return
 
     ai_result = mem.front_matter.get('ai_insight', {})
     console.print(f"  ✅ md: {mem.path}")
-    if ai_result:
-        console.print(f"  🤖 AI 洞察: {ai_result.get('model', 'deepseek-chat')}")
+    if mem.front_matter.get("data_readiness") == "limited":
+        console.print("  ⚠️  数据受限：已省略不具备依据的结论，未调用 AI")
+    elif ai_result:
+        console.print(f"  🤖 AI 洞察: {ai_result.get('model', '已配置模型')}")
     else:
         console.print(f"  🤖 AI 洞察: 规则引擎 fallback")
 
@@ -865,7 +1089,7 @@ def cmd_daily(args: argparse.Namespace) -> None:
 
     # ── 终端摘要 ──
     fm = mem.front_matter
-    ya = fm.get("yesterday_activities", {})
+    ya = get_daily_activities(fm)
     sleep = fm.get("last_night_sleep", {})
     morning = fm.get("this_morning", {})
     load = fm.get("training_load", {})
@@ -881,15 +1105,15 @@ def cmd_daily(args: argparse.Namespace) -> None:
     # 当日训练
     if ya.get("activity_state") == "unknown":
         console.print(
-            "\n[bold]🏃 今日训练[/]: [yellow]运动数据未同步，训练/休息状态未知[/]"
+            "\n[bold]🏃 当日训练[/]: [yellow]运动数据未同步，训练/休息状态未知[/]"
         )
     elif ya.get("is_rest_day"):
-        console.print(f"\n[bold]🏃 今日训练[/]: [dim]休息日（无正式记录）[/]")
+        console.print(f"\n[bold]🏃 当日训练[/]: [dim]休息日（无正式记录）[/]")
         console.print(f"   [dim]全天活动: {ya.get('daily_steps', 0)} 步 | "
                       f"{ya.get('daily_distance_km', 0)} km | "
                       f"活动消耗 {ya.get('daily_active_cal', 0)} cal[/]")
     else:
-        console.print(f"\n[bold]🏃 今日训练[/]: {ya.get('day_type', '?')} | "
+        console.print(f"\n[bold]🏃 当日训练[/]: {ya.get('day_type', '?')} | "
                       f"{ya.get('total_duration_min', 0)}min | "
                       f"{ya.get('total_distance_km', 0):.1f}km | "
                       f"负荷 {ya.get('total_training_load', 0)}")
@@ -1261,11 +1485,13 @@ def cmd_setup(args: argparse.Namespace) -> None:
     if has_goal.lower() == "y":
         goal_name = _ask("目标名称", "5K 突破")
         goal_distance = _ask("目标距离 (5k/10k/hm/marathon)", "5k")
+        goal_intent = _ask("目标意图 (completion/performance)", "performance")
         goal_time = _ask("目标成绩", "")
+        if goal_intent not in {"completion", "performance"}:
+            goal_intent = "performance" if goal_time else "completion"
         goal_date_str = _ask("目标日期 (YYYY-MM-DD)", str(date.today().replace(year=date.today().year + 1)))
-        goal_weekly_km = _ask("目标周跑量 (km)", "50")
     else:
-        goal_name = goal_distance = goal_time = goal_date_str = goal_weekly_km = ""
+        goal_name = goal_distance = goal_intent = goal_time = goal_date_str = ""
 
     # ── 4. 训练偏好 ──
     console.print("\n[bold]4/4 训练偏好[/]")
@@ -1330,25 +1556,23 @@ def cmd_setup(args: argparse.Namespace) -> None:
             "type": "goal",
             "id": goal_id,
             "goal_type": "time_based",
+            "goal_intent": goal_intent or ("performance" if goal_time else "completion"),
             "category": "running",
             "status": "active",
             "priority": "high",
             "created": str(date.today()),
             "target_date": goal_date_str,
             "review_cycle": "weekly",
-            "metrics": {
-                f"target_{goal_distance}": goal_time,
-                "weekly_mileage_km": int(goal_weekly_km) if goal_weekly_km.isdigit() else 50,
-            },
+            "metrics": {f"target_{goal_distance}": goal_time},
             "tags": [goal_distance, str(date.today().year), "active"],
         }
         goal_body = f"""# {goal_name}
 
 ## 目标
 - 距离: {goal_distance}
+- 目标意图: {goal_intent or ('performance' if goal_time else 'completion')}
 - 目标成绩: {goal_time}
 - 截止日期: {goal_date_str}
-- 周跑量目标: {goal_weekly_km} km
 
 ## 进度
 创建于 {date.today()}，定期更新。
@@ -1501,7 +1725,7 @@ def cmd_invite(args: argparse.Namespace) -> None:
 
 
 def cmd_serve() -> None:
-    """SAE / VPS 入口：启动 Web Chat 服务（含 MCP Server SSE）。
+    """SAE / VPS 入口：启动 Web 应用服务（含 MCP Server SSE）。
 
     环境变量驱动：
     - NEURUN_DATA_DIR: 数据根目录 (默认 ./data)
@@ -1536,7 +1760,7 @@ def cmd_serve() -> None:
     host = os.getenv("MCP_HOST", "0.0.0.0")
     port = int(os.getenv("MCP_PORT", "8080"))
 
-    logger.info("🚀 neurun Web Chat 启动中... transport=%s host=%s port=%s", transport, host, port)
+    logger.info("🚀 neurun Web 应用启动中... transport=%s host=%s port=%s", transport, host, port)
     logger.info("📂 数据目录: %s", config.data_dir)
 
     server.run(transport=transport, host=host, port=port)
@@ -1607,6 +1831,9 @@ def build_parser() -> argparse.ArgumentParser:
                          help="同步最近 N 天数据后生成报告 (默认自动检测)")
     p_daily.add_argument("--skip-sync", action="store_true",
                          help="跳过自动同步，仅基于本地已有数据生成报告")
+    p_daily.add_argument("-m", "--report-mode", choices=["complete", "limited"],
+                         default="complete",
+                         help="报告门禁模式：完整报告或显式受限版（默认 complete）")
     p_daily.add_argument("--full", action="store_true",
                          help="全量同步（3年）后生成报告")
     p_daily.add_argument("--force", action="store_true",

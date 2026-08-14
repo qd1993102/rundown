@@ -1,16 +1,19 @@
-# 设计方案 — 13. Web Chat 部署方案（多用户）
+# 设计方案 — 13. Web 应用部署方案（多用户）
 
-> 版本: v3.4 · 更新日期: 2026-07-31 · 状态: 代码已实现并通过本地验证；ECS 验收待完成
+> 版本: v3.6 · 更新日期: 2026-08-04 · 状态: 代码已实现并通过本地验证；ECS 验收待完成；海外部署见 §14 附录
 
 ---
 
 ## 1. 背景与目标
 
-将 neurun 部署到阿里云轻量应用服务器（或同等廉价 VPS），通过 **Web Chat 页面**直接面向普通用户，
-不需要任何 AI 客户端（Claude Desktop / OpenClaw）。用户打开浏览器 → 邀请注册/登录 →
-绑定运动平台 → 直接和 AI 教练对话。
+将 neurun 部署到阿里云轻量应用服务器（或同等廉价 VPS），通过结构化 **Web 应用**直接面向普通用户。
+用户打开浏览器 → 邀请注册/登录 → 绑定运动平台 → 同步数据 → 查看训练、日报和档案。
+Web 不提供通用聊天、聊天历史或流式对话接口；在线 AI 只在用户触发的明确工作流中生成结构化结果。
 
 **初期约束**：低成本（月费 < ¥100）、不引入中间件、零前端框架依赖。
+
+海外机房、国际域名与 Cloudflare 入口网关的渠道选型与部署步骤见
+[14-overseas-deployment.md](14-overseas-deployment.md)（应用合同与数据隔离不变；该文档验收前不作为已上线能力）。
 
 ---
 
@@ -24,16 +27,15 @@ graph TB
 
     subgraph VPS["轻量应用服务器 ¥68/月 (2C2G 40GB)"]
         subgraph WEB["Web 服务 (Python uvicorn :8080)"]
-            PAGES["页面路由<br/>/login /register<br/>/setup / chat"]
+            PAGES["页面路由<br/>/login /register<br/>/setup / dashboard"]
             HEALTH["基础设施路由<br/>GET/HEAD /healthz"]
-            API["API 路由<br/>邀请码验证 + 注册/登录<br/>数据源绑定 + 同步/对话"]
-            SSE["SSE /api/chat/stream<br/>流式 AI 回复"]
+            API["API 路由<br/>邀请码验证 + 注册/登录<br/>数据源绑定 + 同步/报告/训练"]
 
             subgraph CORE["neurun 核心（复用现有代码）"]
                 AUTH["auth.py<br/>Garmin 登录 + Token"]
                 STORAGE["storage.py<br/>SQLite 查询"]
                 MEMORY["memory.py<br/>日报/记忆/画像"]
-                COACH["coach.py<br/>DeepSeek API"]
+                COACH["coach.py<br/>AI provider API"]
             end
         end
         DISK["本地磁盘 40GB<br/>invite-codes.json + users/<br/>data/{api_key}/tokens/<br/>memory/ + data.db"]
@@ -41,14 +43,14 @@ graph TB
 
     subgraph EXTERNAL["外部"]
         GARMIN["Garmin Connect"]
-        DEEPSEEK["DeepSeek API"]
+        AI_PROVIDER["OpenAI-compatible API"]
         ARMS["阿里云 ARMS RUM<br/>PV / UV / 性能 / 错误"]
     end
 
     BROWSER <-->|"HTTPS"| WEB
     BROWSER -->|"Browser SDK v2 上报"| ARMS
     AUTH --> GARMIN
-    COACH --> DEEPSEEK
+    COACH --> AI_PROVIDER
     CORE --> DISK
 ```
 
@@ -64,9 +66,9 @@ sequenceDiagram
     participant Web as 浏览器
     participant VPS as 服务器
     participant Garmin as Garmin API
-    participant DS as DeepSeek
+    participant AI as AI provider
 
-    Note over User,DS: === 首次使用 ===
+    Note over User,AI: === 首次使用 ===
 
     User->>Web: 打开 neurun.xxx.com
     Web->>VPS: GET /
@@ -92,7 +94,7 @@ sequenceDiagram
     VPS->>VPS: 保存 Token → data/{api_key}/tokens/
     VPS-->>Web: { status: "ok" }
 
-    Note over User,DS: === 首次同步 ===
+    Note over User,AI: === 首次同步 ===
 
     User->>Web: 点击"开始同步"
     Web->>VPS: POST /api/sync
@@ -109,11 +111,11 @@ sequenceDiagram
     User->>Web: 选择日期并点击"生成日报"
     Web->>VPS: POST /api/reports
     VPS->>VPS: 从 SQLite 生成结构化日报
-    VPS->>DS: 使用 prompts/coach.md 生成 AI 洞察
-    VPS->>VPS: 将 AI 洞察写入 Front Matter 与正文
+    VPS->>AI: 调用 review-daily-training Skill 一次
+    VPS->>VPS: 将同一份结构化洞察写入 Front Matter 与正文
     VPS-->>Web: 日报生成完成
 
-    Note over User,DS: === 日常使用 ===
+    Note over User,AI: === 日常使用 ===
 
     User->>Web: 打开 neurun.xxx.com
     Web->>VPS: GET / → GET /api/dashboard
@@ -180,7 +182,7 @@ VPS 磁盘是持久化的，容器重启不丢。OSS 仅作为灾备，初期可
 | `src/invitations.py` | 邀请码 JSON 校验与原子核销 |
 | `src/web.py` | Web 页面 + API 路由 |
 | `web/templates/auth.html` | 登录 + 两步邀请注册页面 |
-| `web/templates/chat.html` | 日报仪表盘页面（纯 HTML + CSS + JS） |
+| `web/templates/dashboard.html` | 日报仪表盘页面（纯 HTML + CSS + JS） |
 | `web/templates/setup.html` | 多步初始化向导（数据源绑定 + 个人资料 + 目标） |
 | `Dockerfile` | 容器镜像 |
 | `docker-compose.yml` | 一键部署 |
@@ -197,9 +199,11 @@ VPS 磁盘是持久化的，容器重启不丢。OSS 仅作为灾备，初期可
 | `src/memory.py` | 日报生成接口透传在线 AI 洞察，以同一洞察重新渲染正文 |
 | `src/web.py` | 分离 `POST /api/sync` 与 `POST /api/reports` 的职责；统一向 HTML 页面注入 ARMS RUM |
 
-### 5.3 不改的文件
+### 5.3 AI 边界
 
-`src/mcp_server.py`、`src/coach.py`、`src/render.py`、`src/image.py`、`src/activity.py`
+`src/coach.py` 只保留日报 `review-daily-training` 的结构化入口；Web 不注册通用 Chat 路由，
+模型不获得应用 Tool Use 权限。MCP Server 仍作为外部 AI 客户端读取事实和调用显式业务工具的边界，
+与 Web 应用内的模型调用链分离。
 
 ### 5.4 异步同步任务改动
 
@@ -257,7 +261,7 @@ async def healthz(request): ...
 # 页面路由（服务端渲染 HTML）
 @server.custom_route("/", methods=["GET"])
 async def index(request): ...
-    # 已绑定用户 → 日报仪表盘（chat.html）
+    # 已绑定用户 → 日报仪表盘（dashboard.html）
     # 无会话 → /login；已登录但未绑定 → /setup
 
 @server.custom_route("/login", methods=["GET"])
@@ -318,8 +322,8 @@ async def api_sync_task(request): ...
 @server.custom_route("/api/reports", methods=["POST"])
 async def api_report_generate(request): ...
     # 用户显式选择 date，只读取本地 SQLite，不触发平台同步
-    # 结构化日报生成后，用 prompts/coach.md 生成在线 AI 洞察
-    # AI 成功时重新渲染正文；未配置或调用失败时保留本地规则兜底
+    # 先在内存中构建结构化日报，再调用 review-daily-training 一次
+    # 用最终洞察渲染并落盘一次；未配置或调用失败时保留本地规则兜底
 
 @server.custom_route("/api/status", methods=["GET"])
 async def api_status(request): ...
@@ -332,7 +336,7 @@ async def api_logout(request): ...
 `custom_route` 注册路由。零额外依赖。
 
 `/healthz` 是进程存活与 release 身份检查，不是业务就绪检查：它不得读取 Cookie、用户注册表、SQLite，
-也不得调用 Garmin、Coros、Huawei 或 DeepSeek。负载均衡只用它判断 Web 进程能否响应 HTTP；
+也不得调用 Garmin、Coros、Huawei 或外部 AI 服务。负载均衡只用它判断 Web 进程能否响应 HTTP；
 业务依赖故障应由各 API 自身的错误和监控暴露。所有同步中的阻塞式网络和磁盘工作
 必须在受控工作线程中执行，不得占用运行 `/healthz` 的 asyncio 事件循环。
 
@@ -498,16 +502,11 @@ class AuthManager:
 MFA 中间状态存内存 dict（5 分钟过期），容器重启丢失，用户重新发起即可。
 每次发起新登录前清理过期状态并关闭其 HTTP Session；完成、失败或主动清理的登录也必须显式释放客户端资源。
 
-### 6.4 `src/coach.py` — 流式对话
+### 6.4 `src/coach.py` — 日报结构化解释
 
-现有 `coach.py` 是一次性返回 JSON。新增流式版本：
-
-```python
-async def chat_stream(messages: list[dict], context: str) -> AsyncIterator[str]:
-    """流式 AI 对话，SSE 逐块输出。"""
-    # 调用 DeepSeek API stream=true
-    # 每次 yield 一个 token
-```
+`coach.py` 接收 `memory.py` 已完成门禁和计算的日报事实，运行一次
+`review-daily-training`，校验 `CoachInsight` 后返回。它不读取历史文件、不调用应用 tools、
+不保存结果，也不提供通用消息接口；最终写入由日报应用服务统一完成。
 
 ---
 
@@ -516,7 +515,7 @@ async def chat_stream(messages: list[dict], context: str) -> AsyncIterator[str]:
 业务页面保持自包含——零构建、无前端框架；仅可观测性通过阿里云官方 CDN 加载 Browser SDK：
 
 ```
-web/templates/chat.html
+web/templates/dashboard.html
 ├── CSS: 移动端基础布局 + min-width 桌面增强 + 三主题
 ├── HTML: 训练概览卡片 + 身体指标 + 睡眠 + AI 洞察 + 图片保存操作
 ├── JS:  GET /api/dashboard 加载数据 → 渲染卡片
@@ -531,7 +530,7 @@ web/templates/reports.html
 身体状态（RHR/HRV/电量/训练准备）、训练负荷与恢复、AI 教练洞察。
 用户看到的是结构化的数据卡片，而非对话消息列表。
 
-`sync.html`、`chat.html`、`reports.html`、`profile.html` 使用同一份导航结构和类名合同。
+`sync.html`、`dashboard.html`、`reports.html`、`profile.html` 使用同一份导航结构和类名合同。
 320–640px 下主导航固定在视口底部，由同步、日报、我的三个“图标 + 文字”入口组成；每项至少
 54px 高，当前项使用 `aria-current="page"` 和主题强调色共同表达。内容容器必须预留导航高度及
 `safe-area-inset-bottom`，避免遮住最后一个操作。主题选择留在右上角工具区，不得再混入主导航。
@@ -542,14 +541,14 @@ web/templates/reports.html
 320px 窄屏下评分被压缩到第二行。桌面端再增强为四列指标、横向训练详情和更紧凑的工具栏。
 hover 反馈只在支持 hover 的设备上启用，所有布局均不得产生横向滚动。
 
-“保存图片”不调用服务端截图能力。`chat.html` 复用当前 `GET /api/dashboard` JSON，按当前主题
+“保存图片”不调用服务端截图能力。`dashboard.html` 复用当前 `GET /api/dashboard` JSON，按当前主题
 在浏览器 Canvas 中生成 2 倍像素密度 PNG。支持 `navigator.canShare({files})` 时进入系统分享，
 否则通过 Blob URL 下载；整个过程无 CDN、无额外前端依赖，训练数据不离开当前浏览器。
 
 ### 7.1 ARMS RUM 的 PV、UV 与账户归因
 
 所有返回 HTML 的页面路由必须经 `src/web.py::_html_response()`，在 `</body>` 前统一注入阿里云
-ARMS Browser SDK v2；`/healthz` 和 `/api/*` JSON/SSE 响应不得注入。SDK 使用生产环境 endpoint，
+ARMS Browser SDK v2；`/healthz` 和 `/api/*` JSON 响应不得注入。SDK 使用生产环境 endpoint，
 `env=prod`、`spaMode=history`，开启页面性能、Web Vitals、API、静态资源、JS/Console 错误和用户
 行为采集，链路追踪保持关闭。SDK CDN 或上报失败不得阻塞页面主体与 neurun API。
 
@@ -596,10 +595,11 @@ Grid，日期按钮保持在文档流中；窄屏减小 gap 和卡片内边距�
 HTTP 503、`code=sync_capacity_exceeded`。这两类错误不改变用户的 `token_status`。
 
 日报页通过 `POST /api/reports` 提供独立的用户触发入口。后端先调用
-`MemoryStore.generate_daily_report()` 汇总本地 SQLite，再将其 Front Matter 交给
-`coach.get_coach_insight()`；该调用的 system prompt 必须来自 `prompts/coach.md`。
-AI 调用成功后以返回洞察重新生成日报，确保 YAML Front Matter、Markdown 正文和 Web 仪表盘一致；
-未配置 `DEEPSEEK_API_KEY` 或在线调用失败时，初次生成的本地规则洞察保留为可用降级结果。
+`MemoryStore.generate_daily_report(..., persist=False)` 在内存中汇总本地 SQLite，再将其 Front Matter
+交给 `coach.get_coach_insight()`。该入口只运行一次 `review-daily-training`，输入为已经计算完成的
+结构化事实，不开放应用 tools。最终调用 `finalize_daily_report()` 渲染并落盘一次，确保 YAML Front
+Matter、Markdown 正文和 Web 仪表盘一致；未配置 `NEURUN_AI_API_KEY` 或在线调用失败时，本地规则
+洞察作为可用降级结果写入。
 
 风格参考你现有的 `render.py` 设计品味——简洁、大气、运动感。
 
@@ -622,7 +622,9 @@ services:
     environment:
       - NEURUN_DATA_DIR=/app/data
       - NEURUN_INVITE_CODES_FILE=/app/data/invite-codes.json
-      - DEEPSEEK_API_KEY=${DEEPSEEK_API_KEY}
+      - NEURUN_AI_API_KEY=${NEURUN_AI_API_KEY}
+      - NEURUN_AI_BASE_URL=${NEURUN_AI_BASE_URL:-https://api.deepseek.com}
+      - NEURUN_AI_MODEL=${NEURUN_AI_MODEL:-deepseek-chat}
     restart: unless-stopped
 ```
 
@@ -630,7 +632,8 @@ services:
 # 启动服务后，通过本地 CLI 创建首个邀请码
 git clone <repo>
 cd neurun
-echo "DEEPSEEK_API_KEY=sk-xxx" > .env
+cp .env.example .env
+# 编辑 .env 中的 NEURUN_AI_API_KEY / NEURUN_AI_BASE_URL / NEURUN_AI_MODEL
 docker compose up -d
 docker compose exec neurun neurun invite create --output json
 ```
@@ -729,6 +732,9 @@ CLB 后端服务器端口配置为 `8080`，HTTP 健康检查使用：
 | 备份 | OSS（可选，灾备用） | ~¥5 |
 | **合计** | | **~¥78/月** |
 
+海外 VPS + Cloudflare 组合的成本量级与渠道对比见
+[14-overseas-deployment.md](14-overseas-deployment.md) §6（常见约 $6–20/月，视厂商与规格）。
+
 ---
 
 ## 10. 为什么不用框架 / 中间件
@@ -740,7 +746,7 @@ CLB 后端服务器端口配置为 `8080`，HTTP 健康检查使用：
 | MySQL/PostgreSQL | SQLite 每用户一个文件 | 数据库服务 |
 | Redis Session | Cookie + 服务端 dict | 缓存中间件 |
 | Nginx | Caddy 自动 HTTPS | 反向代理配置 |
-| 微信小程序 | Web Chat 响应式 | 审核 + 双端开发 |
+| 微信小程序 | Web 响应式应用 | 审核 + 双端开发 |
 
 ---
 
@@ -751,7 +757,7 @@ CLB 后端服务器端口配置为 `8080`，HTTP 健康检查使用：
 docker compose up -d
 curl -fsS http://localhost:8080/healthz  # → {"status":"ok","release":"development"}
 curl -I http://localhost:8080/healthz    # → HTTP 200
-# 浏览器完成邀请码注册、数据源绑定与对话
+# 浏览器完成邀请码注册、数据源绑定、同步与报告查看
 
 # 多用户
 # 两个浏览器（或无痕窗口）用不同邀请码注册并绑定不同运动平台账号
@@ -767,4 +773,4 @@ pytest  # 零失败
 
 ---
 
-> **关联文档**：[index.md](index.md) · [03-architecture.md](03-architecture.md) · [04-modules.md](04-modules.md) · [memory-system.md](memory-system.md) · [ai-coaching.md](ai-coaching.md)
+> **关联文档**：[index.md](index.md) · [03-architecture.md](03-architecture.md) · [04-modules.md](04-modules.md) · [memory-system.md](memory-system.md) · [ai-coaching.md](ai-coaching.md) · [14-overseas-deployment.md](14-overseas-deployment.md)

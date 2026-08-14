@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Any
 
 from .local_files import atomic_write_private, restrict_private_file
-from .memory import Memory, parse_front_matter
+from .memory import Memory, get_daily_activities, parse_front_matter
 
 
 def _md_to_html(md: str) -> str:
@@ -112,7 +112,7 @@ def _metric_strip(fm: dict) -> str:
 
 
 def _sessions(fm: dict) -> str:
-    ya = fm.get("yesterday_activities", {})
+    ya = get_daily_activities(fm)
     if ya.get("activity_state") == "unknown":
         return '<div class="rest-card"><div class="rest-emoji">⏳</div><h3>运动数据未同步</h3><p class="rest-detail">暂时无法判断当天是否训练或休息</p></div>'
     if ya.get("is_rest_day"):
@@ -136,9 +136,54 @@ def _sessions(fm: dict) -> str:
 <div class="session-cards">{''.join(cards)}</div>"""
 
 
+def _pace_text(pace_sec_per_km) -> str:
+    try:
+        value = float(pace_sec_per_km)
+    except (TypeError, ValueError):
+        return ""
+    if not 0 < value < 3600:
+        return ""
+    minutes = int(value // 60)
+    seconds = int(round(value % 60))
+    if seconds == 60:
+        minutes += 1
+        seconds = 0
+    return f"{minutes}'{seconds:02d}\""
+
+
+def _athlete_context_line(fm: dict) -> str:
+    """训练域能力画像的紧凑背景行；缺失/不可用时省略，不占位猜测。"""
+    athlete = fm.get("athlete_context") or {}
+    if athlete.get("status") != "available":
+        return ""
+    cap = (athlete.get("capacity_profile") or {}).get(
+        "current_sustainable_capacity"
+    ) or {}
+    parts = []
+    weekly = cap.get("weekly_km")
+    if weekly:
+        parts.append(f"可持续周跑量参考 {float(weekly):g} km")
+    long_run = cap.get("long_run_km")
+    if long_run:
+        parts.append(f"长距离 {float(long_run):g} km")
+    pace = cap.get("recent_running_pace_sec_per_km")
+    if pace:
+        parts.append(f"参考配速 {_pace_text(pace)}/km")
+    if not parts:
+        return ""
+    cutoff = athlete.get("facts_cutoff") or ""
+    suffix = f"<span>· 截至 {cutoff}</span>" if cutoff else ""
+    return f'<div class="load-context">⚙️ 能力参考{suffix}：{" · ".join(parts)}</div>'
+
+
 def _load(fm: dict) -> str:
     l = fm.get("training_load", {})
     r = fm.get("recovery", {})
+    if l.get("status") == "unavailable":
+        return f"""<div class="load-card unavailable-card">
+  <div class="load-header"><h3>训练负荷暂不可用</h3></div>
+  <p>{l.get('reason', '活动历史覆盖不足，未计算 ACWR')}</p>
+</div>"""
     acwr = l.get('acwr', 0)
     st = l.get('acwr_status', 'optimal')
     colors = {'optimal':'var(--performance)','undertraining':'var(--warning)','overreaching':'var(--accent)','high_risk':'var(--danger)'}
@@ -149,11 +194,34 @@ def _load(fm: dict) -> str:
   <div class="load-header"><h3>训练负荷</h3><div class="load-score {st}" style="color:{color}">{acwr}</div></div>
   <div class="load-bar-wrap"><div class="load-bar"><div class="load-zone-optimal" style="left:{zl}%;width:{zr-zl}%"></div><div class="load-indicator" style="left:{pct}%;background:{color}"></div></div><div class="load-bar-labels"><span>0</span><span>0.8</span><span>1.3</span><span>1.5</span><span>2.0</span></div></div>
   <div class="load-stats"><div class="load-stat"><div class="val">{l.get('acute_load_7d',0)}</div><div class="lbl">急性 7d</div></div><div class="load-stat"><div class="val">{l.get('chronic_load_28d',0):.0f}</div><div class="lbl">慢性 28d</div></div><div class="load-stat"><div class="val" style="color:{color}">{r.get('overall_score','—')}</div><div class="lbl">恢复 /100</div></div></div>
+{_athlete_context_line(fm)}
 </div>"""
+
+
+def _quality_banner(fm: dict) -> str:
+    readiness = fm.get("data_readiness", "unknown")
+    finality = fm.get("report_finality", "unknown")
+    messages = []
+    if readiness == "limited":
+        omitted = "、".join(fm.get("omitted_sections", [])) or "部分分析"
+        messages.append(f"数据不完整的受限版，已省略：{omitted}")
+    elif readiness == "unknown":
+        messages.append("旧日报没有数据完整性快照，可信范围未知")
+    if finality == "provisional":
+        messages.append(f"仅覆盖至 {fm.get('data_as_of') or '最近一次同步'}，不是全天最终结果")
+    if not messages:
+        return ""
+    level = "limited" if readiness in {"limited", "unknown"} else "provisional"
+    return f'<div class="quality-banner {level}">{" · ".join(messages)}</div>'
 
 
 def _rec(fm: dict) -> str:
     r = fm.get("recommendation", {})
+    if r.get("status") == "unavailable":
+        return f"""<div class="rec-card unavailable-card">
+  <div class="rec-header"><span class="rec-ready">数据不足，暂不提供训练强度建议</span></div>
+  <p class="rec-advice">{r.get('training_advice', '')}</p>
+</div>"""
     ready = r.get('ready_to_train', False)
     intensity = r.get('intensity', 'moderate')
     advice = r.get('training_advice', '')
@@ -201,24 +269,323 @@ def _ai_section(fm: dict) -> str:
     return f'<div class="ai-section"><h3>🤖 AI 教练洞察</h3>{"".join(parts)}</div>'
 
 
+def _pace_text(pace_sec_per_km) -> str:
+    try:
+        value = float(pace_sec_per_km)
+    except (TypeError, ValueError):
+        return ""
+    if not 0 < value < 3600:
+        return ""
+    minutes = int(value // 60)
+    seconds = int(round(value % 60))
+    if seconds == 60:
+        minutes += 1
+        seconds = 0
+    return f"{minutes}'{seconds:02d}\""
+
+
+def _duration_text(seconds) -> str:
+    try:
+        secs = float(seconds)
+    except (TypeError, ValueError):
+        return "—"
+    if secs <= 0:
+        return "—"
+    hours = int(secs // 3600)
+    minutes = int((secs % 3600) // 60)
+    return f"{hours}h{minutes:02d}min" if hours else f"{minutes}min"
+
+
+def _marathon_estimate(pace_sec_per_km) -> str:
+    try:
+        total_sec = float(pace_sec_per_km) * 42.195
+    except (TypeError, ValueError):
+        return ""
+    if not 0 < total_sec < 36000:
+        return ""
+    hours = int(total_sec // 3600)
+    minutes = int((total_sec % 3600) // 60)
+    seconds = int(round(total_sec % 60))
+    if seconds == 60:
+        minutes += 1
+        seconds = 0
+    if minutes == 60:
+        hours += 1
+        minutes = 0
+    return f"{hours}:{minutes:02d}:{seconds:02d}"
+
+
+def _effect_text(effect: dict) -> str:
+    """训练效果：原始 TE 优先，估算值带 ≈ 标记。"""
+    if not effect:
+        return "不可得"
+    te = effect.get("aerobic_training_effect")
+    ate = effect.get("anaerobic_training_effect")
+    parts = []
+    if te is not None:
+        parts.append(f"有氧 {te:g}")
+    if ate is not None:
+        parts.append(f"无氧 {ate:g}")
+    label = effect.get("label")
+    if label:
+        parts.append(str(label))
+    mod = effect.get("moderate_intensity_minutes")
+    vig = effect.get("vigorous_intensity_minutes")
+    minutes = []
+    if mod:
+        minutes.append(f"中等 {float(mod):g}min")
+    if vig:
+        minutes.append(f"高 {float(vig):g}min")
+    if minutes:
+        parts.append("强度分钟 " + "/".join(minutes))
+    if not parts:
+        return "不可得"
+    text = " · ".join(parts)
+    if bool(effect.get("estimated")):
+        basis = "心率" if effect.get("estimate_basis") == "heart_rate" else "配速"
+        text = f"≈ {text}（估算，依据{basis}）"
+    return text
+
+
+def _detail_overview(summary: dict, analysis: dict) -> str:
+    volume = summary.get("volume") or {}
+    effect = summary.get("effect") or {}
+    elev = summary.get("elevation_profile") or {}
+    terrain = summary.get("terrain") or {}
+    pace_profile = summary.get("pace_profile") or {}
+    structure = summary.get("structure") or {}
+    rows = []
+    distance = (volume.get("distance_m") or 0) / 1000
+    duration = volume.get("duration_s") or 0
+    elapsed = volume.get("elapsed_duration_s")
+    duration_text = _duration_text(duration)
+    if elapsed and elapsed > duration + 5:
+        duration_text += f"（总 {_duration_text(elapsed)}，含暂停）"
+    elif elapsed and abs(elapsed - duration) <= 5:
+        duration_text += "（无暂停）"
+    rows.append(("距离/用时", f"{distance:.2f} km / {duration_text}"))
+    pace = pace_profile.get("avg_pace_sec_per_km")
+    if pace:
+        marathon = _marathon_estimate(pace)
+        suffix = f"（折全马约 {marathon}）" if marathon else ""
+        rows.append(("平均配速", f"{_pace_text(pace)}/km{suffix}"))
+    fastest = pace_profile.get("fastest_pace_sec_per_km")
+    if fastest:
+        rows.append(("最快配速", f"{_pace_text(fastest)}/km"))
+    ascent = elev.get("ascent_m")
+    descent = elev.get("descent_m")
+    if ascent is not None or descent is not None:
+        range_text = ""
+        if elev.get("max_elevation_m") is not None and elev.get("min_elevation_m") is not None:
+            range_text = f"（海拔 {elev['min_elevation_m']:g}~{elev['max_elevation_m']:g}m）"
+        rows.append(("爬升/下降", f"{ascent or 0:g}m / {descent or 0:g}m{range_text}"))
+    elif terrain and terrain.get("ascent_m") is not None:
+        rows.append(("累计爬升", f"{terrain['ascent_m']:g}m"))
+    avg_cadence = structure.get("avg_cadence")
+    max_cadence = structure.get("max_cadence")
+    if avg_cadence:
+        cadence_text = f"{avg_cadence:.0f} spm"
+        if max_cadence:
+            cadence_text += f"，最大 {max_cadence:.0f}"
+        rows.append(("平均步频", cadence_text))
+    calories = volume.get("calories")
+    effect_text = _effect_text(effect)
+    if calories is not None:
+        rows.append(("热量/训练效果", f"{calories:.0f} kcal / {effect_text}"))
+    elif effect_text != "不可得":
+        rows.append(("训练效果", effect_text))
+    if not rows:
+        return ""
+    rows_html = "".join(
+        f"<tr><td>{k}</td><td>{v}</td></tr>" for k, v in rows
+    )
+    return f'<div class="detail-block"><div class="detail-block-title">整体水平</div><table class="detail-table">{rows_html}</table></div>'
+
+
+def _band_edges(band_key: str) -> tuple[float | None, float | None]:
+    """把 '-inf-130' / '130-145' / '420-inf' 解析为 (低, 高)。"""
+    if band_key.startswith("-inf"):
+        low, rest = None, band_key[len("-inf-"):]
+    else:
+        low_text, rest = band_key.split("-", 1)
+        low = float(low_text)
+    if rest.endswith("inf"):
+        high = None
+    else:
+        high = float(rest)
+    return low, high
+
+
+def _detail_intensity(summary: dict) -> str:
+    intensity = summary.get("intensity") or {}
+    pace_profile = summary.get("pace_profile") or {}
+    pace_bands = intensity.get("pace_bands_pct") or {}
+    hr_bands = intensity.get("hr_bands_pct") or {}
+    basis = intensity.get("basis") or ""
+    split_count = pace_profile.get("split_count") or 0
+    blocks = []
+    if pace_bands:
+        def _band_label(band_key: str) -> str:
+            low, high = _band_edges(band_key)
+            low_text = _pace_text(low) if low is not None else ""
+            high_text = _pace_text(high) if high is not None else ""
+            if low is None:
+                return f"<{high_text}"
+            if high is None:
+                return f">{low_text}"
+            return f"{low_text}–{high_text}"
+
+        bands = " · ".join(
+            f"{_band_label(k)}: {v:g}%"
+            for k, v in sorted(
+                pace_bands.items(),
+                key=lambda item: _band_edges(item[0])[0] or 0,
+            )
+        )
+        blocks.append(f"配速带分布（{split_count} 段样本，basis={basis}）：{bands}")
+    percentiles = []
+    for label, key in (("P5", "p5"), ("P25", "p25"), ("P50", "p50"), ("P75", "p75"), ("P95", "p95")):
+        value = pace_profile.get(key)
+        if value:
+            percentiles.append(f"{label} {_pace_text(value)}")
+    if percentiles:
+        blocks.append("配速分位数：" + " / ".join(percentiles))
+    if hr_bands:
+        def _hr_band_label(band_key: str) -> str:
+            low, high = _band_edges(band_key)
+            if low is None:
+                return f"<{high:g}"
+            if high is None:
+                return f">{low:g}"
+            return f"{low:g}–{high:g}"
+
+        bands = " · ".join(
+            f"{_hr_band_label(k)}: {v:g}%"
+            for k, v in sorted(
+                hr_bands.items(),
+                key=lambda item: _band_edges(item[0])[0] or 0,
+            )
+        )
+        blocks.append(f"心率带分布：{bands}")
+    if not blocks:
+        return ""
+    content = "".join(f"<p>{block}</p>" for block in blocks)
+    return f'<div class="detail-block"><div class="detail-block-title">强度分布</div>{content}</div>'
+
+
+def _detail_pace(summary: dict, analysis: dict | None = None) -> str:
+    pace_profile = summary.get("pace_profile") or {}
+    structure_profile = summary.get("structure_profile") or {}
+    classification = (analysis or {}).get("structure_classification") or {}
+    lines = []
+    half = pace_profile.get("half_pace_diff_s")
+    if half is not None:
+        direction = "后程偏慢（正分段）" if half > 0 else "前程偏慢（负分段）"
+        lines.append(f"前后半程：后半较前半 {_pace_text(abs(half))}/km · {direction}")
+    cv = pace_profile.get("cv_pct")
+    if cv is not None:
+        stability = "控制力强" if cv < 8 else "存在起伏" if cv < 15 else "波动明显"
+        lines.append(f"段间配速 CV {cv:g}%（{stability}）")
+    if classification:
+        label = classification.get("label") or "未知"
+        conf = classification.get("confidence")
+        conf_parts = []
+        if conf is not None:
+            conf_parts.append(f"置信 {float(conf):.0%}")
+        missing = classification.get("missing_evidence") or []
+        if missing:
+            conf_parts.append("缺 " + "/".join(missing))
+        alternations = classification.get("alternations") or 0
+        structure_text = f"{label}"
+        if alternations:
+            structure_text += f"（{alternations} 组快慢交替）"
+        if conf_parts:
+            structure_text += f" · {'；'.join(conf_parts)}"
+        lines.append(f"训练结构：{structure_text}")
+        groups = classification.get("work_recovery_groups") or []
+        if groups:
+            group_texts = []
+            for group in groups:
+                work_pace = group.get("work_pace_sec_per_km")
+                recovery_pace = group.get("recovery_pace_sec_per_km")
+                work_hr = group.get("work_avg_hr")
+                recovery_hr = group.get("recovery_avg_hr")
+                parts = []
+                if work_pace:
+                    text = f"快 {_pace_text(work_pace)}/km"
+                    if work_hr:
+                        text += f"(hr{work_hr:.0f})"
+                    parts.append(text)
+                if recovery_pace:
+                    text = f"慢 {_pace_text(recovery_pace)}/km"
+                    if recovery_hr:
+                        text += f"(hr{recovery_hr:.0f})"
+                    parts.append(text)
+                if parts:
+                    group_texts.append(" → ".join(parts))
+            if group_texts:
+                lines.append(
+                    "每组配速：" + "；".join(
+                        f"第{i + 1}组 {text}"
+                        for i, text in enumerate(group_texts)
+                    )
+                )
+        if classification.get("quantity_reliable") is False:
+            lines.append("注：分段距离/时长与总量偏差，仅强度模式有效")
+        fatigue = classification.get("fatigue_signal") or {}
+        if fatigue.get("detected"):
+            lines.append(f"疲劳信号：{fatigue.get('note')}")
+        cadence_consistency = classification.get("cadence_consistency")
+        if cadence_consistency:
+            lines.append(
+                f"步频一致性：CV {cadence_consistency['cv_pct']:g}%"
+                f"（平均 {cadence_consistency['avg']:.0f} spm）"
+            )
+    else:
+        composite = structure_profile.get("composite_type")
+        work = structure_profile.get("work_blocks")
+        recovery = structure_profile.get("recovery_blocks")
+        if composite:
+            label = {
+                "interval": "间歇结构", "fartlek": "变速结构", "structured": "结构化分段", "steady": "平稳节奏",
+            }.get(composite, composite)
+            detail = f"（work {work}/recovery {recovery}）" if work or recovery else ""
+            lines.append(f"训练结构：{label}{detail}")
+    if not lines:
+        return ""
+    blocks = "".join(f"<p>{line}</p>" for line in lines)
+    return f'<div class="detail-block"><div class="detail-block-title">配速节奏</div>{blocks}</div>'
+
+
+
 def _detail(fm: dict) -> str:
     analyses = fm.get("session_analyses", [])
-    if not analyses: return ""
+    if not analyses:
+        return ""
     parts = []
     for a in analyses:
-        lines = a.strip().split("\n")
-        if len(lines) < 2: continue
-        title = lines[0].replace("### ", "")
-        meta = lines[1]
-        parts.append(f'<div class="detail-section"><h3>{title}</h3><div class="detail-meta">{meta}</div>')
-        splits = [l for l in lines[2:] if l.startswith("- ")]
-        if splits:
-            parts.append('<table class="split-table"><tr><th>分段</th><th>心率</th><th>步频</th></tr>')
-            for sl in splits:
-                cols = [c.strip() for c in sl[2:].split("|")]
-                parts.append(f'<tr>{"".join(f"<td>{c}</td>" for c in cols)}</tr>')
-            parts.append('</table>')
-        parts.append('</div>')
+        if not isinstance(a, dict):
+            continue
+        title = a.get("activity_name") or "训练"
+        meta_parts = [a.get("display_name") or a.get("primary_type") or "训练内容待识别"]
+        confidence = a.get("confidence")
+        if confidence:
+            meta_parts.append(f"置信 {float(confidence):.0%}")
+        algorithm = a.get("algorithm_version")
+        if algorithm:
+            meta_parts.append(str(algorithm))
+        summary = a.get("session_summary") or {}
+        granularity = summary.get("granularity")
+        if granularity:
+            meta_parts.append(f"粒度 {granularity}")
+        parts.append(f'<div class="detail-section"><h3>{title}</h3><div class="detail-meta">{" · ".join(meta_parts)}</div>')
+        parts.append(_detail_overview(summary, a))
+        if granularity in ("L1", "L2"):
+            parts.append(_detail_intensity(summary))
+            parts.append(_detail_pace(summary, a))
+        else:
+            parts.append('<p class="detail-muted">无分段数据，强度分布与配速节奏不可得。</p>')
+        parts.append("</div>")
     return "\n".join(parts)
 
 
@@ -278,6 +645,9 @@ body{background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSy
 
 /* Header */
 .header{padding:20px 0 36px;display:flex;justify-content:space-between;align-items:flex-start}
+.quality-banner{margin-bottom:18px;padding:14px 16px;border:1px solid var(--border-subtle);border-radius:14px;background:var(--bg-subtle);font-size:13px;line-height:1.6;color:var(--text-secondary);overflow-wrap:anywhere}
+.quality-banner.limited{border-color:var(--warning);color:var(--warning)}
+.quality-banner.provisional{border-color:var(--accent)}
 .header-brand{font-size:13px;font-weight:800;letter-spacing:1.5px;background:linear-gradient(135deg,var(--accent),#ef4444);-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text;text-transform:uppercase}
 .header-date{font-family:-apple-system,'SF Pro Display','Helvetica Neue',sans-serif;font-size:42px;font-weight:800;color:var(--text);letter-spacing:-1.5px;line-height:1.1}
 .header-date span{font-weight:500;font-size:18px;color:var(--text-muted);margin-left:12px}
@@ -327,6 +697,9 @@ body{background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSy
 
 /* Load Card */
 .load-card{background:var(--bg-card);border-radius:16px;padding:28px;box-shadow:var(--card-shadow);margin-bottom:8px}
+.load-context{margin-top:14px;padding-top:12px;border-top:1px solid var(--border-subtle);font-size:12px;color:var(--text-secondary);line-height:1.7}
+.load-context span{color:var(--text-muted);font-size:11px}
+.unavailable-card p{margin-top:10px;color:var(--text-muted);font-size:13px}
 .load-header{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:18px}
 .load-header h3{font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:1.5px;color:var(--text-muted)}
 .load-score{font-family:-apple-system,'SF Pro Display','Helvetica Neue',sans-serif;font-size:44px;font-weight:800;letter-spacing:-1px}
@@ -377,6 +750,13 @@ body{background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSy
 /* Detail / Splits */
 .detail-section{background:var(--bg-card);border-radius:16px;padding:22px;box-shadow:var(--card-shadow);margin-bottom:8px}
 .detail-section h3{font-size:15px;font-weight:700;margin-bottom:2px}
+.detail-block{margin-top:14px;padding-top:12px;border-top:1px solid var(--border-subtle)}
+.detail-block-title{font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:1.2px;color:var(--text-muted);margin-bottom:8px}
+.detail-table{width:100%;border-collapse:collapse;margin:6px 0}
+.detail-table td{padding:5px 10px;font-size:13px;border-bottom:1px solid var(--border-subtle)}
+.detail-table td:first-child{color:var(--text-muted);white-space:nowrap;width:110px}
+.detail-block p{margin:4px 0;font-size:13px;color:var(--text-secondary);line-height:1.7}
+.detail-muted{color:var(--text-muted);font-size:12px;margin-top:8px}
 .detail-meta{font-size:12px;color:var(--text-muted);margin-bottom:10px}
 .split-table{width:100%;border-collapse:collapse;margin-top:6px}
 .split-table th{text-align:left;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:var(--text-muted);padding:6px 10px;border-bottom:1px solid var(--border-subtle)}
@@ -490,16 +870,18 @@ def render_daily_html(memory: Memory, output_path: str | None = None) -> str:
     <div class="header-gen">生成于 {gen_time[:16] if gen_time else '—'}</div>
   </header>
 
+  {_quality_banner(fm)}
+
   {_hero(fm)}
   {_metric_strip(fm)}
 
-  <div class="section-title">🏃 今日训练</div>
+  <div class="section-title">🏃 当日训练</div>
   {_sessions(fm)}
 
   <div class="section-title">📈 训练负荷</div>
   {_load(fm)}
 
-  <div class="section-title">🎯 今日建议</div>
+  <div class="section-title">🎯 当日建议</div>
   {_rec(fm)}
 
   {_trends(fm) if has_trends else ''}

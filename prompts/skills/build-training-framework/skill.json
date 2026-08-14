@@ -1,0 +1,5 @@
+{
+  "name": "build-training-framework",
+  "version": "1.0.0",
+  "description": "生成训练框架，不生成逐日课程。"
+}

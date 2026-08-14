@@ -96,7 +96,7 @@ graph LR
 
 ##### 每日报告 (`auto/daily/`) ⭐
 
-每日报告是本项目最核心的产出——每天早上生成的"训练仪表盘"，也是 AI 对话的默认上下文。
+每日报告是本项目最核心的产出——每天早上生成的“训练仪表盘”，也是日报 AI 工作流的结构化输入。
 
 ```yaml
 ---
@@ -106,9 +106,9 @@ generated: 2025-06-24T08:00:00
 version: 1
 
 # ═══════════════════════════════════════
-# 一、昨日活动
+# 一、当日活动
 # ═══════════════════════════════════════
-yesterday_activities:
+daily_activities:
   is_rest_day: false                # 是否为休息日
   is_training_day: true
   sessions:
@@ -240,7 +240,7 @@ anomalies:
       related_metric: sleep_duration
 
 # ═══════════════════════════════════════
-# 七、今日建议
+# 七、当日建议
 # ═══════════════════════════════════════
 recommendation:
   ready_to_train: true
@@ -301,9 +301,9 @@ tags: [daily, 2025-06-24, running, easy-run]
 ```markdown
 # 📰 每日训练报告 — 2025年6月24日 周二
 
-> 生成时间: 08:00 | 数据覆盖: 昨日活动 + 昨夜睡眠 + 今晨状态
+> 生成时间: 08:00 | 数据覆盖: 当日活动 + 昨夜睡眠 + 今晨状态
 
-## 🏃 昨日训练回顾
+## 🏃 当日训练回顾
 
 **训练**: 轻松跑 8.5km / 45min / 配速 5:18
 **评价**: 完成质量好，心率控制在有氧区间，后程略感疲劳属正常范围
@@ -328,7 +328,7 @@ tags: [daily, 2025-06-24, running, easy-run]
 **ACWR**: 1.09 — 🟢 最优区间 (0.8-1.3)
 **趋势**: 负荷稳定，无过度训练风险
 
-## 🎯 今日训练建议
+## 🎯 当日训练建议
 
 **推荐**: 节奏跑 + 轻松跑 (55min / 预估负荷 150)
 - 热身 2km → 节奏跑 20min (配速 4:40-4:50) → 放松 + 轻松跑
@@ -780,10 +780,10 @@ graph TD
 
     subgraph AUTO["自动生成"]
         S0["⭐ 每日报告生成器"]
-        S0A["查询昨日活动 + 昨夜睡眠 + 今晨指标"]
+        S0A["查询当日活动 + 昨夜睡眠 + 今晨指标"]
         S0B["计算恢复评分 + 训练负荷"]
         S0C["7日趋势分析 + 异常检测"]
-        S0D["生成今日训练建议"]
+        S0D["生成当日训练建议"]
         S0E["关联活跃目标 → 计算进度"]
         S0F["📄 写入 auto/daily/YYYY-MM-DD.md"]
 
@@ -962,6 +962,207 @@ graph TD
 
 > **训练内容识别扩展（v1 已实现，2026-07-31）**：日报对目标日期活动的类型解释消费版本化 `TrainingSessionAnalysis`。个人基线和历史训练上下文直接查询 SQLite 中完整的原始活动及分析，不以是否存在历史日报为前提；日报仍是生成时的解释快照。分类、地形、数据质量和证据合同见 [交互式训练方案系统](training-system.md#12-训练内容识别)。
 
+###### 日报生成前数据完整性门禁（已实现）
+
+产品规则由 [日报生成与数据完整性](../product/daily-report.md) 维护。实现不得只在 Web 路由中增加
+条件判断；Web、CLI、MCP 和 HTML 补生成入口必须共同调用一个无副作用的
+`DailyReportReadinessService`，并在真正写文件前再次校验。
+
+```python
+@dataclass(frozen=True)
+class CoverageDimension:
+    status: Literal[
+        "complete",
+        "unsupported",
+        "missing",
+        "syncing",
+        "failed",
+        "insufficient_history",
+    ]
+    observed_days: int
+    expected_days: int
+    last_synced_at: datetime | None
+    reason: str | None
+    action: str | None
+
+@dataclass(frozen=True)
+class DailyReportReadiness:
+    status: Literal["ready", "limited", "blocked"]
+    finality: Literal["provisional", "final"]
+    data_as_of: datetime | None
+    dimensions: dict[str, CoverageDimension]
+    blockers: tuple[str, ...]
+    omitted_sections: tuple[str, ...]
+    suggested_actions: tuple[str, ...]
+```
+
+覆盖检查读取 `neurun_provider_sync` 的逐日、逐指标证据和当前 Provider 能力，不复用同步日历的单一
+汇总状态作为全部事实。同步日历为了活动可见性可以在存在跑步时显示“已同步”，但该状态不能证明
+睡眠、RHR、HRV 或训练准备度完整。记录缺失也不能单独证明未同步，因为完成覆盖后的空活动日是
+合法休息日，Provider 不支持的指标也是合法的 `unsupported`。
+
+检查顺序：
+
+1. 校验日期、用户、绑定 Provider 和授权能力。
+2. 检查报告日活动覆盖；未知、同步中或失败直接返回 `blocked`。
+3. 按 Provider 能力检查报告日睡眠和恢复指标；支持但缺失时返回 `limited`，不支持时不降级。
+4. 分别检查近 7 天健康趋势和近 28 天活动负荷覆盖；不足时把依赖章节加入
+   `omitted_sections`，不得用零值补齐。
+5. 今天返回 `finality=provisional`，`data_as_of` 取参与生成的最近成功同步时间；已结束日期在必需
+   覆盖完成后返回 `final`。
+
+Web 新增只读预检接口：
+
+```http
+GET /api/reports/readiness?date=2026-08-03
+```
+
+`POST /api/reports` 请求增加机器可读的生成模式：
+
+```json
+{"date":"2026-08-03","mode":"complete"}
+```
+
+- `mode=complete` 只接受 `ready`；`limited` 或 `blocked` 返回 HTTP 409、
+  `code=report_data_incomplete` 和完整 readiness，不产生文件或 AI 请求。
+- `mode=limited` 只允许 `limited`，表示调用方已对本次生成明确确认；服务端仍拒绝 `blocked`。
+- 省略 `mode` 时按 `complete` 处理，旧客户端不会静默绕过门禁。
+
+CLI 的 `--skip-sync` 只表示“不访问 Provider”，不能绕过 readiness；若本地证据不足则以非零退出码
+和 JSON 可读错误结束。后续若提供受限版参数，应使用显式的 `--report-mode limited`，并同步 MCP
+input schema。MCP `generate_report` 同样接受 `mode`，失败时返回建议调用的同步范围。
+
+通过门禁后，日报 Front Matter 追加：
+
+```yaml
+data_readiness: complete  # complete | limited | unknown(旧报告)
+report_finality: provisional  # provisional | final
+data_as_of: 2026-08-03T08:32:10+08:00
+data_coverage:
+  activity: complete
+  sleep: complete
+  recovery: unsupported
+  load_7d: complete
+  load_28d: insufficient_history
+omitted_sections: [acwr]
+```
+
+`MemoryWriter.generate_daily_report()` 不得自行猜测 readiness。生成编排层在二次校验后将不可变的
+readiness 快照传入写入器；写入器按 `omitted_sections` 把对应维度标记为 `status=unavailable` 的
+确定性指标，并把 `omitted_sections` 与 unavailable 标记透传给 AI 洞察（在线 Skill 与确定性兜底均
+按省略维度保留未知、只解释可用事实，不因辅助维度缺失整块跳过洞察）。旧日报缺少这些字段时读取为
+`data_readiness=unknown`，不回填伪造状态。
+
+###### 日报能力与近期负荷背景引用（已实现）
+
+日报从训练域只读能力画像投影 `athlete_context` 作为当日/近期负荷的解释背景，与方案草稿
+同口径，报告域不重复计算能力画像。构造入口是 `training_service_factory` 提供的
+`build_capacity_athlete_context(config, target, *, omitted_sections)`：它构建与 Web 草稿流程
+相同的 `TrainingService`（`activity_loader` + `setup_context_loader` 固化为共享实现），调用
+`capacity_profile(target=D)` 并投影稳定字段；Web/CLI/MCP 三条日报入口共用同一构造与门禁。
+
+```yaml
+athlete_context:
+  status: available | unavailable
+  reason: null | training_load_omitted | capacity_load_error | not_loaded
+  source: training_domain_capacity_profile
+  facts_cutoff: 2026-08-02T23:59:00+08:00
+  capacity_profile:
+    as_of: 2026-08-03
+    sync_coverage: sufficient
+    confidence: high | medium | low
+    current_sustainable_capacity: {weekly_km, long_run_km, recent_running_pace_sec_per_km, ...}
+    historical_proven_capacity: {weekly_km, long_run_km, interruption_context}
+    entry_load_envelope: {minimum_weekly_km, maximum_weekly_km}
+    current_readiness: {recovery_score, status}
+```
+
+门禁与语义：
+
+- `training_load` 被 `omitted_sections` 省略时，编排层不读取训练域，写入
+  `status=unavailable, reason=training_load_omitted`；写入器对传入值再做一次防御性校验。
+- 训练域读取异常或 `config` 缺少 `memory_dir/db_path` 时写入 `capacity_load_error` /
+  `not_loaded`，不得阻断日报生成。
+- 快照语义：报告固化生成时点的画像与 `facts_cutoff`，之后重算不反写历史日报；重新生成
+  历史日期按 `capacity_profile(D)` 口径读取，不引用 `D` 之后活动。
+- 能力画像只用于日报正文与 `review-daily-training` 的只读解释，不写回训练域、不参与方案计算。
+
+正文渲染（`_render_daily_body` 的“负荷状态”章节）与 HTML 负荷卡片只显示一行紧凑背景
+（可持续周跑量参考、长距离、参考配速 + 数据截至时间），缺失或不可用时省略，不占位猜测。
+
+日期语义以报告的 `date=D` 为唯一锚点。活动查询窗口固定为 `[D, D]`，规范 Front Matter 字段为
+`daily_activities`；过渡期新报告同时写入内容相同的 `yesterday_activities` 兼容别名，读取器优先取
+`daily_activities`，只在缺失时回退旧字段。兼容字段名不得泄漏到用户可见文案：Web、CLI、MCP、
+AI 上下文、Markdown、HTML 和 PNG 统一称为“当日训练”或直接显示 `D`。`last_night_sleep` 保持不变，
+表示进入 `D` 日清晨前结束的睡眠周期。
+
+在线模型 Prompt 必须显式声明报告日期锚点；模型返回后还要递归规范化文本值，将“今天/今日”转换为
+“当日”，将“昨天/昨日”和“明天/明日”分别转换为 `D-1`、`D+1` 的 ISO 日期。字段名和结构化
+键不参与替换，避免 `plan_execution.today_actual` 等 API 合同漂移。
+
+回归测试必须为 `D-1` 和 `D` 插入不同活动，断言 `D` 日报仅包含 `D` 活动，同时检查确定性 AI 洞察、
+聊天上下文、Web 详情及图片导出不再出现“昨日训练”或“昨天完成”。历史文件不做启动时批量改写；
+用户重新生成某日时按新合同覆盖该日文件。
+
+日报的 `plan_context` 不再通过通用 `MemoryStore.get("active-plan")` 解析；`training_scheme` 不是通用
+`MemoryType`，吞掉解析异常会让结构化快照永久显示为不存在。写入器必须调用
+`TrainingService.resolve_plan_context(D)`，以报告日期而非生成日期读取方案历史。`no_effective_plan`、
+`draft_available` 与 `scheduled_plan` 都写入目标日期和状态，AI 输入明确把计划执行评价标记为不适用；
+`effective` 时固化方案 ID、版本、生效区间、
+周计划和当日课次。Coach 的日期工具必须消费这份同源解析结果，不能另行读取当前 `active-plan.md`。
+
+### 报告中心边界与 UI 路由（已实现）
+
+报告中心以 `Report` 为产品主线概念，但存储仍按时间尺度拆分：现有 `daily_report` 是按自然日的解释快照；
+`weekly_report` 始终固化自然周实际活动、表现、恢复与数据质量，有生效训练方案时才附加计划执行与
+Progression Decision。报告可以提出下一周或阶段建议，但 Training 域独立保存提案和已确认版本，
+报告域不复制调整记录。报告页可以根据报告日期/周 ID 深链训练页，但不能从报告生成路径调用
+方案确认、启用或推进写入。
+
+Weekly Report 文件使用 `reports/weekly/<ISO-week>.md`，以 Markdown Front Matter 保存 `week_id`、`week_start`、
+`week_end`、`data_as_of`、`actual_summary`、`trend_summary`、`review_sections` 和 `data_quality`。
+`actual_summary` 包含运动/跑步天数、最长单次与类型结构；`trend_summary` 保存最多四个活动覆盖完整自然周的
+参照样本与差异；`review_sections` 固化概览、趋势、恢复/风险和下周动作，确保在线 AI 失败后仍可完整渲染。
+`plan_context`、`plan_id`、`plan_version`、
+`plan_execution_summary`、兼容字段 `execution_summary`、`adaptation_signal` 与 `progression_decision` 均为
+可空方案关联；无方案时保持 `null`，不得用空完成率或 `insufficient_data` 代替。读取或渲染 Weekly Report
+不得重算并写入决策；只有显式报告生成请求可以替换同周快照。
+
+显式生成周复盘时，Front Matter 还必须固化 `training_day_summary`、`daily_prerequisites` 与
+`quality_sessions`。`daily_prerequisites` 是 `weekly-prerequisite-manifest-v1` 的封口快照，用于证明周级解释
+之前哪些逐日事实和确定性分析已经就绪；它不等于七份日报，也不触发逐日 AI。`review_sections.quality_sessions`
+保存可直接渲染的确定性标题、类型计数、合计量、逐课事实与证据不足候选。没有质量课时保留一句明确结论，
+页面不得渲染无文字卡片。
+
+报告页所有带 `hidden` 的状态元素必须退出布局；组件级 `display` 规则不得覆盖该语义。关闭的原生
+`details.weekly-review-details` 只保留 summary，正文和子区块必须 `display:none`，避免归档列表产生空白高度。
+
+`/reports` 是报告中心入口而不是三个资源的纵向仪表盘。前端使用查询参数 `tab=daily|weekly|adjustments` 选择
+唯一可见的二级页，缺省为 `daily`；`date=YYYY-MM-DD` 只预填日报范围，`week` 或 `date` 只预填周复盘范围。
+三个只读 API 可以并行读取，但渲染层不得同时显示三个域的生成控件、空状态和归档列表。日报详情继续通过既有
+`/?date=D` 兼容入口读取快照；报告中心只负责打开详情或显式生成。
+
+日报二级页先用 `GET /api/reports/readiness?date=D` 取得状态，再渲染唯一状态卡：`existing`、`ready`、`limited`
+或 `blocked`。完整性维度、受限版选择与同步深链只属于状态卡，不应常驻在已有报告的列表上。同步深链写为
+`/sync?date=D&from=reports&return_to=/reports?tab=daily%26date=D#single-sync`，返回时恢复日报页上下文但不写日报。
+
+日报与周复盘各自的日期输入都以同一字段为唯一真相源：日报的 `#genDate` 驱动日期摘要、已有报告/完整性提示、
+前后一天与昨天/今天；周复盘的 `#weekDate` 驱动自然周摘要、前后一天与上一周/本周。两个字段使用用户本地
+`todayStr` 作为最大值，摘要和精确日期字段均可见，不能用无样式的裸日期输入或透明覆盖层表达当前范围。
+
+周复盘读模型必须区分 `in_progress` 与 `completed` 自然周。前者可以展示但不得写入
+`weekly_checkpoint`；有方案时 `progression_decision` 只能是 `not_final`，无方案时保持 `null`，两者均不得
+产生 `advance / hold / deload`。后者才允许生成不可变 `weekly_report`；只有存在方案关联时才形成正式决策。
+Training Proposal 的待确认与历史状态只在训练页读取，
+从不包含报告入口或确认写入接口。
+
+### 日报计划执行读模型
+
+`daily_report` Front Matter 额外保存 `plan_execution_summary`，由报告日方案快照、截至报告日的本地自然周活动和
+Activity Data Coverage 确定性生成。它包含 `comparison_status`、当日计划/实际概览、周目标与已记录跑量、当前
+阶段、目标名称/日期和 `next_action`。此字段是解释快照：不得依赖在线 AI，不能把未知覆盖视为缺席，也不得
+写入 Training Scheme 或 Proposal。Web 仅展示面向用户的摘要并将 `next_action.training_url` 深链到训练页。
+
 ```
 输入: target_date (默认今天), HealthDB, MemoryStore (读取活跃目标)
 输出: auto/daily/YYYY-MM-DD.md
@@ -1042,7 +1243,7 @@ graph TD
      1-2 条 → warning
      0 条   → normal
 
-8. 生成今日训练建议
+8. 生成当日训练建议
    输入: recovery_score, acwr_status, anomalies, active_goals,
          user_preferences (从 coaching/preferences.md)
    
@@ -1410,64 +1611,31 @@ neurun mcp
 
 ---
 
-### 4.7 AI 教练模块 (`coach.py`)
+### 4.7 日报 AI 工作流 (`coach.py`)
 
-为 `neurun daily --ai` 提供 DeepSeek API 驱动的智能训练洞察。
+日报在线解释使用与其他 Coach Skill 相同的 OpenAI-compatible 客户端，但调用边界保持最小：
 
-#### 上下文收集策略
+- `memory.py` 先完成数据完整性门禁、SQLite 查询、训练识别、趋势、恢复、方案版本和执行摘要计算；
+- `coach.py` 只挑选这些结构化字段，运行一次 `review-daily-training`；
+- 模型不读取 Memory、SQLite 或应用 tools，也不负责写文件；
+- `CoachInsight` Schema 固定计划执行、结论、观察、建议和风险字段，并强制 `plan_adjusted=false`；
+- `observations`（教练观察）按四块组织自然语言解读：运动概要 → 强度分布解释与分析（配速带/心率带、分位数、步频/步幅）→ 恢复分析（睡眠/HRV/身体电量/恢复评分）→ 近 7 天负荷与恢复分析（ACWR 急性/慢性对比 + 近一周睡眠/HRV 趋势）；同一事实只出现一次，不与结论/建议/警告重复；
+- 未配置模型、超时、上游失败或输出无效时，保留 `memory.py` 的本地规则洞察。
 
-AI 教练从多个 memory 来源收集上下文，构建丰富的 prompt：
+调用链：
 
-| 数据来源 | 收集函数 | 内容 |
-|----------|----------|------|
-| 竞技档案 | `_collect_profile()` | `profile/fitness-assessment.md` — 身高体重、各距离 PB、VO2max |
-| 训练偏好 | `_collect_preferences()` | `coaching/preferences.md` — 主项、训练哲学、伤病史 |
-| 活跃目标 | `_collect_goals()` | `goals/active/*.md` — 目标成绩、截止日期、配速对照表（含 body 正文） |
-| 历史趋势 | `_collect_history()` | 当前实现读取前 7 天日报；目标改为直接读取近期 SQLite 原始活动及版本化训练分析，历史日报仅作解释快照 |
-| 当日数据 | `_build_coach_prompt()` | 当日日报 FM（活动详情、睡眠、晨起指标、负荷、恢复评分） |
-
-#### Prompt 结构
-
-```
-[运动员档案]           ← profile + preferences + goals（新增）
-[今日数据]             ← 当日 FM + session_analyses
-[前 7 天趋势表格]      ← 7 天数字摘要
-[近期训练细节]         ← 近 3 天配速/步频/功率（新增）
-[任务指令]             ← 要求 AI 结合运动员竞技水平给出针对性建议
+```text
+MemoryStore.generate_daily_report(..., persist=False)
+  → 构建完整 Front Matter 和本地降级洞察
+  → coach.get_coach_insight(fm, target_date)
+    → review-daily-training（单次 JSON 请求）
+    → CoachInsight Schema 校验
+  → MemoryStore.finalize_daily_report(memory)
+    → 用最终洞察渲染正文并落盘一次
 ```
 
-关键改进：AI 现在知道运动员的全马 PB 2:32:48、sub-2:30 目标、配速能力，能给出与竞技水平匹配的评估。
-
-训练内容识别接入后，prompt 只解释结构化的训练主类型、地形属性、置信度和证据；不能依据活动名称重新分类。未生成历史日报的日期仍须从 SQLite 原始活动进入上下文。空活动日期必须同时读取 Activity Data Coverage：只有覆盖完成才能作为休息日，否则为未知。周目标完成度通过自然周进度查询统计周一至报告日期的 Actual Activity；`get_training_history(days=7)` 只用于滚动趋势，不承担本周目标口径。
-
-#### API 调用
-
-- **模型**: `deepseek-chat`（通过 `DEEPSEEK_API_KEY` 环境变量）
-- **接口**: `https://api.deepseek.com/chat/completions`（OpenAI 兼容）
-- **响应**: JSON (`response_format: json_object`)，返回 `{conclusion, observations, recommendations, warnings}`
-- **Fallback**: API 不可用时，回退到 `memory.py` 的 `_generate_ai_insight()` 规则引擎
-
-```python
-# coach.py 入口
-def get_coach_insight(fm, target_date=None, memory_store=None) -> dict | None:
-    # 收集上下文
-    history_context = _collect_history(memory_store, target_date)
-    athlete_context = (profile + preferences + goals)  # 新增
-    prompt = _build_coach_prompt(fm, target_date, history_context, athlete_context)
-    # 调用 DeepSeek API
-    ...
-```
-
-#### 调用链
-
-```
-neurun daily --ai
-  → _get_ai_insight(fm, target_date, memory_store)
-    → coach.get_coach_insight(fm, target_date, memory_store)
-      → _collect_profile / _collect_preferences / _collect_goals / _collect_history
-      → _build_coach_prompt
-      → DeepSeek API
-    → 结果写入 fm['ai_insight'] → mem.save()
-```
+AI 服务统一使用 `NEURUN_AI_API_KEY`、`NEURUN_AI_BASE_URL` 和 `NEURUN_AI_MODEL`；接口为
+OpenAI-compatible `/chat/completions` 且要求 `response_format=json_object`。协议路径中的
+`chat/completions` 只是供应商 API 名称，不代表 neurun 提供通用 Chat 产品或消息历史。
 
 ---

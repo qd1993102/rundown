@@ -1,4 +1,4 @@
-"""Web Chat 路由模块 — 页面 + API 端点。
+"""Web 应用路由模块 — 页面 + API 端点。
 
 所有路由通过 FastMCP custom_route 注册，和 MCP Server 共用一个 uvicorn 进程。
 依赖：Starlette（FastMCP 内建），不引入 Flask/FastAPI。
@@ -24,17 +24,24 @@ from starlette.responses import (
     HTMLResponse,
     JSONResponse,
     Response,
-    StreamingResponse,
 )
 
+from .ai_inference_coordinator import (
+    AIInferenceCapacityExceededError,
+    AIInferenceCoordinator,
+    AIInferenceInProgressError,
+)
 from .auth import AuthManager, cleanup_expired_mfa_states, get_mfa_state
-from .coach import chat_stream
 from .config import Config, UserConfig
 from .invitations import InvitationError, InvitationStore
-from .local_files import LocalPersistenceError, atomic_write_private, ensure_private_dir
+from .local_files import LocalPersistenceError, atomic_write_private
 from .main import ProviderAuthenticationError, _do_daily_sync, _do_data_sync
-from .memory import Memory, MemoryStore, build_memory_file
+from .memory import MemoryStore, MemoryType, build_memory_file, get_daily_activities
 from .resource_lifecycle import close_runtime_resources
+from .report_readiness import (
+    DailyReportReadinessError,
+    DailyReportReadinessService,
+)
 from .storage import Storage
 from .sync_coordinator import (
     SyncCapacityExceededError,
@@ -42,6 +49,9 @@ from .sync_coordinator import (
     SyncInProgressError,
 )
 from .sync_tasks import ACTIVE_STATUSES, SyncTaskStore
+from .training import TrainingError, TrainingService
+from .training_service_factory import build_training_service
+from .training_planning import create_default_professional_planner
 from .users import UserExistsError, UserManager, UserRecord
 
 logger = logging.getLogger(__name__)
@@ -244,21 +254,25 @@ def _contact_qr_path(config: Config) -> Path | None:
 
 
 def _html_response(html: str, user: UserRecord | None = None) -> HTMLResponse:
-    """返回统一注入联系入口与 ARMS RUM 的 HTML 页面响应。"""
+    """返回统一注入联系入口与 ARMS RUM 的 HTML 页面响应。
+
+    页面不缓存（Cache-Control: no-cache），保证每次加载最新模板/内联脚本。
+    """
+    headers = {"Cache-Control": "no-cache"}
     injections = []
     if user is not None and _CONTACT_WIDGET_MARKER not in html:
         injections.append(_contact_widget())
     if _ALIYUN_ARMS_RUM_SDK not in html:
         injections.append(_arms_rum_script(user))
     if not injections:
-        return HTMLResponse(html)
+        return HTMLResponse(html, headers=headers)
     injected = "\n".join(injections)
     body_end = re.search(r"</body\s*>", html, flags=re.IGNORECASE)
     if body_end is None:
         logger.warning("HTML 页面缺少 </body>，平台注入内容追加到文末")
-        return HTMLResponse(f"{html}\n{injected}")
+        return HTMLResponse(f"{html}\n{injected}", headers=headers)
     monitored_html = f"{html[:body_end.start()]}{injected}\n{html[body_end.start():]}"
-    return HTMLResponse(monitored_html)
+    return HTMLResponse(monitored_html, headers=headers)
 
 
 def _registration_error(nickname: str, email: str, password: str) -> str | None:
@@ -437,79 +451,6 @@ def _sync_task_error(exc: Exception, provider_type: str) -> dict[str, Any]:
     }
 
 
-def _user_context(memory_store: MemoryStore) -> str:
-    """构建用户上下文文本（注入 AI 对话）。"""
-    parts = []
-
-    # 最新日报
-    try:
-        latest = memory_store.get_latest("daily_report")
-        if latest:
-            fm = latest.front_matter or {}
-            ya = fm.get("yesterday_activities", {})
-            sl = fm.get("last_night_sleep", {})
-            mo = fm.get("this_morning", {})
-            ld = fm.get("training_load", {})
-            rec = fm.get("recovery", {})
-            ai = fm.get("ai_insight", {})
-
-            lines = ["## 今日数据"]
-            if ya.get("activity_state") == "unknown":
-                lines.append("- 昨天: 运动数据未同步，训练/休息状态未知")
-            elif ya.get("is_rest_day"):
-                lines.append("- 昨天: 休息日")
-            else:
-                lines.append(
-                    f"- 昨天训练: {ya.get('total_duration_min', 0)}min "
-                    f"{ya.get('total_distance_km', 0):.1f}km "
-                    f"负荷 {ya.get('total_training_load', 0)}"
-                )
-            lines.append(
-                f"- 昨晚睡眠: {sl.get('total_hours', '?')}h "
-                f"评分 {sl.get('sleep_score', '?')}"
-            )
-            lines.append(
-                f"- 今晨: RHR {mo.get('resting_hr', '?')} | "
-                f"HRV {mo.get('hrv_ms', '?')}ms ({mo.get('hrv_status', '?')}) | "
-                f"电量 {mo.get('body_battery_morning', '?')}"
-            )
-            lines.append(
-                f"- 负荷: ACWR {ld.get('acwr', '?')} "
-                f"({ld.get('acwr_status', '?')}) | "
-                f"恢复 {rec.get('overall_score', '?')}/100"
-            )
-            if ai.get("conclusion"):
-                lines.append(f"- AI 评估: {ai['conclusion']}")
-            parts.append("\n".join(lines))
-    except Exception:
-        pass
-
-    # 活跃目标
-    try:
-        goals = memory_store.list_by_type("goal", status="active")
-        if goals:
-            goal_lines = ["## 活跃目标"]
-            for g in goals[:3]:
-                fm = g.front_matter or {}
-                goal_lines.append(
-                    f"- {fm.get('title', g.id)}"
-                    f"（目标日期: {fm.get('target_date', '?')}）"
-                )
-            parts.append("\n".join(goal_lines))
-    except Exception:
-        pass
-
-    # 竞技档案
-    try:
-        profile = memory_store.get("fitness-assessment")
-        if profile and profile.body:
-            parts.append(f"## 运动员档案\n{profile.body[:800]}")
-    except Exception:
-        pass
-
-    return "\n\n".join(parts) if parts else "暂无数据，请先同步。"
-
-
 def _dashboard_data(memory_store: MemoryStore, target_date: date | None = None) -> dict[str, Any]:
     """构建 Dashboard JSON 数据，供前端渲染日报卡片。
 
@@ -527,14 +468,23 @@ def _dashboard_data(memory_store: MemoryStore, target_date: date | None = None) 
             fm = report.front_matter
             return {
                 "has_data": True,
-                "report_date": str(fm.get("report_date", "")),
-                "yesterday_activities": fm.get("yesterday_activities", {}),
+                "report_date": str(fm.get("date") or fm.get("report_date") or ""),
+                "daily_activities": get_daily_activities(fm),
+                "yesterday_activities": get_daily_activities(fm),
                 "last_night_sleep": fm.get("last_night_sleep", {}),
                 "this_morning": fm.get("this_morning", {}),
                 "training_load": fm.get("training_load", {}),
                 "recovery": fm.get("recovery", {}),
                 "ai_insight": fm.get("ai_insight", {}),
                 "plan_context": fm.get("plan_context", {}),
+                "plan_execution_summary": fm.get("plan_execution_summary", {}),
+                # 训练深度分析（整体水平/强度分布/配速节奏/结构判定），Web 结构化展示
+                "session_analyses": fm.get("session_analyses", []),
+                "data_readiness": fm.get("data_readiness", "unknown"),
+                "report_finality": fm.get("report_finality", "unknown"),
+                "data_as_of": fm.get("data_as_of"),
+                "data_coverage": fm.get("data_coverage", {}),
+                "omitted_sections": fm.get("omitted_sections", []),
             }
     except Exception:
         pass
@@ -552,8 +502,82 @@ def register_web_routes(server, user_manager: UserManager, config: Config):
         max_concurrency=config.sync_max_concurrency,
         max_pending=config.sync_max_pending,
     )
+    ai_inference_coordinator = AIInferenceCoordinator(
+        max_concurrency=config.ai_max_concurrency,
+        max_pending=config.ai_max_pending,
+        wait_timeout_seconds=config.ai_wait_timeout_seconds,
+    )
     runner_instance_id = secrets.token_hex(16)
     sync_task_stores: dict[str, SyncTaskStore] = {}
+    professional_scheme_planner = create_default_professional_planner()
+
+    def ai_capacity_failure(exc: AIInferenceCapacityExceededError) -> Response:
+        """返回不会启动新推理线程的可重试容量错误。"""
+        logger.warning("在线 AI 推理容量已满: %s", exc)
+        return JSONResponse(
+            {
+                "status": "error",
+                "code": "ai_capacity_reached",
+                "message": "当前 AI 推理请求较多，请稍后重试；现有方案和报告不会被改写。",
+                "retry_after_seconds": 5,
+            },
+            status_code=503,
+            headers={"Retry-After": "5", "Cache-Control": "no-store"},
+        )
+
+    def ai_in_progress_failure(exc: AIInferenceInProgressError) -> Response:
+        """返回同一用户重复生成的可重试错误。"""
+        logger.info("同一用户重复提交在线 AI 工作: %s", exc)
+        return JSONResponse(
+            {
+                "status": "error",
+                "code": "ai_request_in_progress",
+                "message": "你已有 AI 生成任务进行中，请等待完成后再试。",
+                "retry_after_seconds": 5,
+                "task_status_url": "/api/ai/tasks/current",
+            },
+            status_code=429,
+            headers={"Retry-After": "5", "Cache-Control": "no-store"},
+        )
+
+    def training_service(api_key: str) -> TrainingService:
+        """构建只访问当前应用账号目录的训练服务。
+
+        活动加载器与上下文装配固化为 ``training_service_factory`` 的共享实现，
+        与 CLI 日报、MCP 报告同口径；Web 训练页额外注入方案规划器。
+        """
+        user_cfg = config.for_user(api_key)
+        user_manager.ensure_dirs(api_key)
+        return build_training_service(
+            user_cfg,
+            scheme_planner=professional_scheme_planner,
+            storage_factory=Storage,
+        )
+
+    def training_error(exc: TrainingError) -> JSONResponse:
+        return JSONResponse({
+            "status": "error", "code": exc.code, "message": str(exc),
+        }, status_code=exc.status_code, headers={"Cache-Control": "no-store"})
+
+    def training_failure(exc: Exception) -> JSONResponse:
+        logger.error("训练服务不可用: error_type=%s", type(exc).__name__)
+        return JSONResponse({
+            "status": "error", "code": "training_service_unavailable",
+            "message": "训练服务暂时不可用，请稍后重试；持续失败时请联系管理员检查用户数据目录。",
+        }, status_code=503, headers={"Cache-Control": "no-store"})
+
+    def training_task_result(scheme: dict[str, Any]) -> dict[str, Any]:
+        """异步任务只缓存可回放元数据，不把整份草稿正文塞进任务状态。"""
+        return {
+            "plan_id": scheme.get("plan_id"),
+            "generation_mode": scheme.get("generation_mode"),
+            "validation_status": scheme.get("validation_status"),
+            "degraded": bool(scheme.get("degraded")),
+            "facts_snapshot_id": scheme.get("facts_snapshot_id"),
+            "summary_version": scheme.get("summary_version"),
+            "framework_id": scheme.get("framework_id"),
+            "data_gaps": list(scheme.get("data_gaps") or [])[:8],
+        }
 
     def sync_task_store(api_key: str) -> SyncTaskStore:
         store = sync_task_stores.get(api_key)
@@ -606,13 +630,13 @@ def register_web_routes(server, user_manager: UserManager, config: Config):
 
     @server.custom_route("/", methods=["GET"])
     async def index(request: Request) -> Response:
-        """首页 — 已绑定用户进聊天，未绑定跳转设置页。"""
+        """首页 — 已绑定用户进入日报仪表盘，未绑定跳转设置页。"""
         api_key = _get_api_key(request)
         user = user_manager.get(api_key) if api_key else None
 
         if user and user.token_status == "active":
-            html = _read_template("chat.html")
-            return _html_response(html or _chat_fallback(), user)
+            html = _read_template("dashboard.html")
+            return _html_response(html or _dashboard_fallback(), user)
         return _redirect(_user_page(user))
 
     @server.custom_route("/login", methods=["GET"])
@@ -656,7 +680,7 @@ def register_web_routes(server, user_manager: UserManager, config: Config):
 
     @server.custom_route("/reports", methods=["GET"])
     async def reports_page(request: Request) -> Response:
-        """日报列表页面。"""
+        """报告中心页面。"""
         api_key = _get_api_key(request)
         user = user_manager.get(api_key) if api_key else None
         if not user or user.token_status != "active":
@@ -664,6 +688,15 @@ def register_web_routes(server, user_manager: UserManager, config: Config):
 
         html = _read_template("reports.html")
         return _html_response(html or _reports_fallback(), user)
+
+    @server.custom_route("/training", methods=["GET"])
+    async def training_page(request: Request) -> Response:
+        """训练主界面。"""
+        api_key = _get_api_key(request)
+        user = user_manager.get(api_key) if api_key else None
+        if not user or user.token_status != "active":
+            return _redirect(_user_page(user))
+        return _html_response(_read_template("training.html"), user)
 
     @server.custom_route("/sync", methods=["GET"])
     async def sync_page(request: Request) -> Response:
@@ -688,6 +721,470 @@ def register_web_routes(server, user_manager: UserManager, config: Config):
         return _html_response(html or _profile_fallback(), user)
 
     # ═══ API 路由 ═══
+
+    @server.custom_route("/api/ai/tasks/current", methods=["GET"])
+    async def api_current_ai_task(request: Request) -> Response:
+        """读取当前登录用户的在线 AI 生成状态。"""
+        api_key = _get_api_key(request)
+        user = user_manager.get(api_key) if api_key else None
+        if not user or user.token_status != "active":
+            return JSONResponse(
+                {"status": "error", "message": "请先绑定数据源"},
+                status_code=401,
+            )
+        task = await ai_inference_coordinator.current_status(api_key)
+        return JSONResponse(
+            {"status": "ok", "task": task},
+            headers={"Cache-Control": "no-store"},
+        )
+
+    @server.custom_route("/api/training/home", methods=["GET"])
+    async def api_training_home(request: Request) -> Response:
+        """读取实时方案、今日训练、本周安排和待确认提案。"""
+        api_key = _get_api_key(request)
+        user = user_manager.get(api_key) if api_key else None
+        if not user or user.token_status != "active":
+            return JSONResponse({"status": "error", "message": "请先绑定数据源"}, status_code=401)
+        try:
+            return JSONResponse(
+                training_service(api_key).home(),
+                headers={"Cache-Control": "no-store"},
+            )
+        except TrainingError as exc:
+            return training_error(exc)
+        except Exception as exc:
+            return training_failure(exc)
+
+    @server.custom_route("/api/training/plan", methods=["GET"])
+    async def api_training_plan(request: Request) -> Response:
+        """读取完整实时训练方案。"""
+        api_key = _get_api_key(request)
+        user = user_manager.get(api_key) if api_key else None
+        if not user or user.token_status != "active":
+            return JSONResponse({"status": "error", "message": "请先绑定数据源"}, status_code=401)
+        try:
+            plan = training_service(api_key).plan()
+            return JSONResponse(
+                {"has_active_plan": bool(plan), "scheme": plan},
+                headers={"Cache-Control": "no-store"},
+            )
+        except TrainingError as exc:
+            return training_error(exc)
+        except Exception as exc:
+            return training_failure(exc)
+
+    @server.custom_route("/api/training/plans", methods=["POST"])
+    async def api_training_create(request: Request) -> Response:
+        """生成待确认训练方案草稿。"""
+        api_key = _get_api_key(request)
+        user = user_manager.get(api_key) if api_key else None
+        if not user or user.token_status != "active":
+            return JSONResponse({"status": "error", "message": "请先绑定数据源"}, status_code=401)
+        try:
+            body = await request.json()
+        except Exception:
+            return JSONResponse({"status": "error", "code": "invalid_json", "message": "请求体必须是有效 JSON"}, status_code=400)
+        try:
+            await ai_inference_coordinator.start(
+                api_key,
+                lambda: training_service(api_key).create_draft(body),
+                operation="training_draft",
+                result_mapper=training_task_result,
+            )
+            task = await ai_inference_coordinator.current_status(api_key)
+            return JSONResponse(
+                {"status": "accepted", "task": task}, status_code=202,
+                headers={"Cache-Control": "no-store", "Retry-After": "1"},
+            )
+        except AIInferenceInProgressError as exc:
+            return ai_in_progress_failure(exc)
+        except AIInferenceCapacityExceededError as exc:
+            return ai_capacity_failure(exc)
+        except TrainingError as exc:
+            return training_error(exc)
+        except Exception as exc:
+            return training_failure(exc)
+
+    @server.custom_route("/api/training/plans/{plan_id}", methods=["PUT"])
+    async def api_training_update(request: Request) -> Response:
+        """修改并重新计算未生效训练方案草稿。"""
+        api_key = _get_api_key(request)
+        user = user_manager.get(api_key) if api_key else None
+        if not user or user.token_status != "active":
+            return JSONResponse({"status": "error", "message": "请先绑定数据源"}, status_code=401)
+        try:
+            body = await request.json()
+        except Exception:
+            return JSONResponse({"status": "error", "code": "invalid_json", "message": "请求体必须是有效 JSON"}, status_code=400)
+        try:
+            await ai_inference_coordinator.start(
+                api_key,
+                lambda: training_service(api_key).update_draft(
+                    str(request.path_params["plan_id"]), body,
+                ),
+                operation="training_draft_update",
+                result_mapper=training_task_result,
+            )
+            task = await ai_inference_coordinator.current_status(api_key)
+            return JSONResponse(
+                {"status": "accepted", "task": task}, status_code=202,
+                headers={"Cache-Control": "no-store", "Retry-After": "1"},
+            )
+        except AIInferenceInProgressError as exc:
+            return ai_in_progress_failure(exc)
+        except AIInferenceCapacityExceededError as exc:
+            return ai_capacity_failure(exc)
+        except TrainingError as exc:
+            return training_error(exc)
+        except Exception as exc:
+            return training_failure(exc)
+
+    @server.custom_route("/api/training/tasks/{task_id}", methods=["GET"])
+    async def api_training_task(request: Request) -> Response:
+        """读取当前用户的草稿生成任务；任务结果通过训练首页读取。"""
+        api_key = _get_api_key(request)
+        user = user_manager.get(api_key) if api_key else None
+        if not user or user.token_status != "active":
+            return JSONResponse({"status": "error", "message": "请先绑定数据源"}, status_code=401)
+        task = await ai_inference_coordinator.current_status(api_key)
+        if not task or str(task.get("task_id")) != str(request.path_params["task_id"]):
+            return JSONResponse({"status": "error", "message": "草稿任务不存在或已过期"}, status_code=404)
+        if task.get("operation") not in {"training_draft", "training_draft_update"}:
+            return JSONResponse({"status": "error", "message": "任务类型不匹配"}, status_code=404)
+        return JSONResponse(
+            {"status": "ok", "task": task},
+            headers={"Cache-Control": "no-store", "Retry-After": "1"},
+        )
+
+    @server.custom_route("/api/training/plans/{plan_id}/activate", methods=["POST"])
+    async def api_training_activate(request: Request) -> Response:
+        """显式确认并激活草稿。"""
+        api_key = _get_api_key(request)
+        user = user_manager.get(api_key) if api_key else None
+        if not user or user.token_status != "active":
+            return JSONResponse({"status": "error", "message": "请先绑定数据源"}, status_code=401)
+        try:
+            try:
+                body = await request.json()
+            except Exception:
+                body = {}
+            scheme = training_service(api_key).activate(str(request.path_params["plan_id"]), body)
+            return JSONResponse({"status": "ok", "scheme": scheme})
+        except TrainingError as exc:
+            return training_error(exc)
+        except Exception as exc:
+            return training_failure(exc)
+
+    @server.custom_route("/api/training/plans/{plan_id}/activation-preview", methods=["POST"])
+    async def api_training_activation_preview(request: Request) -> Response:
+        """预览启用日期、衔接周和基于同步事实的入门策略。"""
+        api_key = _get_api_key(request)
+        user = user_manager.get(api_key) if api_key else None
+        if not user or user.token_status != "active":
+            return JSONResponse({"status": "error", "message": "请先绑定数据源"}, status_code=401)
+        try:
+            try:
+                body = await request.json()
+            except Exception:
+                body = {}
+            preview = training_service(api_key).activation_preview(str(request.path_params["plan_id"]), body)
+            return JSONResponse({"status": "ok", "preview": preview})
+        except TrainingError as exc:
+            return training_error(exc)
+        except Exception as exc:
+            return training_failure(exc)
+
+    @server.custom_route("/api/training/goal-rescheduling-preview", methods=["POST"])
+    async def api_training_goal_rescheduling_preview(request: Request) -> Response:
+        """生成不生效的目标改期预览与替代草稿。"""
+        api_key = _get_api_key(request)
+        user = user_manager.get(api_key) if api_key else None
+        if not user or user.token_status != "active":
+            return JSONResponse({"status": "error", "message": "请先绑定数据源"}, status_code=401)
+        try:
+            body = await request.json()
+            preview = await ai_inference_coordinator.run(
+                api_key,
+                lambda: training_service(api_key).preview_goal_rescheduling(body),
+                operation="goal_rescheduling",
+            )
+            return JSONResponse({"status": "ok", "preview": preview}, status_code=201)
+        except AIInferenceInProgressError as exc:
+            return ai_in_progress_failure(exc)
+        except AIInferenceCapacityExceededError as exc:
+            return ai_capacity_failure(exc)
+        except TrainingError as exc:
+            return training_error(exc)
+        except Exception as exc:
+            return training_failure(exc)
+
+    @server.custom_route("/api/training/goal-rescheduling/{preview_id}/confirm", methods=["POST"])
+    async def api_training_goal_rescheduling_confirm(request: Request) -> Response:
+        """确认仍有效的改期预览，废弃旧方案并回到同一主线草稿。"""
+        api_key = _get_api_key(request)
+        user = user_manager.get(api_key) if api_key else None
+        if not user or user.token_status != "active":
+            return JSONResponse({"status": "error", "message": "请先绑定数据源"}, status_code=401)
+        try:
+            body = await request.json()
+            result = training_service(api_key).confirm_goal_rescheduling(
+                str(request.path_params["preview_id"]),
+                idempotency_key=str(body.get("idempotency_key") or ""),
+            )
+            return JSONResponse({"status": "ok", **result})
+        except TrainingError as exc:
+            return training_error(exc)
+        except Exception as exc:
+            return training_failure(exc)
+
+    @server.custom_route("/api/training/plans/{plan_id}/activation", methods=["DELETE"])
+    @server.custom_route("/api/training/activation-schedules/{plan_id}/cancel", methods=["POST"])
+    async def api_training_cancel_activation(request: Request) -> Response:
+        """取消尚未生效的排期，并退回同一方案草稿。"""
+        api_key = _get_api_key(request)
+        user = user_manager.get(api_key) if api_key else None
+        if not user or user.token_status != "active":
+            return JSONResponse({"status": "error", "message": "请先绑定数据源"}, status_code=401)
+        try:
+            service = training_service(api_key)
+            draft = service.cancel_scheduled_activation(
+                str(request.path_params["plan_id"]),
+            )
+            preview = service.activation_preview(draft["plan_id"])
+            return JSONResponse({"status": "ok", "scheme": draft, "preview": preview})
+        except TrainingError as exc:
+            return training_error(exc)
+        except Exception as exc:
+            return training_failure(exc)
+
+    @server.custom_route("/api/training/capacity", methods=["GET", "PUT"])
+    async def api_training_capacity(request: Request) -> Response:
+        """读取能力档案或保存用户确认的长期能力事实。"""
+        api_key = _get_api_key(request)
+        user = user_manager.get(api_key) if api_key else None
+        if not user or user.token_status != "active":
+            return JSONResponse({"status": "error", "message": "请先绑定数据源"}, status_code=401)
+        try:
+            service = training_service(api_key)
+            if request.method == "PUT":
+                return JSONResponse({"status": "ok", "facts": service.update_capacity_facts(await request.json())})
+            return JSONResponse({"status": "ok", "profile": service.capacity_profile(), "facts": service.capacity_facts()})
+        except TrainingError as exc:
+            return training_error(exc)
+        except Exception as exc:
+            return training_failure(exc)
+
+    @server.custom_route("/api/training/session-brief", methods=["GET"])
+    async def api_training_session_brief(request: Request) -> Response:
+        """读取训练前说明；只分析，不修改方案。"""
+        api_key = _get_api_key(request)
+        user = user_manager.get(api_key) if api_key else None
+        if not user or user.token_status != "active":
+            return JSONResponse({"status": "error", "message": "请先绑定数据源"}, status_code=401)
+        try:
+            raw_date = request.query_params.get("date")
+            target = date.fromisoformat(raw_date) if raw_date else date.today()
+            brief = training_service(api_key).session_brief(target=target)
+            return JSONResponse({"status": "ok", "brief": brief})
+        except TrainingError as exc:
+            return training_error(exc)
+        except ValueError:
+            return JSONResponse({
+                "status": "error", "code": "invalid_date",
+                "message": "date 必须使用 YYYY-MM-DD",
+            }, status_code=400)
+        except Exception as exc:
+            return training_failure(exc)
+
+    @server.custom_route("/api/training/race-strategy", methods=["POST"])
+    async def api_training_race_strategy(request: Request) -> Response:
+        """在赛前窗口生成只读比赛策略。"""
+        api_key = _get_api_key(request)
+        user = user_manager.get(api_key) if api_key else None
+        if not user or user.token_status != "active":
+            return JSONResponse({"status": "error", "message": "请先绑定数据源"}, status_code=401)
+        try:
+            body = await request.json()
+            strategy = await ai_inference_coordinator.run(
+                api_key,
+                lambda: training_service(api_key).race_strategy(body),
+                operation="race_strategy",
+            )
+            return JSONResponse({"status": "ok", "strategy": strategy})
+        except AIInferenceInProgressError as exc:
+            return ai_in_progress_failure(exc)
+        except AIInferenceCapacityExceededError as exc:
+            return ai_capacity_failure(exc)
+        except TrainingError as exc:
+            return training_error(exc)
+        except Exception as exc:
+            return training_failure(exc)
+
+    @server.custom_route("/api/training/scheme-revisions", methods=["POST"])
+    async def api_training_scheme_revision(request: Request) -> Response:
+        """根据长期变化生成待确认的完整方案重规划提案。"""
+        api_key = _get_api_key(request)
+        user = user_manager.get(api_key) if api_key else None
+        if not user or user.token_status != "active":
+            return JSONResponse({"status": "error", "message": "请先绑定数据源"}, status_code=401)
+        try:
+            body = await request.json()
+            proposal = await ai_inference_coordinator.run(
+                api_key,
+                lambda: training_service(api_key).propose_scheme_revision(body),
+                operation="scheme_revision",
+            )
+            return JSONResponse({"status": "ok", "proposal": proposal}, status_code=201)
+        except AIInferenceInProgressError as exc:
+            return ai_in_progress_failure(exc)
+        except AIInferenceCapacityExceededError as exc:
+            return ai_capacity_failure(exc)
+        except TrainingError as exc:
+            return training_error(exc)
+        except Exception as exc:
+            return training_failure(exc)
+
+    @server.custom_route("/api/training/feedback", methods=["POST"])
+    async def api_training_feedback(request: Request) -> Response:
+        """记录结构化训练反馈；此操作不修改方案。"""
+        api_key = _get_api_key(request)
+        user = user_manager.get(api_key) if api_key else None
+        if not user or user.token_status != "active":
+            return JSONResponse({"status": "error", "message": "请先绑定数据源"}, status_code=401)
+        try:
+            body = await request.json()
+        except Exception:
+            return JSONResponse({"status": "error", "code": "invalid_json", "message": "请求体必须是有效 JSON"}, status_code=400)
+        try:
+            feedback = training_service(api_key).submit_feedback(body)
+            return JSONResponse({"status": "ok", "feedback": feedback}, status_code=201)
+        except TrainingError as exc:
+            return training_error(exc)
+        except Exception as exc:
+            return training_failure(exc)
+
+    @server.custom_route("/api/training/proposals", methods=["POST"])
+    async def api_training_proposal(request: Request) -> Response:
+        """为一条已记录反馈生成待确认调整提案。"""
+        api_key = _get_api_key(request)
+        user = user_manager.get(api_key) if api_key else None
+        if not user or user.token_status != "active":
+            return JSONResponse({"status": "error", "message": "请先绑定数据源"}, status_code=401)
+        try:
+            body = await request.json()
+        except Exception:
+            return JSONResponse({"status": "error", "code": "invalid_json", "message": "请求体必须是有效 JSON"}, status_code=400)
+        try:
+            proposal = await ai_inference_coordinator.run(
+                api_key,
+                lambda: training_service(api_key).propose(
+                    str(body.get("feedback_id") or ""),
+                ),
+                operation="training_adjustment",
+            )
+            return JSONResponse({"status": "ok", "proposal": proposal}, status_code=201)
+        except AIInferenceInProgressError as exc:
+            return ai_in_progress_failure(exc)
+        except AIInferenceCapacityExceededError as exc:
+            return ai_capacity_failure(exc)
+        except TrainingError as exc:
+            return training_error(exc)
+        except Exception as exc:
+            return training_failure(exc)
+
+    @server.custom_route("/api/training/proposals/from-report", methods=["POST"])
+    async def api_training_proposal_from_report(request: Request) -> Response:
+        """将报告中心的周复盘建议转成训练域待确认提案，不直接生效。"""
+        api_key = _get_api_key(request)
+        user = user_manager.get(api_key) if api_key else None
+        if not user or user.token_status != "active":
+            return JSONResponse({"status": "error", "message": "请先绑定数据源"}, status_code=401)
+        try:
+            body = await request.json()
+        except Exception:
+            return JSONResponse(
+                {"status": "error", "code": "invalid_json", "message": "请求体必须是有效 JSON"},
+                status_code=400,
+            )
+        week_id = str(body.get("week_id") or "").strip()
+        if not week_id:
+            return JSONResponse(
+                {"status": "error", "code": "week_id_required", "message": "缺少周复盘 week_id"},
+                status_code=400,
+            )
+        try:
+            effective_from = body.get("effective_from")
+            proposal = await ai_inference_coordinator.run(
+                api_key,
+                lambda: training_service(api_key).propose_from_weekly_report(
+                    week_id,
+                    effective_from=(
+                        date.fromisoformat(str(effective_from))
+                        if effective_from else None
+                    ),
+                ),
+                operation="scheme_revision",
+            )
+            return JSONResponse({"status": "ok", "proposal": proposal}, status_code=201)
+        except AIInferenceInProgressError as exc:
+            return ai_in_progress_failure(exc)
+        except AIInferenceCapacityExceededError as exc:
+            return ai_capacity_failure(exc)
+        except TrainingError as exc:
+            return training_error(exc)
+        except ValueError:
+            return JSONResponse(
+                {"status": "error", "code": "invalid_date", "message": "effective_from 必须使用 YYYY-MM-DD"},
+                status_code=400,
+            )
+        except Exception as exc:
+            return training_failure(exc)
+
+    @server.custom_route("/api/training/proposals/{proposal_id}/approve", methods=["POST"])
+    async def api_training_proposal_approve(request: Request) -> Response:
+        """按基础版本显式批准提案。"""
+        api_key = _get_api_key(request)
+        user = user_manager.get(api_key) if api_key else None
+        if not user or user.token_status != "active":
+            return JSONResponse({"status": "error", "message": "请先绑定数据源"}, status_code=401)
+        try:
+            body = await request.json()
+        except Exception:
+            return JSONResponse({"status": "error", "code": "invalid_json", "message": "请求体必须是有效 JSON"}, status_code=400)
+        try:
+            result = training_service(api_key).approve(
+                str(request.path_params["proposal_id"]),
+                base_version=int(body.get("base_version")),
+                idempotency_key=str(body.get("idempotency_key") or ""),
+            )
+            return JSONResponse({"status": "ok", **result})
+        except TrainingError as exc:
+            return training_error(exc)
+        except (TypeError, ValueError):
+            return JSONResponse({"status": "error", "code": "base_version_required", "message": "base_version 必须是整数"}, status_code=400)
+        except Exception as exc:
+            return training_failure(exc)
+
+    @server.custom_route("/api/training/proposals/{proposal_id}/reject", methods=["POST"])
+    async def api_training_proposal_reject(request: Request) -> Response:
+        """拒绝提案并保持当前方案。"""
+        api_key = _get_api_key(request)
+        user = user_manager.get(api_key) if api_key else None
+        if not user or user.token_status != "active":
+            return JSONResponse({"status": "error", "message": "请先绑定数据源"}, status_code=401)
+        try:
+            body = await request.json()
+        except Exception:
+            return JSONResponse({"status": "error", "code": "invalid_json", "message": "请求体必须是有效 JSON"}, status_code=400)
+        try:
+            proposal = training_service(api_key).reject(
+                str(request.path_params["proposal_id"]), reason=str(body.get("reason") or ""),
+            )
+            return JSONResponse({"status": "ok", "proposal": proposal})
+        except TrainingError as exc:
+            return training_error(exc)
+        except Exception as exc:
+            return training_failure(exc)
 
     @server.custom_route("/api/invitations/validate", methods=["POST"])
     async def api_invitation_validate(request: Request) -> Response:
@@ -1064,34 +1561,6 @@ def register_web_routes(server, user_manager: UserManager, config: Config):
         finally:
             auth.close()
 
-    @server.custom_route("/api/chat/stream", methods=["POST"])
-    async def api_chat_stream(request: Request) -> Response:
-        """流式 AI 对话（SSE）。"""
-        api_key = _get_api_key(request)
-        user = user_manager.get(api_key) if api_key else None
-        if not user or user.token_status != "active":
-            return JSONResponse({"status": "error", "message": "请先绑定 Garmin"}, status_code=401)
-
-        try:
-            body = await request.json()
-        except Exception:
-            return JSONResponse({"status": "error", "message": "无效请求"}, status_code=400)
-
-        messages = body.get("messages", [])
-
-        # 构建用户上下文
-        user_cfg = config.for_user(api_key)
-        user_manager.ensure_dirs(api_key)
-        memory_store = MemoryStore(user_cfg.memory_dir)
-        context = _user_context(memory_store)
-
-        async def generate():
-            async for token in chat_stream(messages, context=context):
-                yield f"data: {json.dumps({'token': token})}\n\n"
-            yield "data: [DONE]\n\n"
-
-        return StreamingResponse(generate(), media_type="text/event-stream")
-
     @server.custom_route("/api/sync", methods=["POST"])
     async def api_sync(request: Request) -> Response:
         """只同步并持久化数据，不生成或覆盖日报。
@@ -1422,9 +1891,40 @@ def register_web_routes(server, user_manager: UserManager, config: Config):
         data = _dashboard_data(memory_store, target_date)
         return JSONResponse(data)
 
+    def paginated_reading(request: Request) -> tuple[int, int] | None:
+        """Parse optional archive-list pagination without changing legacy reads."""
+        params = request.query_params
+        if "page" not in params and "per_page" not in params:
+            return None
+        try:
+            page = int(params.get("page", "1"))
+            per_page = int(params.get("per_page", "7"))
+        except (TypeError, ValueError) as exc:
+            raise ValueError("page 和 per_page 必须为整数") from exc
+        if page < 1:
+            raise ValueError("page 必须大于等于 1")
+        if not 1 <= per_page <= 50:
+            raise ValueError("per_page 必须在 1 到 50 之间")
+        return page, per_page
+
+    def paginated_payload(items: list[dict[str, Any]], page: int, per_page: int) -> dict[str, Any]:
+        total = len(items)
+        total_pages = max(1, (total + per_page - 1) // per_page)
+        current_page = min(page, total_pages)
+        start = (current_page - 1) * per_page
+        return {
+            "reports": items[start:start + per_page],
+            "pagination": {
+                "page": current_page,
+                "per_page": per_page,
+                "total": total,
+                "total_pages": total_pages,
+            },
+        }
+
     @server.custom_route("/api/reports", methods=["GET"])
     async def api_reports(request: Request) -> Response:
-        """获取所有日报摘要列表（按日期倒序）。"""
+        """读取日报摘要；携带 page/per_page 时分页返回。"""
         api_key = _get_api_key(request)
         user = user_manager.get(api_key) if api_key else None
         if not user or user.token_status != "active":
@@ -1438,7 +1938,7 @@ def register_web_routes(server, user_manager: UserManager, config: Config):
         summaries = []
         for mem in reports:
             fm = mem.front_matter
-            ya = fm.get("yesterday_activities", {})
+            ya = get_daily_activities(fm)
             sl = fm.get("last_night_sleep", {})
             rc = fm.get("recovery", {})
             ai = fm.get("ai_insight", {})
@@ -1469,10 +1969,146 @@ def register_web_routes(server, user_manager: UserManager, config: Config):
                 "sleep_score": sl.get("sleep_score"),
                 "recovery_score": rc.get("overall_score"),
                 "ai_conclusion": ai.get("conclusion", "")[:80] if ai.get("conclusion") else "",
+                "data_readiness": fm.get("data_readiness", "unknown"),
+                "report_finality": fm.get("report_finality", "unknown"),
+                "data_as_of": fm.get("data_as_of"),
             })
 
         summaries.sort(key=lambda x: x["date"], reverse=True)
-        return JSONResponse(summaries)
+        try:
+            pagination = paginated_reading(request)
+            requested_date = request.query_params.get("date")
+            if requested_date:
+                date.fromisoformat(requested_date)
+        except ValueError as exc:
+            return JSONResponse(
+                {"status": "error", "code": "invalid_pagination", "message": str(exc)},
+                status_code=400,
+            )
+        if not pagination:
+            return JSONResponse(summaries)
+        page, per_page = pagination
+        payload = paginated_payload(summaries, page, per_page)
+        if requested_date:
+            payload["selected"] = next(
+                (item for item in summaries if item["date"] == requested_date), None,
+            )
+        return JSONResponse(payload)
+
+    @server.custom_route("/api/reports/weekly", methods=["GET", "POST"])
+    async def api_weekly_reports(request: Request) -> Response:
+        """读取周报归档，或生成已结束周复盘/当前周进度检查。"""
+        api_key = _get_api_key(request)
+        user = user_manager.get(api_key) if api_key else None
+        if not user or user.token_status != "active":
+            return JSONResponse({"status": "error", "message": "请先绑定数据源"}, status_code=401)
+        try:
+            service = training_service(api_key)
+            if request.method == "GET":
+                reports = service.list_weekly_reports()
+                try:
+                    pagination = paginated_reading(request)
+                except ValueError as exc:
+                    return JSONResponse(
+                        {"status": "error", "code": "invalid_pagination", "message": str(exc)},
+                        status_code=400,
+                    )
+                if not pagination:
+                    return JSONResponse({"status": "ok", "reports": reports})
+                page, per_page = pagination
+                return JSONResponse({"status": "ok", **paginated_payload(reports, page, per_page)})
+            try:
+                body = await request.json()
+            except Exception:
+                body = {}
+            raw_date = body.get("date")
+            target = date.fromisoformat(str(raw_date)) if raw_date else date.today()
+            report = await ai_inference_coordinator.run(
+                api_key,
+                lambda: service.create_weekly_report(target=target),
+                operation="weekly_review",
+                result_mapper=lambda generated: {"report": generated},
+            )
+            return JSONResponse({"status": "ok", "report": report})
+        except AIInferenceInProgressError as exc:
+            return ai_in_progress_failure(exc)
+        except AIInferenceCapacityExceededError as exc:
+            return ai_capacity_failure(exc)
+        except TrainingError as exc:
+            return training_error(exc)
+        except ValueError:
+            return JSONResponse({"status": "error", "code": "invalid_date", "message": "date 必须使用 YYYY-MM-DD"}, status_code=400)
+        except Exception as exc:
+            return training_failure(exc)
+
+    @server.custom_route("/api/training/adjustments", methods=["GET"])
+    async def api_training_adjustments(request: Request) -> Response:
+        """分页读取已处理的训练调整，不返回待确认提案。"""
+        api_key = _get_api_key(request)
+        user = user_manager.get(api_key) if api_key else None
+        if not user or user.token_status != "active":
+            return JSONResponse(
+                {"status": "error", "message": "请先绑定数据源"}, status_code=401,
+            )
+        try:
+            page, per_page = paginated_reading(request) or (1, 5)
+            records = training_service(api_key).list_adjustment_records()
+            payload = paginated_payload(records, page, per_page)
+            return JSONResponse({
+                "status": "ok",
+                "records": payload["reports"],
+                "pagination": payload["pagination"],
+            })
+        except ValueError as exc:
+            return JSONResponse(
+                {"status": "error", "code": "invalid_pagination", "message": str(exc)},
+                status_code=400,
+            )
+        except TrainingError as exc:
+            return training_error(exc)
+        except Exception as exc:
+            return training_failure(exc)
+
+    @server.custom_route("/api/reports/readiness", methods=["GET"])
+    async def api_report_readiness(request: Request) -> Response:
+        """只读检查指定日期的数据是否足以生成日报。"""
+        api_key = _get_api_key(request)
+        user = user_manager.get(api_key) if api_key else None
+        if not user or user.token_status != "active":
+            return JSONResponse(
+                {"status": "error", "message": "请先绑定数据源"},
+                status_code=401,
+            )
+
+        raw_date = request.query_params.get("date", "").strip()
+        try:
+            target = date.fromisoformat(raw_date)
+        except ValueError:
+            return JSONResponse(
+                {"status": "error", "message": "date 格式无效，应为 YYYY-MM-DD"},
+                status_code=400,
+            )
+
+        user_cfg = config.for_user(api_key)
+        user_manager.ensure_dirs(api_key)
+        storage = Storage(user_cfg)
+        try:
+            readiness = DailyReportReadinessService(
+                storage, provider_type=user_cfg.provider_type,
+            ).check(storage.get_local_user_id(), target)
+            return JSONResponse({
+                "status": "ok",
+                "date": str(target),
+                "readiness": readiness.to_dict(),
+            })
+        except Exception as exc:
+            logger.error("日报完整性检查失败: %s", exc)
+            return JSONResponse(
+                {"status": "error", "message": "日报数据检查失败，请稍后重试"},
+                status_code=500,
+            )
+        finally:
+            close_runtime_resources(storage)
 
     @server.custom_route("/api/reports", methods=["POST"])
     async def api_report_generate(request: Request) -> Response:
@@ -1491,30 +2127,60 @@ def register_web_routes(server, user_manager: UserManager, config: Config):
                 {"status": "error", "message": "date 格式无效，应为 YYYY-MM-DD"},
                 status_code=400,
             )
+        report_mode = str(body.get("mode", "complete")).strip().lower()
+        if report_mode not in {"complete", "limited"}:
+            return JSONResponse(
+                {"status": "error", "message": "mode 必须是 complete 或 limited"},
+                status_code=400,
+            )
 
         user_cfg = config.for_user(api_key)
         user_manager.ensure_dirs(api_key)
-        result = None
-        try:
-            result = await asyncio.to_thread(
-                _do_daily_sync,
+
+        def generate_daily_report() -> dict[str, Any]:
+            generated = _do_daily_sync(
                 config=user_cfg,
                 target=target,
                 skip_sync=True,
                 quiet=True,
+                report_mode=report_mode,
             )
+            memory, provider, storage, _memory_store, _user_id = generated
+            try:
+                return {
+                    "date": str(target),
+                    "data_readiness": memory.front_matter.get("data_readiness"),
+                    "report_finality": memory.front_matter.get("report_finality"),
+                    "data_as_of": memory.front_matter.get("data_as_of"),
+                }
+            finally:
+                # 即使浏览器刷新取消原请求，后台任务也自行关闭运行时资源。
+                close_runtime_resources(provider, storage)
+
+        try:
+            result = await ai_inference_coordinator.run(
+                api_key,
+                generate_daily_report,
+                operation="daily_report",
+                result_mapper=lambda generated: {"date": generated["date"]},
+            )
+        except AIInferenceInProgressError as exc:
+            return ai_in_progress_failure(exc)
+        except AIInferenceCapacityExceededError as exc:
+            return ai_capacity_failure(exc)
+        except DailyReportReadinessError as exc:
+            return JSONResponse(exc.to_dict(), status_code=409)
         except Exception as exc:
             logger.error("日报生成失败: %s", exc)
             return JSONResponse({"status": "error", "message": str(exc)}, status_code=500)
-        finally:
-            if result is not None:
-                _mem, provider, storage, _memory_store, _user_id = result
-                close_runtime_resources(provider, storage)
 
         return JSONResponse({
             "status": "ok",
             "message": f"{target} 日报已生成",
             "date": str(target),
+            "data_readiness": result["data_readiness"],
+            "report_finality": result["report_finality"],
+            "data_as_of": result["data_as_of"],
         })
 
     @server.custom_route("/api/profile", methods=["GET"])
@@ -1583,8 +2249,7 @@ def register_web_routes(server, user_manager: UserManager, config: Config):
             result["profile"] = profile.front_matter
 
         # 活跃目标
-        goals = memory_store.list_by_type("goal", status="active")
-        result["goals"] = [g.front_matter for g in goals]
+        result["goals"] = training_service(api_key).list_goals()
 
         # 训练偏好
         prefs = memory_store.get("preferences")
@@ -1700,6 +2365,8 @@ def register_web_routes(server, user_manager: UserManager, config: Config):
                 "age": _int_or_none(body.get("age")),
                 "gender": body.get("gender", "male"),
                 "location": body.get("location", ""),
+                "resting_heart_rate": _int_or_none(body.get("resting_heart_rate")),
+                "max_heart_rate": _int_or_none(body.get("max_heart_rate")),
             },
             "personal_bests": {},
             "tags": ["fitness-profile", today.split("-")[0]],
@@ -1728,6 +2395,8 @@ def register_web_routes(server, user_manager: UserManager, config: Config):
             f"- 年龄: {pi['age'] or '—'}",
             f"- 性别: {pi['gender']}",
             f"- 地点: {pi['location'] or '未设置'}",
+            f"- 静息心率: {pi['resting_heart_rate'] or '—'} bpm",
+            f"- 最大心率: {pi['max_heart_rate'] or '—'} bpm",
             "",
             "## 个人最佳",
         ]
@@ -1756,48 +2425,11 @@ def register_web_routes(server, user_manager: UserManager, config: Config):
         except Exception:
             return JSONResponse({"status": "error", "message": "无效请求"}, status_code=400)
 
-        user_cfg = config.for_user(api_key)
-        user_manager.ensure_dirs(api_key)
-
-        goal_name = body.get("name", "").strip()
-        if not goal_name:
-            return JSONResponse({"status": "error", "message": "目标名称不能为空"}, status_code=400)
-
-        goal_dist = body.get("distance", "marathon")
-        goal_id = f"goal-{date.today().year}-{goal_dist}"
-
-        fm: dict[str, Any] = {
-            "type": "goal",
-            "id": goal_id,
-            "goal_type": "time_based",
-            "category": "running",
-            "status": "active",
-            "priority": "high",
-            "created": str(date.today()),
-            "target_date": body.get("target_date") or str(date.today().replace(year=date.today().year + 1)),
-            "review_cycle": "weekly",
-            "metrics": {
-                f"target_{goal_dist}": body.get("target_time") or "",
-                "weekly_mileage_km": _int_or_none(body.get("weekly_km")) or 50,
-            },
-            "tags": [goal_dist, str(date.today().year), "active"],
-        }
-
-        goal_body = f"""# {goal_name}
-
-## 目标
-- 距离: {goal_dist}
-- 目标成绩: {body.get('target_time') or '—'}
-- 截止日期: {fm['target_date']}
-- 周跑量目标: {fm['metrics']['weekly_mileage_km']} km
-
-## 进度
-创建于 {date.today()}，定期更新。
-"""
-        goal_path = Path(user_cfg.memory_dir) / "goals" / "active" / f"{goal_id}.md"
-        atomic_write_private(goal_path, build_memory_file(fm, goal_body))
-
-        return JSONResponse({"status": "ok", "id": goal_id})
+        try:
+            goal = training_service(api_key).create_goal(body)
+            return JSONResponse({"status": "ok", "id": goal["goal_id"], "goal": goal}, status_code=201)
+        except TrainingError as exc:
+            return training_error(exc)
 
     @server.custom_route("/api/goals/{goal_id}", methods=["PUT"])
     async def api_goals_update(request: Request) -> Response:
@@ -1816,46 +2448,11 @@ def register_web_routes(server, user_manager: UserManager, config: Config):
         except Exception:
             return JSONResponse({"status": "error", "message": "无效请求"}, status_code=400)
 
-        user_cfg = config.for_user(api_key)
-        goal_path = Path(user_cfg.memory_dir) / "goals" / "active" / f"{goal_id}.md"
-
-        if not goal_path.exists():
-            return JSONResponse({"status": "error", "message": "目标不存在"}, status_code=404)
-
-        # 加载已有目标
-        existing = Memory.from_file(goal_path)
-        if existing is None:
-            return JSONResponse({"status": "error", "message": "无法读取目标文件"}, status_code=500)
-
-        fm = existing.front_matter
-        goal_dist = body.get("distance") or list(fm.get("metrics", {}).keys())[0].replace("target_", "") or "marathon"
-
-        # 更新字段
-        if body.get("name"):
-            fm["title"] = body["name"]
-        fm["target_date"] = body.get("target_date") or fm.get("target_date", "")
-        fm["metrics"] = {
-            f"target_{goal_dist}": body.get("target_time") or "",
-            "weekly_mileage_km": _int_or_none(body.get("weekly_km")) or _int_or_none(fm.get("metrics", {}).get("weekly_mileage_km")) or 50,
-        }
-        fm["status"] = body.get("status") or fm.get("status", "active")
-        fm["updated"] = datetime.now().isoformat(timespec="seconds")
-
-        goal_name = body.get("name") or existing.body.split("\n")[0].replace("# ", "")
-        existing.body = f"""# {goal_name}
-
-## 目标
-- 距离: {goal_dist}
-- 目标成绩: {body.get('target_time') or '—'}
-- 截止日期: {fm['target_date']}
-- 周跑量目标: {fm['metrics']['weekly_mileage_km']} km
-
-## 进度
-更新于 {date.today()}。"""
-        existing.front_matter = fm
-        existing.save()
-
-        return JSONResponse({"status": "ok"})
+        try:
+            goal = training_service(api_key).update_goal(goal_id, body)
+            return JSONResponse({"status": "ok", "goal": goal})
+        except TrainingError as exc:
+            return training_error(exc)
 
     @server.custom_route("/api/goals/{goal_id}", methods=["DELETE"])
     async def api_goals_delete(request: Request) -> Response:
@@ -1869,23 +2466,11 @@ def register_web_routes(server, user_manager: UserManager, config: Config):
         if not goal_id:
             return JSONResponse({"status": "error", "message": "缺少目标 ID"}, status_code=400)
 
-        user_cfg = config.for_user(api_key)
-        goal_path = Path(user_cfg.memory_dir) / "goals" / "active" / f"{goal_id}.md"
-
-        if not goal_path.exists():
-            return JSONResponse({"status": "error", "message": "目标不存在"}, status_code=404)
-
-        # 归档：移到 archived 目录，改状态
-        existing = Memory.from_file(goal_path)
-        if existing:
-            existing.front_matter["status"] = "archived"
-            existing.save()
-
-        archive_dir = Path(user_cfg.memory_dir) / "goals" / "archived"
-        ensure_private_dir(archive_dir)
-        goal_path.rename(archive_dir / f"{goal_id}.md")
-
-        return JSONResponse({"status": "ok"})
+        try:
+            training_service(api_key).archive_goal(goal_id)
+            return JSONResponse({"status": "ok"})
+        except TrainingError as exc:
+            return training_error(exc)
 
     @server.custom_route("/api/preferences", methods=["POST"])
     async def api_preferences(request: Request) -> Response:
@@ -2099,98 +2684,12 @@ async function submitMfa(){
 </html>"""
 
 
-def _chat_fallback() -> str:
+def _dashboard_fallback() -> str:
+    """模板资源缺失时返回最小可诊断页面，不恢复已删除的聊天入口。"""
+
     return """<!DOCTYPE html>
-<html lang="zh">
-<head>
-<meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>neurun Coach</title>
-<style>
-*{margin:0;padding:0;box-sizing:border-box}
-body{font-family:-apple-system,BlinkMacSystemFont,sans-serif;background:#0f0f0f;color:#e0e0e0;
-  display:flex;flex-direction:column;height:100vh}
-header{background:#1a1a1a;padding:12px 16px;display:flex;justify-content:space-between;align-items:center}
-h1{font-size:18px;color:#4caf50}
-#msg-list{flex:1;overflow-y:auto;padding:16px;display:flex;flex-direction:column;gap:12px}
-.msg{padding:12px 16px;border-radius:12px;max-width:85%;line-height:1.6;font-size:15px}
-.msg.user{align-self:flex-end;background:#4caf50;color:#fff}
-.msg.assistant{align-self:flex-start;background:#1a1a1a}
-.msg .time{font-size:11px;opacity:.5;margin-top:4px}
-#input-row{display:flex;padding:12px 16px;gap:8px;background:#1a1a1a}
-#input-row input{flex:1;padding:12px;border-radius:10px;border:1px solid #333;
-  background:#0f0f0f;color:#fff;font-size:16px;outline:none}
-#input-row input:focus{border-color:#4caf50}
-#input-row button{padding:12px 20px;border-radius:10px;border:none;background:#4caf50;
-  color:#fff;font-weight:600;cursor:pointer;font-size:15px}
-#input-row button:disabled{opacity:.5}
-.spinner{display:inline-block;width:16px;height:16px;border:2px solid #4caf50;
-  border-top-color:transparent;border-radius:50%;animation:spin .6s linear infinite}
-@keyframes spin{to{transform:rotate(360deg)}}
-</style>
-</head>
-<body>
-<header>
-  <h1>🏃 neurun Coach</h1>
-  <span style="font-size:12px;color:#888">AI 跑步教练</span>
-</header>
-<div id="msg-list"></div>
-<div id="input-row">
-  <input id="user-input" type="text" placeholder="输入消息..." autocomplete="off">
-  <button id="send-btn" onclick="send()">发送</button>
-</div>
-<script>
-const msgList=document.getElementById('msg-list');
-const input=document.getElementById('user-input');
-const messages=[];
-function addMsg(role,text){
-  const div=document.createElement('div');
-  div.className='msg '+role;
-  const now=new Date();
-  div.innerHTML=text+'<div class="time">'+now.toLocaleTimeString('zh',{hour:'2-digit',minute:'2-digit'})+'</div>';
-  msgList.appendChild(div);
-  msgList.scrollTop=msgList.scrollHeight;
-  return div;
-}
-async function send(){
-  const text=input.value.trim();
-  if(!text)return;
-  input.value='';input.disabled=true;
-  document.getElementById('send-btn').disabled=true;
-  messages.push({role:'user',content:text});
-  addMsg('user',text);
-  const aiDiv=addMsg('assistant','<span class="spinner"></span>');
-  try{
-    const r=await fetch('/api/chat/stream',{method:'POST',headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({messages})});
-    const reader=r.body.getReader();
-    const decoder=new TextDecoder();
-    let full='';
-    aiDiv.innerHTML='';
-    while(true){
-      const{done,value}=await reader.read();
-      if(done)break;
-      const chunk=decoder.decode(value,{stream:true});
-      for(const line of chunk.split('\\n')){
-        if(line.startsWith('data: ')){
-          const d=line.slice(6);
-          if(d==='[DONE]')continue;
-          try{const{j}=JSON.parse(d);full+=j.token||'';aiDiv.innerHTML=full.replace(/\\n/g,'<br>')}catch(e){}
-        }
-      }
-      msgList.scrollTop=msgList.scrollHeight;
-    }
-    messages.push({role:'assistant',content:full});
-  }catch(e){
-    aiDiv.innerHTML='错误: '+e.message;
-  }
-  input.disabled=false;
-  document.getElementById('send-btn').disabled=false;
-  input.focus();
-}
-input.addEventListener('keydown',e=>{if(e.key==='Enter')send()});
-</script>
-</body>
-</html>"""
+<html lang="zh"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>neurun</title></head><body><main><h1>neurun</h1><p>日报仪表盘资源缺失，请重新部署完整版本。</p></main></body></html>"""
 
 
 # ── 启动入口 ────────────────────────────────────

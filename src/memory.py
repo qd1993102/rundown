@@ -9,6 +9,7 @@
 
 from __future__ import annotations
 
+import copy
 import logging
 import re
 from dataclasses import dataclass, field
@@ -25,8 +26,42 @@ from .training_analysis import (
     ActivityDayState,
     natural_week_bounds,
 )
+from .training_day_summary import TrainingDaySummaryBuilder
+from .training_planning import ensure_training_prescription, workout_steps_summary
 
 logger = logging.getLogger(__name__)
+
+
+def load_platform_thresholds(
+    db: Any, user_id: int, target_date: date,
+) -> dict[str, int]:
+    """读取平台自算乳酸阈值（daily_health_metrics.lthr/ltsp）。
+
+    Coros /analyse/query 按日返回 lthr（阈值心率 bpm）与 ltsp（阈值配速 s/km）；
+    取目标日期当天或之前最近一条有效值；列不存在或查询失败时返回空（不猜测）。
+    """
+    try:
+        from sqlalchemy import text
+        session = db.get_session()
+        try:
+            row = session.execute(text("""
+                SELECT lthr, ltsp FROM daily_health_metrics
+                WHERE user_id = :uid AND metric_date <= :md
+                  AND (lthr IS NOT NULL OR ltsp IS NOT NULL)
+                ORDER BY metric_date DESC LIMIT 1
+            """), {"uid": user_id, "md": str(target_date)}).fetchone()
+        finally:
+            session.close()
+    except Exception:
+        return {}
+    if row is None:
+        return {}
+    result: dict[str, int] = {}
+    if row.lthr:
+        result["threshold_heart_rate"] = int(row.lthr)
+    if row.ltsp:
+        result["threshold_pace_sec_per_km"] = int(row.ltsp)
+    return result
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -81,6 +116,16 @@ def parse_front_matter(text: str) -> tuple[dict[str, Any], str]:
         fm = {}
     body = text[match.end():]
     return fm, body
+
+
+def get_daily_activities(front_matter: dict[str, Any]) -> dict[str, Any]:
+    """读取报告日活动，兼容旧日报的 ``yesterday_activities`` 字段。"""
+
+    current = front_matter.get("daily_activities")
+    if isinstance(current, dict):
+        return current
+    legacy = front_matter.get("yesterday_activities")
+    return legacy if isinstance(legacy, dict) else {}
 
 
 def build_memory_file(front_matter: dict[str, Any], body: str) -> str:
@@ -323,6 +368,10 @@ class MemoryWriter:
         user_id: str,
         target_date: date | None = None,
         ai_insight: dict[str, Any] | None = None,
+        *,
+        readiness: dict[str, Any],
+        athlete_context: dict[str, Any] | None = None,
+        persist: bool = True,
     ) -> Memory:
         """生成每日综合报告。
 
@@ -334,6 +383,9 @@ class MemoryWriter:
         - 异常检测
         - 训练建议
 
+        ``athlete_context`` 由编排层按门禁调用训练域只读能力画像后传入；
+        写入器只负责落盘，不自行读取训练域。
+
         Args:
             user_id: 运动平台用户 ID。
             target_date: 报告日期，默认今天。
@@ -344,7 +396,13 @@ class MemoryWriter:
         if target_date is None:
             target_date = date.today()
 
-        yesterday = target_date - timedelta(days=1)
+        readiness_status = str(readiness.get("status") or "")
+        if readiness_status not in {"ready", "limited"}:
+            raise RuntimeError("日报生成缺少已通过的数据完整性门禁")
+        omitted_sections = {
+            str(item) for item in readiness.get("omitted_sections", [])
+        }
+
         db = self._db()
 
         # 1. 查询今日活动（当天训练数据）
@@ -374,6 +432,10 @@ class MemoryWriter:
         session_analyses = self._analyze_training_sessions(
             db, int(user_id), activities, twenty_eight_day_activities,
             health_data or {},
+            profile=(
+                MemoryWriter._load_profile(self._memory_store)
+                if self._memory_store else None
+            ),
         )
 
         # ── 先汇总各维度（供 Front Matter 和 recommendation 共用） ──
@@ -383,8 +445,89 @@ class MemoryWriter:
         activity_summary = self._summarize_activities(
             activities, today_health, activity_state=activity_state,
         )
-        sleep_summary = self._summarize_sleep(sleep)
-        morning_summary = self._summarize_morning(morning)
+        week_start, _ = natural_week_bounds(target_date)
+        week_activities = self._safe_get_activities(
+            db, user_id, week_start, target_date,
+        )
+        plan_context = self._load_plan_context(target_date)
+        sleep_summary = (
+            self._unavailable_section("睡眠数据不完整")
+            if "sleep" in omitted_sections
+            else self._summarize_sleep(sleep)
+        )
+        morning_summary = (
+            self._unavailable_section("恢复指标不完整")
+            if "recovery" in omitted_sections
+            else self._summarize_morning(morning)
+        )
+
+        training_load = (
+            self._unavailable_section("活动历史覆盖不足，未计算 ACWR")
+            if "training_load" in omitted_sections
+            else self._calc_training_load(
+                seven_day_activities, twenty_eight_day_activities,
+            )
+        )
+        recovery = (
+            self._unavailable_section("睡眠或恢复指标不完整，未计算恢复评分")
+            if "recovery" in omitted_sections
+            else self._calc_recovery_score(sleep, morning)
+        )
+        trends = (
+            self._unavailable_section("近 7 天健康数据覆盖不足")
+            if "trends_7d" in omitted_sections
+            else self._calc_trends(seven_day_metrics)
+        )
+        anomalies = (
+            {"status": "unavailable", "items": [], "reason": "健康趋势数据不足"}
+            if "anomalies" in omitted_sections
+            else self._detect_anomalies(seven_day_metrics)
+        )
+        training_day_summary = TrainingDaySummaryBuilder.prepare_daily_analysis(
+            TrainingDaySummaryBuilder.build(
+                target=target_date,
+                activities=activities,
+                states={str(target_date): "synced"} if readiness_status == "ready" else {},
+                sleep=sleep_summary,
+                recovery=recovery,
+                training_load=training_load,
+                plan_context=plan_context,
+                finality=readiness.get("finality", "provisional"),
+                facts_cutoff=readiness.get("data_as_of") or target_date,
+            )
+        )
+        recommendation = (
+            {
+                "status": "unavailable",
+                "ready_to_train": None,
+                "intensity": "unknown",
+                "training_advice": "数据不足，暂不提供训练强度建议",
+                "caution": ["请先补齐页面列出的数据维度后重新生成完整日报"],
+            }
+            if "recommendation" in omitted_sections
+            else self._generate_recommendation(
+                sleep_summary, morning_summary, seven_day_activities,
+                twenty_eight_day_activities, session_analyses,
+            )
+        )
+        plan_execution_summary = self._build_plan_execution_summary(
+            plan_context, activity_summary, week_activities, target_date,
+            recommendation,
+        )
+
+        # ── 训练域能力画像背景（受限版或缺载时显式不可用，不阻断生成） ──
+        if "training_load" in omitted_sections:
+            athlete_context = {
+                "status": "unavailable",
+                "reason": "training_load_omitted",
+                "source": "training_domain_capacity_profile",
+            }
+        elif athlete_context is None:
+            athlete_context = {
+                "status": "unavailable",
+                "reason": "not_loaded",
+                "source": "training_domain_capacity_profile",
+            }
 
         # ── 构建 Front Matter ──
         fm: dict[str, Any] = {
@@ -392,67 +535,94 @@ class MemoryWriter:
             "date": str(target_date),
             "generated": datetime.now().isoformat(timespec="seconds"),
             "version": 1,
-            # 当日活动
-            "yesterday_activities": activity_summary,
+            "data_readiness": (
+                "complete" if readiness_status == "ready" else "limited"
+            ),
+            "report_finality": readiness.get("finality", "provisional"),
+            "data_as_of": readiness.get("data_as_of"),
+            "data_coverage": readiness.get("dimensions", {}),
+            "omitted_sections": sorted(omitted_sections),
+            # 当日活动；旧字段保留为只读客户端的兼容别名。
+            "daily_activities": activity_summary,
+            "yesterday_activities": copy.deepcopy(activity_summary),
             # 昨夜睡眠
             "last_night_sleep": sleep_summary,
             # 今晨状态
             "this_morning": morning_summary,
             # 训练负荷
-            "training_load": self._calc_training_load(
-                seven_day_activities, twenty_eight_day_activities,
-            ),
+            "training_load": training_load,
             # 恢复评分
-            "recovery": self._calc_recovery_score(sleep, morning),
-            # 运动大纲上下文
-            "plan_context": self._load_plan_context(),
+            "recovery": recovery,
+            # 训练方案的历史快照与面向报告的执行解释。
+            "plan_context": plan_context,
+            "plan_execution_summary": plan_execution_summary,
             # 7 日趋势
-            "trends_7d": self._calc_trends(seven_day_metrics),
+            "trends_7d": trends,
             # 异常检测
-            "anomalies": self._detect_anomalies(seven_day_metrics),
-            # 今日建议（使用汇总后的数据）
-            "recommendation": self._generate_recommendation(
-                sleep_summary, morning_summary, seven_day_activities,
-                twenty_eight_day_activities, session_analyses,
-            ),
+            "anomalies": anomalies,
+            # 报告日建议（使用汇总后的数据）
+            "recommendation": recommendation,
             # 标签
             "tags": self._build_tags(activities, target_date),
             # 版本化训练内容识别
             "session_analyses": session_analyses,
+            # 日报、周报和草稿共享的确定性单日摘要。
+            "training_day_summary": training_day_summary,
+            # 训练域只读能力画像背景（草稿同口径），供正文与 AI 洞察引用。
+            "athlete_context": athlete_context,
         }
 
         # 10. AI 教练洞察
+        # 受限版同样生成洞察：调用方提供在线洞察时直接采用；未提供时走确定性兜底，
+        # 兜底按 omitted_sections 跳过缺失维度结论，避免用户有跑步时结论整块空白。
         if ai_insight is not None:
             fm["ai_insight"] = ai_insight
         else:
-            profile = MemoryWriter._load_profile(self) if self._memory_store else None
+            profile = MemoryWriter._load_profile(self._memory_store) if self._memory_store else None
             goals = MemoryWriter._load_active_goals(self) if self._memory_store else None
             ai_insight = self._generate_ai_insight(
                 activity_summary, sleep_summary, morning_summary,
                 fm["training_load"], fm["recovery"], fm["anomalies"],
                 seven_day_metrics,
                 profile=profile, goals=goals,
+                session_analyses=session_analyses,
+                omitted_sections=sorted(omitted_sections),
             )
             fm["ai_insight"] = ai_insight
 
-        # ── 构建正文 ──
-        body = self._render_daily_body(fm, target_date)
-
-        # ── 写入文件 ──
         file_path = self._root / "auto" / "daily" / f"{target_date}.md"
-        file_path.parent.mkdir(parents=True, exist_ok=True)
-
         memory = Memory(
             id=str(target_date),
             type=MemoryType.DAILY_REPORT,
             path=file_path,
             front_matter=fm,
-            body=body,
+            body="",
         )
-        memory.save()
-
-        logger.info("📰 日报已生成: %s", file_path)
+        if persist:
+            return self.finalize_daily_report(memory)
         return memory
+
+    def finalize_daily_report(
+        self,
+        memory: Memory,
+        ai_insight: dict[str, Any] | None = None,
+    ) -> Memory:
+        """将已构建的日报事实与最终洞察组装后只写入一次。"""
+
+        if memory.type != MemoryType.DAILY_REPORT:
+            raise ValueError("只能完成 daily_report")
+        if ai_insight is not None:
+            memory.front_matter["ai_insight"] = ai_insight
+        target_date = date.fromisoformat(str(memory.front_matter["date"]))
+        memory.body = self._render_daily_body(memory.front_matter, target_date)
+        memory.path.parent.mkdir(parents=True, exist_ok=True)
+        memory.save()
+        logger.info("📰 日报已生成: %s", memory.path)
+        return memory
+
+    @staticmethod
+    def _unavailable_section(reason: str) -> dict[str, Any]:
+        return {"status": "unavailable", "reason": reason}
 
     # ── 周/月摘要 ──────────────────────────────
 
@@ -638,17 +808,19 @@ class MemoryWriter:
         try:
             from sqlalchemy import text
             session = db.get_session()
-            rows = session.execute(text("""
-                SELECT user_id, activity_id, activity_date, activity_name,
-                       duration_seconds, avg_heart_rate, training_load,
-                       start_time, distance_meters, activity_type,
-                       max_heart_rate, calories, elevation_gain,
-                       provider_name, created_at
-                FROM activities
-                WHERE user_id = :uid AND activity_date >= :start AND activity_date <= :end
-                ORDER BY start_time
-            """), {"uid": user_id, "start": str(start), "end": str(end)}).fetchall()
-            session.close()
+            try:
+                rows = session.execute(text("""
+                    SELECT user_id, activity_id, activity_date, activity_name,
+                           duration_seconds, avg_heart_rate, training_load,
+                           start_time, distance_meters, activity_type,
+                           max_heart_rate, calories, elevation_gain,
+                           provider_name, created_at
+                    FROM activities
+                    WHERE user_id = :uid AND activity_date >= :start AND activity_date <= :end
+                    ORDER BY start_time
+                """), {"uid": user_id, "start": str(start), "end": str(end)}).fetchall()
+            finally:
+                session.close()
             return [
                 {
                     "user_id": r[0], "activity_id": r[1], "activity_date": r[2],
@@ -675,15 +847,17 @@ class MemoryWriter:
         try:
             from sqlalchemy import text
             session = db.get_session()
-            rows = session.execute(text("""
-                SELECT user_id, activity_id, activity_date, activity_name,
-                       duration_seconds, avg_heart_rate, training_load,
-                       start_time, created_at
-                FROM activities
-                WHERE user_id = :uid AND activity_date >= :start AND activity_date <= :end
-                ORDER BY start_time
-            """), {"uid": user_id, "start": str(start), "end": str(end)}).fetchall()
-            session.close()
+            try:
+                rows = session.execute(text("""
+                    SELECT user_id, activity_id, activity_date, activity_name,
+                           duration_seconds, avg_heart_rate, training_load,
+                           start_time, created_at
+                    FROM activities
+                    WHERE user_id = :uid AND activity_date >= :start AND activity_date <= :end
+                    ORDER BY start_time
+                """), {"uid": user_id, "start": str(start), "end": str(end)}).fetchall()
+            finally:
+                session.close()
             return [
                 {
                     "user_id": r[0], "activity_id": r[1], "activity_date": r[2],
@@ -767,15 +941,54 @@ class MemoryWriter:
             return []
 
     @staticmethod
+    def _segment_sequence_fallback(
+        session_summary: dict[str, Any],
+        splits: list[dict[str, Any]],
+    ) -> tuple[list[dict[str, Any]], bool]:
+        """结构判定的分段序列来源：优先用 summary 的 segment_sequence。
+
+        存量活动（旧 schema summary 无 segment_sequence/quantity_gate）时从
+        activity_splits 重建分段特征序列，并按分段距离合计 vs summary 距离
+        计算量特征门禁——Garmin splitSummaries 的 ×2 距离异常会被标记为
+        仅强度模式（quantity_reliable=False），不输出段距离/时长结论。
+        """
+        segment_sequence = session_summary.get("segment_sequence") or []
+        quantity_gate = session_summary.get("quantity_gate") or {}
+        quantity_reliable = bool(quantity_gate.get("quantity_reliable", True))
+        if not segment_sequence and splits:
+            summary_distance = (
+                session_summary.get("volume") or {}
+            ).get("distance_m")
+            total_split_distance = sum(
+                float(s.get("distance_m") or 0) for s in splits
+            )
+            if summary_distance and total_split_distance > 0:
+                ratio = total_split_distance / float(summary_distance)
+                quantity_reliable = 0.85 <= ratio <= 1.15
+            segment_sequence = [
+                {
+                    "pace_sec_per_km": s.get("pace_per_km"),
+                    "avg_hr": s.get("avg_hr"),
+                    "avg_cadence": s.get("avg_cadence"),
+                    "stride_length_cm": s.get("stride_length_cm"),
+                    "duration_s": s.get("duration_sec"),
+                    "split_type": s.get("type") or s.get("split_type"),
+                }
+                for s in splits
+            ]
+        return segment_sequence, quantity_reliable
+
+    @staticmethod
     def _analyze_training_sessions(
         db: Any,
         user_id: int,
         activities: list[dict[str, Any]],
         baseline_activities: list[dict[str, Any]],
         recovery: dict[str, Any],
+        profile: dict[str, Any] | None = None,
     ) -> list[dict[str, Any]]:
         """分析并持久化当日活动，失败时不阻断日报生成。"""
-        from .activity import get_activity_splits
+        from .activity import get_activity_splits, get_activity_summary_facts
         from .training_analysis import (
             ActivityFactsNormalizer,
             AthleteBaselineBuilder,
@@ -797,12 +1010,17 @@ class MemoryWriter:
                     splits = get_activity_splits(db, activity_id)
                 except Exception:
                     splits = []
+                target_time = (
+                    activity.get("start_time")
+                    or activity.get("activity_date")
+                )
+                merged_profile = MemoryWriter._merge_platform_thresholds(
+                    profile, db, user_id, target_time,
+                )
                 baseline = baseline_builder.build(
                     baseline_activities,
-                    target_time=(
-                        activity.get("start_time")
-                        or activity.get("activity_date")
-                    ),
+                    target_time=target_time,
+                    profile=merged_profile,
                 )
                 analysis = analyzer.analyze(
                     activity, splits, baseline, recovery,
@@ -820,6 +1038,63 @@ class MemoryWriter:
                     ),
                     **analysis.to_dict(),
                 }
+                # Reports consume the compact, versioned aggregate.  Keep raw
+                # detail JSON confined to the activity storage boundary.
+                try:
+                    session_summary = get_activity_summary_facts(db, activity_id)
+                except Exception:
+                    session_summary = None
+                if session_summary:
+                    result["session_summary"] = session_summary
+                    activity["session_summary"] = session_summary
+                    basis = (session_summary.get("intensity") or {}).get("basis")
+                    if basis:
+                        result["evidence"] = list(result.get("evidence") or ()) + [
+                            f"summary intensity basis={basis}"
+                        ]
+                    # 训练效果：Provider 原始 TE 缺失且个人阈值可用时，本地估算并显式标记。
+                    effect = session_summary.get("effect") or {}
+                    has_original_te = bool(
+                        effect.get("aerobic_training_effect")
+                        or effect.get("anaerobic_training_effect")
+                    )
+                    if not has_original_te:
+                        from .summary_extraction import estimate_training_effect
+
+                        estimated = estimate_training_effect(
+                            splits,
+                            threshold_heart_rate=baseline.threshold_heart_rate,
+                            threshold_pace_sec_per_km=baseline.threshold_pace_sec_per_km,
+                        )
+                        if estimated:
+                            session_summary = {
+                                **session_summary, "effect": estimated,
+                            }
+                            result["session_summary"] = session_summary
+                            activity["session_summary"] = session_summary
+                    # 训练结构：加权确定性判定（配速+心率主证据，步频/步幅辅助），
+                    # 需要个人阈值，分析时实时计算，不固化入库。
+                    try:
+                        from .summary_extraction import classify_training_structure
+
+                        segment_sequence, quantity_reliable = (
+                            MemoryWriter._segment_sequence_fallback(
+                                session_summary, splits,
+                            )
+                        )
+                        classification = classify_training_structure(
+                            segment_sequence,
+                            threshold_heart_rate=baseline.threshold_heart_rate,
+                            threshold_pace_sec_per_km=baseline.threshold_pace_sec_per_km,
+                            quantity_reliable=quantity_reliable,
+                            activity_name=activity.get("activity_name") or "",
+                        )
+                        result["structure_classification"] = classification
+                    except Exception as exc:
+                        logger.warning(
+                            "训练结构判定失败 activity_id=%s error_type=%s",
+                            activity_id, type(exc).__name__,
+                        )
                 activity["training_analysis"] = result
                 results.append(result)
             except Exception as exc:
@@ -1296,7 +1571,7 @@ class MemoryWriter:
         chronic_activities: list[dict[str, Any]],
         session_analyses: list[dict[str, Any]] | None = None,
     ) -> dict[str, Any]:
-        """生成今日训练建议。"""
+        """生成报告日训练建议。"""
         load = MemoryWriter._calc_training_load(
             recent_activities, chronic_activities,
         )
@@ -1426,6 +1701,8 @@ class MemoryWriter:
         seven_day: list[dict[str, Any]],
         profile: dict[str, Any] | None = None,
         goals: list[dict[str, Any]] | None = None,
+        session_analyses: list[dict[str, Any]] | None = None,
+        omitted_sections: list[str] | None = None,
     ) -> dict[str, Any]:
         """基于数据规则生成 AI 教练自然语言洞察。
 
@@ -1434,6 +1711,11 @@ class MemoryWriter:
         observations: list[str] = []
         recommendations: list[str] = []
         warnings: list[str] = []
+        omitted = set(omitted_sections or [])
+        sleep_omitted = "sleep" in omitted
+        recovery_omitted = "recovery" in omitted
+        load_omitted = "training_load" in omitted
+        trends_omitted = "trends_7d" in omitted
 
         # ── 运动员画像 ──
         personal_bests = profile.get("personal_bests", {}) if profile else {}
@@ -1460,35 +1742,41 @@ class MemoryWriter:
         bb = morning.get("body_battery_morning", 0) or 0
         readiness = morning.get("training_readiness_score", 0) or 0
 
-        # 睡眠评估（0 可能表示数据缺失，不一定是真没睡）
-        if sleep_hours >= 8 and sleep_quality in ("excellent", "good"):
-            observations.append(f"昨夜睡眠 {sleep_hours}h，质量{sleep_quality}，恢复充分")
+        # ── 恢复分析（教练观察三块之一，合并为一段连贯表达，同一事实只出现一次）──
+        recovery_parts: list[str] = []
+
+        # 睡眠评估（0 可能表示数据缺失，不一定是真没睡）；睡眠维度被省略时不下结论
+        if sleep_omitted:
+            recovery_parts.append("睡眠数据缺失，未据此评估恢复状态")
+        elif sleep_hours >= 8 and sleep_quality in ("excellent", "good"):
+            recovery_parts.append(f"昨夜睡眠 {sleep_hours}h、质量{sleep_quality}，恢复充分")
         elif sleep_hours >= 7:
-            observations.append(f"昨夜睡眠 {sleep_hours}h，基本够用但还有优化空间")
+            recovery_parts.append(f"昨夜睡眠 {sleep_hours}h，基本够用但还有优化空间")
         elif sleep_hours >= 3:
-            observations.append(f"昨夜仅睡 {sleep_hours}h，睡眠不足是今天最大的限制因素")
+            recovery_parts.append(f"昨夜仅睡 {sleep_hours}h，睡眠不足是当前主要限制")
             warnings.append(f"睡眠不足会直接影响训练效果和恢复速度，今晚务必早睡")
         elif sleep_hours > 0:
-            observations.append(f"昨夜睡眠 {sleep_hours}h（数据可能不完整）")
+            recovery_parts.append(f"昨夜睡眠 {sleep_hours}h（数据可能不完整）")
         else:
-            observations.append("睡眠数据未同步（不代表没睡）")
+            recovery_parts.append("睡眠数据未同步（不代表没睡）")
 
-        # HRV + RHR 联合分析
-        if hrv_status in ("BALANCED", "balanced") and rhr <= 45:
-            observations.append(f"HRV 状态平衡，静息心率 {rhr} bpm 处于优秀区间，自主神经系统状态良好")
-        elif hrv_status in ("UNBALANCED", "unbalanced", "LOW", "low"):
-            observations.append(f"HRV 处于{hrv_status}状态，静息心率 {rhr} bpm，提示身体可能处于应激状态")
-            warnings.append("HRV 异常时优先保证睡眠和营养，降低训练强度")
+        # HRV + RHR 联合分析 + 身体电量（恢复指标被省略时不解释）
+        if not recovery_omitted:
+            if hrv_status in ("BALANCED", "balanced") and rhr <= 45:
+                recovery_parts.append(f"HRV 平衡、静息心率 {rhr} bpm 处于优秀区间，自主神经系统状态良好")
+            elif hrv_status in ("UNBALANCED", "unbalanced", "LOW", "low"):
+                recovery_parts.append(f"HRV 偏低、静息心率 {rhr} bpm，提示身体可能处于应激状态")
+                warnings.append("HRV 异常时优先保证睡眠和营养，降低训练强度")
 
-        # 身体电量
-        if bb >= 90:
-            observations.append(f"晨起身体电量 {bb}%，能量储备充足")
-        elif bb >= 70:
-            observations.append(f"晨起身体电量 {bb}%，处于正常范围")
-        elif bb > 0:
-            observations.append(f"晨起身体电量仅 {bb}%，能量储备偏低")
-            if sleep_hours < 7:
-                recommendations.append("身体电量偏低与睡眠不足高度相关，改善睡眠是第一优先级")
+            # 身体电量
+            if bb >= 90:
+                recovery_parts.append(f"晨起身体电量 {bb}%，能量储备充足")
+            elif bb >= 70:
+                recovery_parts.append(f"晨起身体电量 {bb}%，处于正常范围")
+            elif bb > 0:
+                recovery_parts.append(f"晨起身体电量仅 {bb}%，能量储备偏低")
+                if sleep_hours < 7 and not sleep_omitted:
+                    recommendations.append("身体电量偏低与睡眠不足高度相关，改善睡眠是第一优先级")
 
         # ── 训练负荷分析 ──
         acwr = load.get("acwr", 1.0)
@@ -1496,11 +1784,13 @@ class MemoryWriter:
         acute = load.get("acute_load_7d", 0)
         chronic = load.get("chronic_load_28d", 0)
 
-        if acwr_status == "optimal":
-            observations.append(f"ACWR {acwr} 处于最优区间，训练负荷合理")
-        elif acwr_status == "overreaching":
-            observations.append(f"ACWR {acwr} 偏高，接近过度训练边界")
-            warnings.append("短期负荷上升较快，建议本周安排 1-2 天轻松训练或主动恢复")
+        # ACWR 及 7 天/28 天负荷对比在"近 7 天负荷与恢复"观察块输出，这里只保留风险警告。
+        # 负荷维度被省略时（如 28 天覆盖不足）不输出 ACWR 相关结论。
+        if not load_omitted:
+            if acwr_status == "overreaching":
+                warnings.append("短期负荷上升较快，建议本周安排 1-2 天轻松训练或主动恢复")
+            elif acwr_status == "high_risk":
+                warnings.append("近 7 天负荷相对 28 天基准过高，建议安排减量训练")
 
         # ── 当日训练分析 ──
         is_rest = activity.get("is_rest_day", False)
@@ -1515,56 +1805,173 @@ class MemoryWriter:
             observations.append("运动数据尚未同步，无法判断当天是否训练或休息")
         elif is_rest:
             if activity_level == "very_active":
-                observations.append("昨天虽无正式训练，但全天活动量很高（步数 >20000），相当于一次中等强度有氧")
+                observations.append("当日虽无正式训练，但全天活动量很高（步数 >20000），相当于一次中等强度有氧")
             elif activity_level == "active":
-                observations.append("昨天休息日，保持了适度活动，有利于主动恢复")
+                observations.append("当日为休息日，保持了适度活动，有利于主动恢复")
             else:
-                observations.append("昨天为完全休息日，身体得到了恢复")
+                observations.append("当日为完全休息日，身体得到了恢复")
         else:
-            session_types = set(s.get("type", "") for s in sessions)
-            type_desc = " + ".join(sorted(session_types))
-            observations.append(
-                f"昨天完成 {len(sessions)} 节训练（{type_desc}），"
-                f"总计 {total_dur}min / {total_dist:.1f}km / 负荷 {total_load:.0f}"
-            )
-            if total_load > 200:
-                observations.append("属于高强度训练日，需要充分恢复")
-            elif total_load > 100:
-                observations.append("属于中等强度训练日，强度适宜")
-            else:
-                observations.append("低强度训练日，有利于技术打磨和主动恢复")
+            # 教练观察：运动概要 + 强度分布解释与分析（自然语言成段，同一事实只出现一次）
+            for analysis in session_analyses or []:
+                session_summary = analysis.get("session_summary") or {}
+                volume = session_summary.get("volume") or {}
+                classification = analysis.get("structure_classification") or {}
+                intensity = session_summary.get("intensity") or {}
+                structure = session_summary.get("structure") or {}
+                pace_profile = session_summary.get("pace_profile") or {}
+                distance_km = (volume.get("distance_m") or 0) / 1000
+                duration_s = volume.get("duration_sec") or volume.get("duration_s") or 0
+                pace = pace_profile.get("avg_pace_sec_per_km") or (volume.get("pace_sec_per_km") or 0) or 0
+
+                # 1) 运动概要：距离/用时 + 课型结构 + 平均配速
+                overview_parts: list[str] = []
+                if distance_km > 0:
+                    duration_text = f"用时 {int(duration_s // 60)}min" if duration_s else ""
+                    overview_parts.append(f"{distance_km:.1f}km" + (f"，{duration_text}" if duration_text else ""))
+                structure_type = classification.get("structure_type")
+                if structure_type and structure_type != "unknown":
+                    label = str(classification.get("label") or structure_type)
+                    alternations = int(classification.get("alternations") or 0)
+                    text = label
+                    if alternations:
+                        text += f"（{alternations} 组快慢交替"
+                        groups = classification.get("work_recovery_groups") or []
+                        if groups:
+                            group_paces = []
+                            for group in groups:
+                                work_pace = group.get("work_pace_sec_per_km")
+                                recovery_pace = group.get("recovery_pace_sec_per_km")
+                                work_hr = group.get("work_avg_hr")
+                                recovery_hr = group.get("recovery_avg_hr")
+                                work_text = MemoryWriter._format_pace(work_pace) if work_pace else "?"
+                                recovery_text = MemoryWriter._format_pace(recovery_pace) if recovery_pace else "?"
+                                if work_hr:
+                                    work_text += f"(hr{work_hr:.0f})"
+                                if recovery_hr:
+                                    recovery_text += f"(hr{recovery_hr:.0f})"
+                                group_paces.append(f"第{len(group_paces) + 1}组 {work_text}→{recovery_text}")
+                            text += "：" + "、".join(group_paces)
+                        text += "）"
+                    overview_parts.append(text)
+                if pace:
+                    overview_parts.append(f"平均配速 {MemoryWriter._format_pace(pace)}/km")
+                effect_text = MemoryWriter._effect_explanation(
+                    session_summary.get("effect") or {},
+                )
+                if effect_text:
+                    overview_parts.append(f"训练效果 {effect_text}")
+                if overview_parts:
+                    observations.append("运动概要：" + "；".join(overview_parts) + "。")
+
+                # 2) 强度分布解释与分析：配速/心率带 + 步频/步幅
+                intensity_parts: list[str] = []
+                pace_bands = intensity.get("pace_bands_pct") or {}
+                hr_bands = intensity.get("hr_bands_pct") or {}
+
+                def _pace_band_text(band_key: str) -> str:
+                    if band_key.startswith("-inf"):
+                        return f"<{MemoryWriter._format_pace(float(band_key[len('-inf-'):]))}"
+                    if band_key.endswith("inf"):
+                        return f">{MemoryWriter._format_pace(float(band_key[:-4]))}"
+                    low, high = band_key.split("-", 1)
+                    return (
+                        f"{MemoryWriter._format_pace(float(low))}–"
+                        f"{MemoryWriter._format_pace(float(high))}"
+                    )
+
+                if pace_bands:
+                    top_pace_key = max(pace_bands, key=pace_bands.get)
+                    top_pace_text = _pace_band_text(top_pace_key)
+                    if top_pace_text:
+                        text = f"配速以 {top_pace_text}/km 为主（{pace_bands[top_pace_key]:.0f}%）"
+                        if intensity.get("basis") == "pace":
+                            text += "（依据配速，心率缺失）"
+                        intensity_parts.append(text)
+                elif pace_profile.get("p50"):
+                    p50_text = MemoryWriter._format_pace(pace_profile.get("p50"))
+                    if p50_text:
+                        intensity_parts.append(f"配速中位数约 {p50_text}/km")
+                if hr_bands:
+                    top_hr_key = max(hr_bands, key=hr_bands.get)
+                    top_hr_text = MemoryWriter._band_range_text(top_hr_key)
+                    if top_hr_text:
+                        intensity_parts.append(f"心率以 {top_hr_text} bpm 为主（{hr_bands[top_hr_key]:.0f}%）")
+                cadence = structure.get("avg_cadence")
+                stride = structure.get("avg_stride")
+                if cadence:
+                    cadence_text = f"平均步频 {cadence:.0f} spm"
+                    if stride:
+                        # summary_extraction 中 avg_stride 单位为 cm（如 126.5），转米展示
+                        cadence_text += f"、步幅 {stride / 100:.2f} m"
+                    intensity_parts.append(cadence_text)
+                elif stride:
+                    intensity_parts.append(f"平均步幅 {stride / 100:.2f} m")
+                if intensity_parts:
+                    observations.append("强度分布：" + ";".join(intensity_parts) + "。")
 
         # 室内占比分析
         indoor = any("室内" in s.get("name", "") for s in sessions)
         outdoor = any(s.get("type") == "running" and "室内" not in s.get("name", "")
                       for s in sessions)
         if indoor and outdoor:
-            observations.append("昨天兼顾了室外和室内训练，室外保持路感，室内补充跑量")
+            observations.append("当日兼顾了室外和室内训练，室外保持路感，室内补充跑量")
 
-        # ── 趋势分析 ──
-        if seven_day:
-            # 检查睡眠趋势
-            sleep_vals = [
-                m.get("sleep_duration_hours", 0) or 0
-                for m in seven_day if m
-            ]
-            if len(sleep_vals) >= 5:
-                recent_avg = sum(sleep_vals[:3]) / 3 if len(sleep_vals) >= 3 else sum(sleep_vals) / len(sleep_vals)
-                older_avg = sum(sleep_vals[3:]) / max(len(sleep_vals[3:]), 1)
-                if older_avg - recent_avg > 0.5:
-                    observations.append(f"近 3 天睡眠时长呈下降趋势（{older_avg:.1f}h → {recent_avg:.1f}h），需要关注")
-                    recommendations.append("连续几天睡眠不足会累积疲劳，建议今晚设定一个早睡闹钟")
-
-        # ── 综合恢复评分解读 ──
+        # ── 综合恢复评分解读（恢复指标被省略时不给出评分结论）──
         rec_score = recovery.get("overall_score", 0)
         rec_level = recovery.get("level", "fair")
-
-        if rec_level == "excellent":
-            observations.append(f"综合恢复评分 {rec_score}/100，身体处于最佳状态")
+        if recovery_omitted:
+            recovery_parts.append("恢复指标缺失，未给出恢复评分结论")
+        elif rec_level == "excellent":
+            recovery_parts.append(f"综合恢复评分 {rec_score}/100，身体处于最佳状态")
         elif rec_level == "good":
-            observations.append(f"综合恢复评分 {rec_score}/100，状态良好可正常训练")
+            recovery_parts.append(f"综合恢复评分 {rec_score}/100，状态良好可正常训练")
         elif rec_level == "fair":
-            observations.append(f"综合恢复评分 {rec_score}/100，状态一般，建议适当调整强度")
+            recovery_parts.append(f"综合恢复评分 {rec_score}/100，状态一般")
+
+        if recovery_parts:
+            observations.append("恢复分析：" + "；".join(recovery_parts) + "。")
+
+        # ── 近 7 天负荷与恢复分析（趋势维度，与当日恢复不重复）──
+        week_parts: list[str] = []
+        if not load_omitted and (acute or 0) > 0 and (chronic or 0) > 0:
+            acwr_text = f"近 7 天训练负荷 {acute:.0f}，相对近 28 天基准（{chronic:.0f}/周）ACWR {acwr}"
+            if acwr_status == "undertraining":
+                acwr_text += "，负荷偏轻"
+            elif acwr_status == "optimal":
+                acwr_text += "，处于最优区间"
+            elif acwr_status == "overreaching":
+                acwr_text += "，偏高、接近过度训练边界"
+            elif acwr_status == "high_risk":
+                acwr_text += "，过高、存在过度训练风险"
+            week_parts.append(acwr_text)
+        elif not load_omitted and (acute or 0) > 0:
+            week_parts.append(f"近 7 天训练负荷 {acute:.0f}（缺少 28 天基准，无法判断相对位置）")
+        if not trends_omitted and seven_day:
+            sleep_vals = [
+                m.get("sleep_duration_hours") for m in seven_day
+                if m.get("sleep_duration_hours")
+            ]
+            if len(sleep_vals) >= 5:
+                recent_avg = sum(sleep_vals[-3:]) / 3
+                older_avg = sum(sleep_vals[:-3]) / max(len(sleep_vals[:-3]), 1)
+                if older_avg - recent_avg > 0.5:
+                    week_parts.append(f"睡眠近 3 天走低（{older_avg:.1f}h → {recent_avg:.1f}h）")
+                    recommendations.append("连续几天睡眠不足会累积疲劳，建议今晚设定一个早睡闹钟")
+                elif recent_avg - older_avg > 0.5:
+                    week_parts.append(f"睡眠近 3 天回升（{older_avg:.1f}h → {recent_avg:.1f}h）")
+            hrv_vals = [
+                m.get("hrv_last_night_avg") for m in seven_day
+                if m.get("hrv_last_night_avg")
+            ]
+            if len(hrv_vals) >= 4:
+                recent_hrv = sum(hrv_vals[-2:]) / 2
+                older_hrv = sum(hrv_vals[:-2]) / max(len(hrv_vals[:-2]), 1)
+                if recent_hrv - older_hrv > 3:
+                    week_parts.append(f"HRV 呈回升趋势（{older_hrv:.0f} → {recent_hrv:.0f} ms）")
+                elif older_hrv - recent_hrv > 3:
+                    week_parts.append(f"HRV 近期走低（{older_hrv:.0f} → {recent_hrv:.0f} ms），疲劳在累积")
+        if week_parts:
+            observations.append("近 7 天负荷与恢复：" + "；".join(week_parts) + "。")
 
         # ── 运动员画像相关观察 ──
         if fitness_level:
@@ -1572,8 +1979,10 @@ class MemoryWriter:
         if goal_context:
             observations.append(f"训练目标: {goal_context}")
 
-        # ── 核心结论（结合画像）──
-        if rec_level in ("excellent", "good") and acwr_status == "optimal":
+        # ── 核心结论（结合画像；缺失维度不参与判断）──
+        recovery_ok = not recovery_omitted and rec_level in ("excellent", "good")
+        load_ok = not load_omitted and acwr_status == "optimal"
+        if recovery_ok and load_ok:
             if fitness_level and "精英" in fitness_level:
                 conclusion = f"作为{fitness_level}选手，当前状态良好。保持训练质量，关注技术细节和恢复节奏。"
             elif active_goals:
@@ -1581,10 +1990,10 @@ class MemoryWriter:
             else:
                 conclusion = "整体状态良好，训练负荷合理，按计划执行即可。"
             confidence = "high"
-        elif rec_level == "poor" or acwr_status in ("overreaching", "high_risk"):
+        elif (not recovery_omitted and rec_level == "poor") or (not load_omitted and acwr_status in ("overreaching", "high_risk")):
             conclusion = "身体发出恢复不足的信号，建议今天以轻松恢复为主。今天的让步是为了明天更好的训练。"
             confidence = "high"
-        elif sleep_hours < 7:
+        elif not sleep_omitted and sleep_hours < 7:
             conclusion = "除了睡眠，其他指标都还不错。今天最大的训练任务是——早睡。把睡眠补回来。"
             confidence = "medium"
         elif activity_level == "very_active" and is_rest:
@@ -1614,6 +2023,32 @@ class MemoryWriter:
             return None
 
     @staticmethod
+    def _merge_platform_thresholds(
+        profile: dict[str, Any] | None,
+        db: Any,
+        user_id: int,
+        target_time: Any,
+    ) -> dict[str, Any] | None:
+        """把平台自算乳酸阈值（lthr/ltsp）并入档案，仅填充档案缺失的显式阈值。
+
+        优先级：用户档案显式阈值 > 平台 lthr/ltsp > 档案推导（Karvonen/PB）> 无。
+        平台阈值来自 Coros /analyse/query（lthr=阈值心率 bpm，ltsp=阈值配速 s/km）。
+        """
+        try:
+            from datetime import date as _date
+            target_date = _date.fromisoformat(str(target_time)[:10])
+        except (TypeError, ValueError):
+            return profile
+        thresholds = load_platform_thresholds(db, user_id, target_date)
+        if not thresholds:
+            return profile
+        merged = dict(profile or {})
+        for key in ("threshold_heart_rate", "threshold_pace_sec_per_km"):
+            if not merged.get(key) and thresholds.get(key):
+                merged[key] = thresholds[key]
+        return merged
+
+    @staticmethod
     def _load_active_goals(memory_store) -> list[dict[str, Any]]:
         """从 memory store 加载活跃目标。"""
         try:
@@ -1623,33 +2058,147 @@ class MemoryWriter:
             return []
 
 
-    def _load_plan_context(self) -> dict[str, Any]:
-        """加载当前运动大纲的核心信息，嵌入日报 front matter。
-
-        如果大纲不存在，返回空 dict，AI 教练会在生成洞察时创建大纲。
-        """
+    def _load_plan_context(self, target_date: date) -> dict[str, Any]:
+        """按报告日期加载当时生效的训练方案快照。"""
         try:
-            ms = getattr(self, '_memory_store', None)
-            if ms is None:
-                # MemoryStore 包装了 reader/writer，尝试获取 reader
-                ms = getattr(self, '_reader', None)
-            if ms:
-                plan = ms.get("active-plan")
-                if plan and plan.front_matter:
-                    fm = plan.front_matter
-                    return {
-                        "exists": True,
-                        "phase": fm.get("current_phase", ""),
-                        "weeks_to_race": fm.get("weeks_to_race", ""),
-                        "target_race": fm.get("target_race", ""),
-                        "target_time": fm.get("target_time", ""),
-                        "target_date": fm.get("target_date", ""),
-                        "weekly_km_target": fm.get("weekly_mileage_target", ""),
-                        "updated": fm.get("updated", ""),
-                    }
+            # 延迟导入避免 training.py 与 memory.py 的模块级循环依赖。
+            from .training import TrainingService
+
+            return TrainingService(self._root).resolve_plan_context(target_date)
         except Exception:
-            pass
-        return {"exists": False}
+            logger.exception("按日期加载训练方案上下文失败")
+            return {
+                "status": "plan_context_unavailable",
+                "exists": False,
+                "target_date": str(target_date),
+                "comparison_status": "not_applicable",
+            }
+
+    @staticmethod
+    def _build_plan_execution_summary(
+        plan_context: dict[str, Any], activity_summary: dict[str, Any],
+        week_activities: list[dict[str, Any]], target_date: date,
+        recommendation: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """生成日报可读的计划执行快照，不将未知活动覆盖当成缺席。"""
+        goal = plan_context.get("goal") or {}
+        target_date_value = str(goal.get("target_date") or "")
+        try:
+            days_to_goal = (date.fromisoformat(target_date_value) - target_date).days
+        except ValueError:
+            days_to_goal = None
+        def is_running(activity: dict[str, Any]) -> bool:
+            activity_type = str(
+                activity.get("activity_type") or activity.get("activity_type_name") or ""
+            ).lower()
+            activity_name = str(activity.get("activity_name") or "").lower()
+            return "run" in activity_type or "跑" in activity_name or "run" in activity_name
+
+        weekly_km = round(sum(
+            float(item.get("distance_meters") or item.get("distance") or 0) / 1000
+            for item in week_activities if is_running(item)
+        ), 1)
+        recommendation = recommendation or {}
+        recovery_advice = str(recommendation.get("training_advice") or "")
+        cautions = [str(item) for item in recommendation.get("caution") or [] if item]
+        guidance = recovery_advice if recommendation.get("status") != "unavailable" else ""
+        base = {
+            "comparison_status": str(plan_context.get("comparison_status") or "not_applicable"),
+            "goal": {
+                "name": str(goal.get("name") or "当前训练目标"),
+                "target_date": target_date_value or None,
+                "days_to_goal": days_to_goal,
+                "status": "in_progress" if days_to_goal is None or days_to_goal >= 0 else "past_due",
+            },
+            "phase": copy.deepcopy(plan_context.get("current_phase") or {}),
+            "week": {
+                "week_start": plan_context.get("week_start"),
+                "week_end": plan_context.get("week_end"),
+                "target_km": plan_context.get("weekly_mileage_target"),
+                "recorded_km": weekly_km,
+                "label": "截至报告日已记录跑量",
+            },
+            "training_url": f"/training?date={target_date.isoformat()}",
+            "guidance": guidance or None,
+            "caution": cautions[:2],
+        }
+        status = str(plan_context.get("status") or "no_effective_plan")
+        if base["comparison_status"] != "applicable":
+            reason = {
+                "draft_available": "该日只有方案草稿，尚不评价计划执行。",
+                "scheduled_plan": "方案将在未来生效，该日不评价计划执行。",
+                "no_effective_plan": "该日没有生效训练方案，无法比较计划执行。",
+            }.get(status, "该日计划上下文不可用，暂不评价执行。")
+            return {**base, "status": "not_applicable", "headline": reason, "actual": None}
+
+        workout = ensure_training_prescription(plan_context.get("workout") or {})
+        planned = {
+            "title": str(workout.get("title") or "当日训练"),
+            "purpose": str(workout.get("purpose") or "按计划完成训练"),
+            "intensity": str(workout.get("intensity") or ""),
+            "distance_km": workout.get("distance_km"),
+            "duration_minutes": workout.get("duration_minutes"),
+            "training_prescription": workout.get("training_prescription"),
+        }
+        state = str(activity_summary.get("activity_state") or "unknown")
+        if state == ActivityDayState.UNKNOWN.value:
+            return {
+                **base, "status": "awaiting_sync", "planned": planned, "actual": None,
+                "headline": "运动数据尚未同步，暂不判断今天是否按计划执行。",
+                "sync_url": f"/sync?date={target_date.isoformat()}&from=reports&return_to=/reports?date={target_date.isoformat()}#single-sync",
+            }
+
+        sessions = activity_summary.get("sessions") or []
+        has_running = any(str(item.get("type") or "") == "running" for item in sessions)
+        actual = {
+            "summary": (
+                "已确认休息" if activity_summary.get("is_rest_day")
+                else ("已记录跑步训练" if has_running else "已记录其他运动")
+            ),
+            "distance_km": activity_summary.get("total_distance_km"),
+            "duration_minutes": activity_summary.get("total_duration_min"),
+        }
+        prescription = planned.get("training_prescription") or {}
+        primary = str(prescription.get("primary_completion") or "distance")
+        target_value = planned.get("distance_km") if primary == "distance" else planned.get("duration_minutes")
+        actual_value = actual.get("distance_km") if primary == "distance" else actual.get("duration_minutes")
+        try:
+            completion_ratio = float(actual_value or 0) / float(target_value or 0)
+        except (TypeError, ValueError, ZeroDivisionError):
+            completion_ratio = None
+        comparison = {
+            "primary_metric": "距离" if primary == "distance" else "时长",
+            "target": target_value,
+            "actual": actual_value,
+            "ratio": round(completion_ratio, 2) if completion_ratio is not None else None,
+            "planned_structure": workout_steps_summary(prescription) or None,
+            "structure": (
+                "计划已包含逐段结构；当前同步摘要未提供足够的逐段完成证据"
+                if prescription.get("structure_version") == 2
+                else "当前同步摘要未提供足够训练块证据"
+            ),
+            "intensity": "当前同步摘要未提供足够个人强度证据",
+        }
+        if workout.get("type") == "rest":
+            headline = "今天按计划以恢复为主。" if activity_summary.get("is_rest_day") else "今天记录了活动；恢复安排是否需要调整，请在训练页查看。"
+            execution_status = "aligned" if activity_summary.get("is_rest_day") else "review"
+        elif has_running:
+            if completion_ratio is not None and completion_ratio >= 0.85:
+                headline = "今日主要距离或时长已达到处方目标；训练块与强度证据仍以活动详情为准。"
+                execution_status = "completed"
+            else:
+                headline = "今天已完成部分跑步训练；请结合训练块和体感决定是否需要调整后续安排。"
+                execution_status = "partially_completed"
+        elif activity_summary.get("is_rest_day"):
+            headline = "今天未记录与计划对应的训练；如有现实约束，可在训练页说明并查看调整建议。"
+            execution_status = "skipped"
+        else:
+            headline = "今天记录了其他运动；是否作为替代训练，请在训练页确认。"
+            execution_status = "unmatched"
+        return {
+            **base, "status": execution_status, "planned": planned,
+            "actual": actual, "comparison": comparison, "headline": headline,
+        }
 
     @staticmethod
     def _infer_fitness_level(pbs: dict[str, Any], info: dict[str, Any]) -> str:
@@ -1694,9 +2243,322 @@ class MemoryWriter:
     # ── 辅助: 渲染 ────────────────────────────
 
     @staticmethod
+    def _band_range_text(band_key: str) -> str:
+        """把心率/配速带 key（-inf-130 / 130-145 / 175-inf）转成可读文本。"""
+        if band_key.startswith("-inf"):
+            return f"<{float(band_key[len('-inf-'):]):g}"
+        if band_key.endswith("inf"):
+            return f">{float(band_key[:-4]):g}"
+        low, high = band_key.split("-", 1)
+        return f"{float(low):g}–{float(high):g}"
+
+    @staticmethod
+    def _format_pace(pace_sec_per_km: Any) -> str:
+        """把秒/km 配速格式化为 m'ss"/km 文本；无效值返回空串。"""
+        try:
+            value = float(pace_sec_per_km)
+        except (TypeError, ValueError):
+            return ""
+        if not 0 < value < 3600:
+            return ""
+        minutes = int(value // 60)
+        seconds = int(round(value % 60))
+        if seconds == 60:
+            minutes += 1
+            seconds = 0
+        return f"{minutes}'{seconds:02d}\""
+
+    @staticmethod
+    def _format_duration(seconds: Any) -> str:
+        try:
+            secs = float(seconds)
+        except (TypeError, ValueError):
+            return "—"
+        if secs <= 0:
+            return "—"
+        hours = int(secs // 3600)
+        minutes = int((secs % 3600) // 60)
+        return f"{hours}h{minutes:02d}min" if hours else f"{minutes}min"
+
+    @staticmethod
+    def _format_marathon(pace_sec_per_km: Any) -> str:
+        try:
+            total_sec = float(pace_sec_per_km) * 42.195
+        except (TypeError, ValueError):
+            return ""
+        if not 0 < total_sec < 36000:
+            return ""
+        hours = int(total_sec // 3600)
+        minutes = int((total_sec % 3600) // 60)
+        seconds = int(round(total_sec % 60))
+        if seconds == 60:
+            minutes += 1
+            seconds = 0
+        if minutes == 60:
+            hours += 1
+            minutes = 0
+        return f"{hours}:{minutes:02d}:{seconds:02d}"
+
+    @staticmethod
+    def _effect_explanation(effect: dict[str, Any]) -> str:
+        """训练效果简短解释（运动概要用）：TE 值 + 强度含义；估算必带依据。"""
+        if not effect:
+            return ""
+        te = effect.get("aerobic_training_effect")
+        ate = effect.get("anaerobic_training_effect")
+        if te is None and ate is None:
+            return ""
+        parts = []
+        if te is not None:
+            parts.append(f"有氧 {te:g}")
+        if ate is not None:
+            parts.append(f"无氧 {ate:g}")
+        main = ate if (ate or 0) >= (te or 0) else te
+        if main is not None:
+            if main >= 4.0:
+                explanation = "高强度刺激，对体能提升作用明显"
+            elif main >= 3.0:
+                explanation = "训练成效显著，体能获得有效刺激"
+            elif main >= 2.0:
+                explanation = "有氧基础得到维持与改善"
+            elif main >= 1.0:
+                explanation = "以基础保持和恢复为主"
+            else:
+                explanation = ""
+            if explanation:
+                parts.append(explanation)
+        text = "，".join(parts)
+        if bool(effect.get("estimated")):
+            basis = "心率" if effect.get("estimate_basis") == "heart_rate" else "配速"
+            text += f"（估算，依据{basis}）"
+        return text
+
+    @staticmethod
+    def _format_effect(effect: dict[str, Any]) -> str:
+        """训练效果文本；估算值带 ≈ 与依据标记。"""
+        if not effect:
+            return "不可得"
+        te = effect.get("aerobic_training_effect")
+        ate = effect.get("anaerobic_training_effect")
+        parts = []
+        if te is not None:
+            parts.append(f"有氧 {te:g}")
+        if ate is not None:
+            parts.append(f"无氧 {ate:g}")
+        label = effect.get("label")
+        if label:
+            parts.append(str(label))
+        mod = effect.get("moderate_intensity_minutes")
+        vig = effect.get("vigorous_intensity_minutes")
+        minutes = []
+        if mod:
+            minutes.append(f"中等 {float(mod):g}min")
+        if vig:
+            minutes.append(f"高 {float(vig):g}min")
+        if minutes:
+            parts.append("强度分钟 " + "/".join(minutes))
+        if not parts:
+            return "不可得"
+        text = " · ".join(parts)
+        if bool(effect.get("estimated")):
+            basis = "心率" if effect.get("estimate_basis") == "heart_rate" else "配速"
+            text = f"≈ {text}（估算，依据{basis}）"
+        return text
+
+    @staticmethod
+    def _deep_analysis_lines(analysis: dict[str, Any]) -> list[str]:
+        """把 session-summary-v2 的确定性事实渲染为训练深度分析 Markdown 行。"""
+        summary = analysis.get("session_summary") or {}
+        volume = summary.get("volume") or {}
+        effect = summary.get("effect") or {}
+        elev = summary.get("elevation_profile") or {}
+        terrain = summary.get("terrain") or {}
+        pace_profile = summary.get("pace_profile") or {}
+        structure = summary.get("structure") or {}
+        structure_profile = summary.get("structure_profile") or {}
+        lines: list[str] = []
+
+        distance = (volume.get("distance_m") or 0) / 1000
+        duration = volume.get("duration_s") or 0
+        elapsed = volume.get("elapsed_duration_s")
+        duration_text = MemoryWriter._format_duration(duration)
+        if elapsed and elapsed > duration + 5:
+            duration_text += f"（总 {MemoryWriter._format_duration(elapsed)}，含暂停）"
+        elif elapsed and abs(elapsed - duration) <= 5:
+            duration_text += "（无暂停）"
+        rows = [f"距离/用时: {distance:.2f} km / {duration_text}"]
+        pace = pace_profile.get("avg_pace_sec_per_km")
+        if pace:
+            marathon = MemoryWriter._format_marathon(pace)
+            suffix = f"（折全马约 {marathon}）" if marathon else ""
+            rows.append(f"平均配速: {MemoryWriter._format_pace(pace)}/km{suffix}")
+        fastest = pace_profile.get("fastest_pace_sec_per_km")
+        if fastest:
+            rows.append(f"最快配速: {MemoryWriter._format_pace(fastest)}/km")
+        ascent = elev.get("ascent_m")
+        descent = elev.get("descent_m")
+        if ascent is not None or descent is not None:
+            range_text = ""
+            if elev.get("max_elevation_m") is not None and elev.get("min_elevation_m") is not None:
+                range_text = f"（海拔 {elev['min_elevation_m']:g}~{elev['max_elevation_m']:g}m）"
+            rows.append(f"爬升/下降: {ascent or 0:g}m / {descent or 0:g}m{range_text}")
+        elif terrain and terrain.get("ascent_m") is not None:
+            rows.append(f"累计爬升: {terrain['ascent_m']:g}m")
+        avg_cadence = structure.get("avg_cadence")
+        max_cadence = structure.get("max_cadence")
+        if avg_cadence:
+            cadence_text = f"{avg_cadence:.0f} spm"
+            if max_cadence:
+                cadence_text += f"，最大 {max_cadence:.0f}"
+            rows.append(f"平均步频: {cadence_text}")
+        calories = volume.get("calories")
+        effect_text = MemoryWriter._format_effect(effect)
+        if calories is not None:
+            rows.append(f"热量/训练效果: {calories:.0f} kcal / {effect_text}")
+        elif effect_text != "不可得":
+            rows.append(f"训练效果: {effect_text}")
+        lines.append("**整体水平**")
+        lines.extend(f"- {row}" for row in rows)
+
+        granularity = summary.get("granularity")
+        if granularity in ("L1", "L2"):
+            intensity = summary.get("intensity") or {}
+            split_count = pace_profile.get("split_count") or 0
+            pace_bands = intensity.get("pace_bands_pct") or {}
+            hr_bands = intensity.get("hr_bands_pct") or {}
+
+            def _band_text(band_key: str) -> str:
+                if band_key.startswith("-inf"):
+                    return f"<{MemoryWriter._format_pace(float(band_key[len('-inf-'):]))}"
+                if band_key.endswith("inf"):
+                    return f">{MemoryWriter._format_pace(float(band_key[:-4]))}"
+                low, high = band_key.split("-", 1)
+                return (
+                    f"{MemoryWriter._format_pace(float(low))}–"
+                    f"{MemoryWriter._format_pace(float(high))}"
+                )
+
+            lines.append("")
+            lines.append("**强度分布**")
+            if pace_bands:
+                basis = intensity.get("basis") or ""
+                bands = "；".join(
+                    f"{_band_text(k)}: {v:g}%" for k, v in pace_bands.items()
+                )
+                lines.append(f"- 配速带分布（{split_count} 段样本，basis={basis}）: {bands}")
+            percentiles = []
+            for label, key in (
+                ("P5", "p5"), ("P25", "p25"), ("P50", "p50"),
+                ("P75", "p75"), ("P95", "p95"),
+            ):
+                value = pace_profile.get(key)
+                if value:
+                    percentiles.append(f"{label} {MemoryWriter._format_pace(value)}")
+            if percentiles:
+                lines.append("- 配速分位数: " + " / ".join(percentiles))
+            if hr_bands:
+                def _hr_band_text(band_key: str) -> str:
+                    if band_key.startswith("-inf"):
+                        return f"<{float(band_key[len('-inf-'):]):g}"
+                    if band_key.endswith("inf"):
+                        return f">{float(band_key[:-4]):g}"
+                    low, high = band_key.split("-", 1)
+                    return f"{float(low):g}–{float(high):g}"
+
+                bands = "；".join(
+                    f"{_hr_band_text(k)}: {v:g}%" for k, v in hr_bands.items()
+                )
+                lines.append(f"- 心率带分布: {bands}")
+
+            lines.append("")
+            lines.append("**配速节奏**")
+            half = pace_profile.get("half_pace_diff_s")
+            if half is not None:
+                direction = "后程偏慢（正分段）" if half > 0 else "前程偏慢（负分段）"
+                lines.append(
+                    f"- 前后半程: 后半较前半 {MemoryWriter._format_pace(abs(half))}/km · {direction}"
+                )
+            cv = pace_profile.get("cv_pct")
+            if cv is not None:
+                stability = "控制力强" if cv < 8 else "存在起伏" if cv < 15 else "波动明显"
+                lines.append(f"- 段间配速 CV {cv:g}%（{stability}）")
+            classification = analysis.get("structure_classification") or {}
+            if classification:
+                label = classification.get("label") or "未知"
+                conf = classification.get("confidence")
+                conf_parts = []
+                if conf is not None:
+                    conf_parts.append(f"置信 {float(conf):.0%}")
+                missing = classification.get("missing_evidence") or []
+                if missing:
+                    conf_parts.append("缺 " + "/".join(missing))
+                alternations = classification.get("alternations") or 0
+                structure_text = f"{label}"
+                if alternations:
+                    structure_text += f"（{alternations} 组快慢交替）"
+                if conf_parts:
+                    structure_text += f" · {'；'.join(conf_parts)}"
+                lines.append(f"- 训练结构: {structure_text}")
+                groups = classification.get("work_recovery_groups") or []
+                if groups:
+                    group_texts = []
+                    for group in groups:
+                        work_pace = group.get("work_pace_sec_per_km")
+                        recovery_pace = group.get("recovery_pace_sec_per_km")
+                        work_hr = group.get("work_avg_hr")
+                        recovery_hr = group.get("recovery_avg_hr")
+                        parts = []
+                        if work_pace:
+                            text = f"快 {MemoryWriter._format_pace(work_pace)}/km"
+                            if work_hr:
+                                text += f"(hr{work_hr:.0f})"
+                            parts.append(text)
+                        if recovery_pace:
+                            text = f"慢 {MemoryWriter._format_pace(recovery_pace)}/km"
+                            if recovery_hr:
+                                text += f"(hr{recovery_hr:.0f})"
+                            parts.append(text)
+                        if parts:
+                            group_texts.append(" → ".join(parts))
+                    if group_texts:
+                        lines.append(
+                            "- 每组配速: " + "；".join(
+                                f"第{i + 1}组 {text}"
+                                for i, text in enumerate(group_texts)
+                            )
+                        )
+                if classification.get("quantity_reliable") is False:
+                    lines.append("- 注: 分段距离/时长与总量偏差，仅强度模式有效")
+                fatigue = classification.get("fatigue_signal") or {}
+                if fatigue.get("detected"):
+                    lines.append(f"- 疲劳信号: {fatigue.get('note')}")
+                cadence_consistency = classification.get("cadence_consistency")
+                if cadence_consistency:
+                    lines.append(
+                        f"- 步频一致性: CV {cadence_consistency['cv_pct']:g}%"
+                        f"（平均 {cadence_consistency['avg']:.0f} spm）"
+                    )
+            else:
+                composite = structure_profile.get("composite_type")
+                work = structure_profile.get("work_blocks")
+                recovery = structure_profile.get("recovery_blocks")
+                if composite:
+                    label_map = {
+                        "interval": "间歇结构", "fartlek": "变速结构",
+                        "structured": "结构化分段", "steady": "平稳节奏",
+                    }
+                    label = label_map.get(composite, composite)
+                    detail = f"（work {work}/recovery {recovery}）" if work or recovery else ""
+                    lines.append(f"- 训练结构: {label}{detail}")
+        else:
+            lines.append("")
+            lines.append("- 无分段数据，强度分布与配速节奏不可得。")
+        return lines
+
+    @staticmethod
     def _render_daily_body(fm: dict[str, Any], target_date: date) -> str:
         """渲染日报正文。"""
-        ya = fm.get("yesterday_activities", {})
+        ya = get_daily_activities(fm)
         sleep = fm.get("last_night_sleep", {})
         morning = fm.get("this_morning", {})
         load = fm.get("training_load", {})
@@ -1711,10 +2573,15 @@ class MemoryWriter:
             f"# 📰 每日训练报告 — {target_date} {wd}",
             "",
             f"> 生成时间: {fm.get('generated', '')[:16]}",
-            "",
-            "## 🏃 今日训练",
-            "",
         ]
+        if fm.get("data_as_of"):
+            lines.append(f"> 数据截止: {str(fm['data_as_of'])[:19]}")
+        if fm.get("report_finality") == "provisional":
+            lines.append("> 当前为暂态报告，后续同步到新数据后应重新生成。")
+        if fm.get("data_readiness") == "limited":
+            omitted = "、".join(fm.get("omitted_sections", [])) or "部分分析"
+            lines.append(f"> ⚠️ 数据不完整，以下内容已省略: {omitted}")
+        lines.extend(["", "## 🏃 当日训练", ""])
 
         # 活动详情分析
         session_analyses = fm.get("session_analyses", [])
@@ -1732,8 +2599,7 @@ class MemoryWriter:
                     f"- 置信度: {float(analysis.get('confidence', 0)):.0%} | "
                     f"算法: {analysis.get('algorithm_version', '—')}"
                 )
-                for evidence in analysis.get("evidence", []):
-                    lines.append(f"- 依据: {evidence}")
+                lines.extend(MemoryWriter._deep_analysis_lines(analysis))
                 for implication in analysis.get("training_implications", []):
                     lines.append(f"- 后续影响: {implication}")
                 lines.append("")
@@ -1765,28 +2631,102 @@ class MemoryWriter:
             lines.append(f"\n**总时长**: {ya.get('total_duration_min', 0)}min")
             lines.append(f"**总负荷**: {ya.get('total_training_load', 0)}")
 
+        plan_execution = fm.get("plan_execution_summary") or {}
+        if plan_execution:
+            lines.extend(["", "## 🎯 计划执行与目标进展", ""])
+            goal = plan_execution.get("goal") or {}
+            phase = plan_execution.get("phase") or {}
+            planned = plan_execution.get("planned") or {}
+            actual = plan_execution.get("actual") or {}
+            if goal.get("name"):
+                goal_line = f"- 目标：{goal['name']}"
+                if goal.get("target_date"):
+                    goal_line += f" · 目标日期 {goal['target_date']}"
+                lines.append(goal_line)
+            if phase.get("name"):
+                lines.append(f"- 当前阶段：{phase['name']}")
+            if planned:
+                lines.append(f"- 当日计划：{planned.get('title', '—')}")
+            if actual:
+                lines.append(f"- 已记录：{actual.get('summary', '—')}")
+            week = plan_execution.get("week") or {}
+            if week.get("target_km") is not None:
+                lines.append(
+                    f"- 本周已记录：{week.get('recorded_km', 0)} / {week['target_km']} km"
+                )
+            if plan_execution.get("headline"):
+                lines.append(f"- 下一步：{plan_execution['headline']}")
+            if plan_execution.get("guidance"):
+                lines.append(f"- 调整建议：{plan_execution['guidance']}")
+            for caution in plan_execution.get("caution") or []:
+                lines.append(f"- 注意：{caution}")
+
+        lines.extend(["", "## 😴 睡眠恢复", ""])
+        if sleep.get("status") == "unavailable":
+            lines.append(f"- 数据不可用: {sleep.get('reason', '睡眠数据不完整')}")
+        else:
+            lines.append(
+                f"- **睡眠时长**: {sleep.get('total_hours', '?')}h | "
+                f"评分 {sleep.get('sleep_score', '?')} ({sleep.get('quality', '?')})"
+            )
+
+        lines.extend(["", "## 📊 今晨状态", ""])
+        if morning.get("status") == "unavailable":
+            lines.append(f"- 数据不可用: {morning.get('reason', '恢复指标不完整')}")
+        else:
+            lines.extend([
+                f"| 指标 | 数值 |",
+                f"|------|------|",
+                f"| 静息心率 | {morning.get('resting_hr', '?')} bpm |",
+                f"| HRV | {morning.get('hrv_ms', '?')} ms |",
+                f"| 身体电量 | {morning.get('body_battery_morning', '?')} |",
+                f"| 训练准备 | {morning.get('training_readiness_score', '?')} |",
+            ])
+
+        lines.extend(["", "## 📈 负荷状态", ""])
+        if load.get("status") == "unavailable":
+            lines.append(f"- 数据不可用: {load.get('reason', '活动历史覆盖不足')}")
+        else:
+            lines.append(
+                f"- **ACWR**: {load.get('acwr', '?')} — {load.get('acwr_status', '?')}"
+            )
+        if recovery.get("status") == "unavailable":
+            lines.append(f"- 恢复评分不可用: {recovery.get('reason', '恢复数据不足')}")
+        else:
+            lines.append(
+                f"- **恢复评分**: {recovery.get('overall_score', '?')}/100 "
+                f"({recovery.get('level', '?')})"
+            )
+
+        athlete = fm.get("athlete_context") or {}
+        if athlete.get("status") == "available":
+            cap = (athlete.get("capacity_profile") or {}).get(
+                "current_sustainable_capacity"
+            ) or {}
+            background_parts = []
+            weekly = cap.get("weekly_km")
+            if weekly:
+                background_parts.append(
+                    f"可持续周跑量参考约 {float(weekly):g} km"
+                )
+            long_run = cap.get("long_run_km")
+            if long_run:
+                background_parts.append(f"长距离参考 {float(long_run):g} km")
+            pace = cap.get("recent_running_pace_sec_per_km")
+            if pace:
+                background_parts.append(
+                    f"参考配速 {MemoryWriter._format_pace(pace)}/km"
+                )
+            if background_parts:
+                cutoff = athlete.get("facts_cutoff") or ""
+                suffix = f"（数据截至 {cutoff}）" if cutoff else ""
+                lines.append("")
+                lines.append(
+                    f"- **能力背景**: {'；'.join(background_parts)}{suffix}"
+                )
+
         lines.extend([
-            "",
-            "## 😴 睡眠恢复",
-            "",
-            f"- **睡眠时长**: {sleep.get('total_hours', '?')}h | 评分 {sleep.get('sleep_score', '?')} ({sleep.get('quality', '?')})",
-            "",
-            "## 📊 今晨状态",
-            "",
-            f"| 指标 | 数值 |",
-            f"|------|------|",
-            f"| 静息心率 | {morning.get('resting_hr', '?')} bpm |",
-            f"| HRV | {morning.get('hrv_ms', '?')} ms |",
-            f"| 身体电量 | {morning.get('body_battery_morning', '?')} |",
-            f"| 训练准备 | {morning.get('training_readiness_score', '?')} |",
-            "",
-            "## 📈 负荷状态",
-            "",
-            f"- **ACWR**: {load.get('acwr', '?')} — {load.get('acwr_status', '?')}",
-            f"- **恢复评分**: {recovery.get('overall_score', '?')}/100 ({recovery.get('level', '?')})",
-            "",
-            "## 🎯 今日训练建议",
-            "",
+            "", "## 🎯 当日训练建议", "",
             f"**{rec.get('training_advice', '?')}** (强度: {rec.get('intensity', '?')})",
         ])
 
@@ -1999,8 +2939,22 @@ class MemoryStore:
         user_id: str,
         target_date: date | None = None,
         ai_insight: dict[str, Any] | None = None,
+        *,
+        readiness: dict[str, Any],
+        athlete_context: dict[str, Any] | None = None,
+        persist: bool = True,
     ) -> Memory:
-        return self.writer.generate_daily_report(user_id, target_date, ai_insight)
+        return self.writer.generate_daily_report(
+            user_id, target_date, ai_insight, readiness=readiness,
+            athlete_context=athlete_context, persist=persist,
+        )
+
+    def finalize_daily_report(
+        self,
+        memory: Memory,
+        ai_insight: dict[str, Any] | None = None,
+    ) -> Memory:
+        return self.writer.finalize_daily_report(memory, ai_insight)
 
     def generate_weekly_summary(self, user_id: str,
                                  target_date: date | None = None) -> Memory:

@@ -1,0 +1,5 @@
+{
+  "name": "build-near-term-schedule",
+  "version": "1.0.0",
+  "description": "生成当前周和下一周详细课表及 entry_review。"
+}

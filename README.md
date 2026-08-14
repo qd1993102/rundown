@@ -58,13 +58,16 @@ neurun daily                       # 今天（自动检查并补同步缺失数�
 neurun daily --date 2026-06-25     # 指定日期
 neurun daily --theme dark          # 暗黑主题
 neurun daily --format json         # 仅 JSON 输出
-neurun daily --skip-sync           # 跳过同步，仅基于本地数据生成报告
+neurun daily --skip-sync           # 不访问 Provider，但仍执行完整性门禁
+neurun daily -m limited            # 明确接受缺失维度，生成带标记的受限版
 neurun daily --sync-days 7         # 同步最近 7 天数据后生成报告
 neurun daily --full                # 全量同步（3年）后生成报告
 neurun daily --force               # 强制覆盖已有数据后重新同步
 ```
 
-每次执行自动：检查本地数据完整性 →（缺失时自动拉取）→ 生成 md → AI 洞察 → HTML → PNG → 终端展示。
+每次执行自动：按报告日活动、睡眠/恢复、近 7 天趋势和近 28 天负荷检查完整性 →（缺失时按需拉取）→
+生成 md → AI 洞察 → HTML → PNG → 终端展示。核心活动覆盖未知时不写报告、不调用 AI；辅助维度
+不足时默认拒绝，只有显式使用 `--report-mode limited` 才生成受限版并省略对应结论。
 
 > 默认智能检测：只同步缺失的日期，已有本地数据则跳过。`--force` 可强制重新拉取。
 
@@ -79,7 +82,8 @@ neurun daily --force               # 强制覆盖已有数据后重新同步
 | `--format FMT` | md/json | md | md(终端+文件输出) / json |
 | `--theme NAME` | str | sport | HTML/PNG 主题: fresh / sport / dark |
 | `--sync-days N` | int | auto | 同步最近 N 天（默认自动检测缺失） |
-| `--skip-sync` | flag | — | 跳过同步，仅用本地数据 |
+| `--skip-sync` | flag | — | 不访问 Provider，仅用本地覆盖证据；不绕过门禁 |
+| `-m, --report-mode MODE` | complete/limited | complete | 默认只生成完整日报；limited 为显式受限版 |
 | `--full` | flag | — | 全量同步后生成报告 |
 | `--force` | flag | — | 强制覆盖已有数据后重新同步 |
 
@@ -240,8 +244,11 @@ Garmin 遗留的 `activities=pending` 或个别健康指标失败显示为“部
 “单日同步”的日期输入框；单日或批量同步完成后，当前月日历立即刷新。
 今日日期使用当前主题的强调色柔和光环标识，不使用黑色或灰色硬边框，也不会占用格内文字空间。
 
-同步不会生成或覆盖日报。用户需要前往 `/reports` 选择日期并点击“生成日报”，
-该操作只读取已同步到本地 SQLite 的数据，不会再次访问运动平台。
+同步不会生成或覆盖日报。用户前往 `/reports` 选择日期后，页面先检查报告日活动、睡眠/恢复、
+近 7 天趋势和近 28 天负荷覆盖；该检查和生成都只读取本地 SQLite，不会再次访问运动平台。
+核心活动覆盖未知、同步中或失败时禁止生成；辅助维度不足时先引导补齐，并提供需要用户当次明确
+选择的“生成受限版”。“前往同步”会携带当前生成日期，自动填入同步页的单日日期、切换对应月份
+并定位到单日同步区域；同步完成返回日报页时仍保留该日期。
 
 两种模式均支持“强制覆盖已有数据”。对应的机器可读请求为：
 
@@ -302,15 +309,66 @@ Garmin 用户绑定时选择的国际区 `garmin.com` 或中国区 `garmin.cn` �
 
 显式生成日报使用：
 
+先通过只读接口检查指定日期：
+
+```http
+GET /api/reports/readiness?date=2026-07-19
+```
+
+返回 `ready`、`limited` 或 `blocked`，并包含逐维度覆盖、数据截止时间、省略章节和建议动作。
+
 显式生成接口为 `POST /api/reports`，请求体：
 
 ```json
-{"date":"2026-07-19"}
+{"date":"2026-07-19","mode":"complete"}
 ```
 
-日报先基于本地数据生成结构化指标，再通过 `prompts/coach.md` 驱动在线 AI 教练生成洞察，
-并将洞察写入 Front Matter 和 Markdown 正文。未配置 `DEEPSEEK_API_KEY` 或在线调用失败时，
-保留本地规则洞察作为降级结果。
+`mode` 默认 `complete`。数据只能生成受限版或被阻断时返回 HTTP 409 和
+`code=report_data_incomplete`，不会写入日报或调用 AI；`mode=limited` 只能绕过辅助维度不足，
+不能绕过报告日活动覆盖门禁。
+
+`/reports` 用“日报 / 周复盘”二级导航分开两类时间范围，默认进入日报。日报只管理某日
+的生成状态和归档；周中只可查看本周进度，已结束自然周才会由用户显式 `POST /api/reports/weekly`
+（请求体为 `{"date":"YYYY-MM-DD"}`）生成并归档正式周复盘。周复盘始终保存实际活动摘要、恢复、
+数据完整度和数据截止时间，不要求用户先建立目标或训练方案；该周存在生效方案时才额外保存计划执行摘要、
+方案版本和 Progression Decision。没有训练方案时，复盘仍会展示运动日/跑步日、时长、最长单次、
+可识别的训练结构、最近四个同步完整自然周的趋势、截至周末的恢复与负荷风险，以及 2–3 条下周行动；
+历史或恢复数据不足时会明确标注，而不是用缺失值生成趋势。归档卡片默认展示结论，可展开查看完整复盘。
+周复盘先在本地完成上述结构化判断，在线 AI 只进行一次最终解释；AI 服务缓慢或超时时最多等待约
+45 秒，随后自动使用完整的本地复盘，不会长期占用该账户的生成任务。
+`GET /api/reports/weekly` 仅读取已归档周复盘。调整提案和历史版本只在
+`/training` 管理；报告页没有批准、启用或推进训练方案的接口，相关动作只会深链到训练页由用户确认。
+
+日报先在内存中生成结构化指标，再把已经过服务端计算的事实交给
+`review-daily-training` Skill 做一次在线解释，最后将同一份洞察渲染到 Front Matter 和
+Markdown 正文并落盘一次。模型不调用应用 tools，也不读取聊天历史。未配置 `NEURUN_AI_API_KEY` 或在线调用失败时，
+保留本地规则洞察作为降级结果。受限版会把缺失维度对应的指标、建议和 AI 输入同时移除；日报
+Front Matter、列表、详情、HTML 和 PNG 持续保留完整性、`data_as_of` 和暂态/最终标记。
+日报还会从训练域读取只读运动员能力画像（与方案草稿同口径的 `capacity_profile(D)`）投影为
+`athlete_context`：正文“负荷状态”章节显示一行紧凑的能力参考（可持续周跑量、长距离、参考配速），
+`review-daily-training` 在同一调用中引用该背景解释当日/近期负荷相对个人可持续容量的位置；
+`training_load` 被省略的受限版或训练域不可用时不输出该背景，也不编造能力数值。
+
+日报“训练结构”为加权确定性判定（不用 AI）：配速 0.40/心率 0.35/步频 0.15/步幅 0.10 加权，
+六类判定（变速/间歇/节奏/有氧/混合/未知）+ 快慢交替检测 + 强度带分档 + 疲劳复合信号与步频一致性；
+分段距离合计与总量偏差超阈值时标记“仅强度模式有效”，不输出段距离/时长。
+
+日报“训练细节分析”为确定性深度分析（统一 `session-summary` schema，L1 分段粒度），每节跑步活动展示三块：
+整体水平（距离/用时含无暂停对比、平均配速折全马、最快配速、爬升/下降/海拔范围、平均/最大步频、
+热量、训练效果与强度分钟）、强度分布（分段粒度配速/心率带占比、配速分位数 P5–P95）、配速节奏
+（前后半程与正负分段、段间 CV、结构性课型识别）。训练效果缺失时用个人阈值本地估算并带
+“≈ 估算，依据心率/配速”标记，阈值也不可用时显示“不可得”，不伪造数值。
+选择日期 `D` 生成的日报只汇总 `D` 当天活动，并统一显示为“当日训练”；规范字段为
+`daily_activities`，读取历史日报时兼容旧字段 `yesterday_activities`。昨夜睡眠仍表示进入 `D` 日
+清晨前结束的睡眠周期。
+
+日报的计划执行评价同样以 `D` 为锚点：服务会解析 `D` 当时已经生效的训练方案版本和当天具体课次。
+如果方案在 `D` 之后才确认启用，报告显示“当日尚无生效计划”，不会用当前方案反向评价历史训练为
+“未执行”或“偏离”。方案后续调整后，历史日期仍按当时版本解释。
+在有可比较方案时，日报固定显示“计划执行与目标进展”：当日计划、已记录事实、截至 `D` 的自然周
+跑量/周目标、当前阶段和目标日期，并给出只读的调整建议。活动同步状态未知时显示“待同步”，不以
+空记录推断未执行；已记录跑步也只代表存在活动事实，不会擅自判定课次强度完全匹配。建议仅深链到
+训练页查看或确认调整，报告页不会改写训练方案或宣称赛事目标已达成/失败。
 
 跑步日报会基于活动汇总、laps/splits、最近个人能力基线和爬升数据生成结构化训练内容识别：
 训练主类型为有氧、节奏、间歇或未知，地形属性为平路、坡地、越野、山地或未知，并同时展示
@@ -319,11 +377,47 @@ Garmin 用户绑定时选择的国际区 `garmin.com` 或中国区 `garmin.cn` �
 
 空活动列表不会直接显示为休息日：只有该日期运动同步已完成且确无活动时才标记“已确认休息”，同步覆盖未知时显示“运动数据未同步”。周目标完成度按本地自然周（周一至周日）统计；近 7 天滚动窗口仅用于负荷与恢复趋势。
 
-### Web 日报与图片保存
+### Web 报告与图片保存
 
-`/sync`、`/reports`、`/` 和 `/profile` 使用同一套响应式应用导航：手机上固定在底部，
-以图标和文字展示“同步 / 日报 / 我的”并为当前页面提供明确高亮，同时为系统安全区预留空间；
+`/training`、`/sync`、`/reports`、`/` 和 `/profile` 使用同一套响应式应用导航：手机上固定在底部，
+以图标和文字展示“训练 / 报告 / 同步 / 我的”并为当前页面提供明确高亮，同时为系统安全区预留空间；
 主题切换作为右上角工具，不再与主导航混排。641px 以上导航恢复到页面顶部横向排列。
+
+### 交互式训练方案
+
+登录后访问 `/training` 可查看实时的今日训练、本周自然周安排和长期训练方案。没有生效方案时，
+页面通过五步建立向导管理活跃训练目标，依次确认目标、最近 28 天训练基础、现实约束、
+方案草稿和最终启用。没有目标时可在向导内快速创建；目标只保存一份，训练方案通过 `goal_id`
+引用并保留确认时快照。周跑量由系统依据已同步活动和可训练时间提出，活动覆盖不足时明确显示
+“数据不足”，不会把空数据解释为零跑量。最终确认时可选择今天、下个自然周或指定日期开始，并先查看由最新同步事实生成的启用建议；非周一开始会明确标为不计阶段推进的衔接周，未来确认方案在生效日前只显示为“已排期”。只有用户检查并确认后，v1 才会生效。
+最终确认前可分别修改目标、纠正当前通常周跑量或调整可训练日等现实约束；保存修改会在同一份草稿上重新计算建议与首周结构，不会影响今日训练，直至再次显式确认启用。
+专业草稿通过结构化训练事实、Coach Skill 和确定性安全校验生成，页面展示目标可行性、置信度、
+完整周期、首四周负荷、依据与不确定性。结果区分“AI 专业方案”“AI 方案 · 已安全规范化”
+“AI 风险评估 · 待你选择”和“保守规则兜底”：阶段周数、负荷和课程距离等可机械修正问题会
+记录调整差异并继续保留 AI 风险与路线建议，只有模型失败或无法修正的安全冲突才整体兜底。
+上游协议错误只展示脱敏、可操作的原因，不包含密钥、完整请求或训练事实。没有赛事日期时保留
+“持续跑步陪伴”，不生成伪完整赛事周期。
+旧版 `memory/plans/active-plan.md` 会在首次读取时迁移为结构化 v1，并保留无法转换的原始正文。
+
+今日训练支持“时间不足 / 有点疲劳 / 出现疼痛 / 日程冲突”四类快捷反馈。反馈只创建包含前后值、
+原因、周影响和风险标记的待确认提案；“确认调整”会校验基础版本并生成新的不可变历史版本，
+“保持原计划”不会改变当前方案。重复确认幂等，旧版本或过期提案不能覆盖新方案。疼痛场景默认
+暂停跑步，不会提出加量或提高强度。活动同步未知或无法可靠匹配时显示“等待匹配”，不会标记跳过。
+
+训练页还提供训练前说明、前往报告中心的自然周复盘、赛前 21 天比赛策略和完整方案重规划，并展示近期可持续能力与同步事实截点。当前课程对应的 Z 区有至少三次近期可信同类训练，或具有用户确认强度锚点时，今日训练会直接显示个人建议配速；恢复或近期负荷不理想时只会放慢或改用体感，不会自动追快。推荐结果和必要安全行动默认可见，依据、样本、事实截止时间和置信度可从“为什么这样建议”展开。训练前说明是即时的运动者指导，只呈现目的、配速/体感结果、强度上限、执行步骤、替代方式和停止信号；它以本地规则即时生成，不等待在线 AI，也不暴露原始恢复/负荷字段或 Skill 调用信息。自然周复盘给出按方案推进、保持、建议加快、建议减量或补齐数据的决定，不直接改方案；建议加快或减量仍须经用户确认后才生成
+新版本。教练定位可在“持续跑步陪伴 → 目标赛事备赛 → 恢复过渡 → 持续跑步陪伴”之间转换，
+每次都展示能力变化和方案收尾方式，并保留运动者档案、活动与历史方案。
+
+新生成的非休息课程使用 Workout Steps v2。变速、间歇和法特莱克会明确展示“热身 → N 组〔快段 → 慢段〕→ 放松”，每段包含时长或距离、Z1–Z5 强度、个人配速区间或体感降级，以及进入下一组的条件；在线 AI 输出和保守规则兜底都必须通过同一结构与总量校验。历史 v1 方案保持只读兼容，不会从“交替完成”等旧文案猜测组数或被静默覆盖；重新生成草稿或确认调整后才会形成 v2 方案版本。
+
+对应 MCP tools 包括 `get_training_home`、`get_training_plan`、`get_athlete_capacity_profile`、`preview_training_activation` 和 `submit_training_feedback`。
+`get_training_plan` 可选传入 `target_date=YYYY-MM-DD` 读取该日当时生效的版本与课次；省略时仍读取
+当前实时方案。其他工具包括 `get_training_session_brief`、`prepare_race_strategy`、
+`propose_training_adjustment`、`propose_training_scheme_revision`、`approve_training_adjustment`、
+`reject_training_adjustment`、`propose_coaching_mode_transition`、
+`confirm_coaching_mode_transition` 和 `reject_coaching_mode_transition`。
+训练方案不再提供整段 Markdown 直接覆盖工具；确认型 tool 必须显式提供 `base_version` 和
+`idempotency_key`。当前未新增 CLI 命令。
 
 日报列表和详情采用移动端优先布局，日期控件和主要按钮保持适合触控的尺寸；列表卡片中的日期、
 训练摘要和睡眠/恢复评分在手机上保持同一行，摘要过长时省略，不会挤压评分或产生横向滚动；
@@ -441,7 +535,7 @@ neurun status
 
 ### `neurun mcp`
 
-启动 MCP Server，供 OpenClaw / Claude Desktop 连接进行 AI 教练对话。
+启动 MCP Server，供 OpenClaw / Claude Desktop 读取训练事实并调用显式教练工具。
 
 ```bash
 neurun mcp                         # 默认端口 8765
@@ -468,7 +562,7 @@ output/
 └── ...
 ```
 
-页面包含：今晨状态面板、昨日训练卡片、ACWR 负荷可视化、7 日 SVG 趋势图、训练建议、异常提醒。
+页面包含：今晨状态面板、报告日当日训练卡片、ACWR 负荷可视化、7 日 SVG 趋势图、训练建议、异常提醒。
 
 ---
 
@@ -494,7 +588,28 @@ output/
 | `NEURUN_LOG_LEVEL` | — | `INFO` | 日志级别 |
 | `GARMIN_DOMAIN` | — | `garmin.com` | Garmin 专用：API 域名 |
 | `GARMIN_TOKEN_DIR` | — | `~/.garmy` | Garmin 专用：Token 目录 |
-| `DEEPSEEK_API_KEY` | — | — | DeepSeek API Key（AI 洞察） |
+| `NEURUN_AI_API_KEY` | AI 洞察 | — | AI 服务 API Key |
+| `NEURUN_AI_BASE_URL` | — | `https://api.deepseek.com` | OpenAI-compatible API 根地址，也可直接填写完整 `/chat/completions` 端点 |
+| `NEURUN_AI_MODEL` | — | `deepseek-chat` | AI 服务模型名 |
+| `NEURUN_AI_MAX_CONCURRENCY` | Web | `32` | 单进程独立 AI 线程池的同时执行上限 |
+| `NEURUN_AI_MAX_PENDING` | Web | `64` | 单进程执行中与等待中的不同用户 AI 任务总数 |
+| `NEURUN_AI_WAIT_TIMEOUT_SECONDS` | Web | `5` | AI 执行槽位暂满时不占线程等待的最长秒数 |
+| `NEURUN_AI_DEBUG_PROMPTS` | 本地调试 | `false` | 仅用于在终端输出训练草稿两次 AI 调用的完整 Prompt 与事实载荷；含用户训练事实，严禁线上启用 |
+
+AI 配置写在项目根目录 `.env`（可从 [.env.example](.env.example) 复制）或部署环境变量中。例如：
+
+```dotenv
+NEURUN_AI_API_KEY=sk-xxx
+NEURUN_AI_BASE_URL=https://your-provider.example/v1
+NEURUN_AI_MODEL=your-model-name
+NEURUN_AI_MAX_CONCURRENCY=32
+NEURUN_AI_MAX_PENDING=64
+NEURUN_AI_WAIT_TIMEOUT_SECONDS=5
+```
+
+当前模型客户端要求服务兼容 OpenAI Chat Completions、Bearer 鉴权和
+`response_format=json_object`；应用内模型调用不发送 tools，也不提供通用 Chat 或流式 SSE。
+只替换地址和模型不能兼容 Anthropic Messages 等不同协议。
 
 Web 模式会按用户注册记录选择 Garmin、Coros 或 Huawei，不受服务级
 `NEURUN_PROVIDER` 默认值影响。Coros 的运动数据认证使用 Training Hub 账号（邮箱或手机号）、密码和
@@ -593,7 +708,7 @@ Web 持久化根目录及用户、Token、memory、backup 子目录统一收紧�
 
 ### `neurun mcp`
 
-启动 MCP Server，供 OpenClaw / Claude Desktop 连接进行 AI 教练对话。
+启动 MCP Server，供 OpenClaw / Claude Desktop 读取训练事实并调用显式教练工具。
 
 ```bash
 neurun mcp                         # stdio 模式（默认）
@@ -627,7 +742,16 @@ MCP 提供的 Tools:
 - `query_health_metrics` — 查询健康指标
 - `get_activity_detail` — 获取活动分段详情及已生成的训练类型、地形、置信度和后续影响
 - `search_memories` — 搜索记忆库
+- `generate_report` / `generate_html_report` / `generate_image` — 生成或导出日报；`mode` 默认
+  `complete`，仅在用户明确接受缺失维度时使用 `limited`，核心活动覆盖仍不可绕过
 - `get_training_advice` — 生成训练建议
+- `get_training_home` / `get_training_plan` — 读取实时训练首页与生效方案；后者可用 `target_date` 查询历史日期上下文
+- `get_training_session_brief` — 读取训练前说明；自然周复盘统一从报告中心生成与归档
+- `prepare_race_strategy` — 在赛前 21 天内生成比赛策略
+- `submit_training_feedback` / `propose_training_adjustment` — 记录反馈并创建局部提案
+- `propose_training_scheme_revision` — 创建完整方案重规划提案
+- `approve_training_adjustment` / `reject_training_adjustment` — 显式确认或拒绝局部/方案级提案
+- `propose_coaching_mode_transition` / `confirm_coaching_mode_transition` / `reject_coaching_mode_transition` — 两阶段教练模式转换
 
 ## Architecture
 
@@ -650,6 +774,7 @@ neurun/
 │   ├── fetcher.py       数据拉取 (活动 + 健康指标)
 │   ├── storage.py       SQLite 存储 (garmy LocalDB)
 │   ├── memory.py        记忆系统 (日报/摘要/异常检测)
+│   ├── training.py      训练方案、周计划、反馈与版本确认
 │   ├── render.py        HTML 静态页面渲染
 │   └── exporter.py      CSV/JSON 导出
 ├── memory/              记忆库 (Markdown + YAML FM)

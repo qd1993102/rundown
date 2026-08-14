@@ -1,6 +1,6 @@
 # 设计方案 — 文档索引
 
-> 版本: v3.1 · 日期: 2026-07-28 · 基于 [garmy](https://github.com/bes-dev/garmy) v1.0.0
+> 版本: v3.2 · 日期: 2026-08-03 · 基于 [garmy](https://github.com/bes-dev/garmy) v1.0.0
 
 ---
 
@@ -22,17 +22,19 @@
 | 文档 | 内容 |
 |------|------|
 | [memory-system.md](memory-system.md) | 记忆系统设计 — 分类体系、模板规范、自动生成器、日报格式 |
-| [ai-coaching.md](ai-coaching.md) | AI 教练对话设计 — System Prompt、对话原则、OpenClaw 配置、典型场景 |
-| [training-system.md](training-system.md) | 交互式训练方案系统 — 实时训练首页、周计划、反馈、调整提案、版本与活动匹配 |
+| [ai-coaching.md](ai-coaching.md) | AI 教练工作流设计 — 六条显式旅程、结构化事实、模型调用和安全边界 |
+| [training-system.md](training-system.md) | 报告建议落地的训练系统 — 训练处方、周计划、逐段 Workout Steps v2、个体化配速校准 v1、反馈、调整提案、版本与活动匹配 |
+| [summary-extraction.md](summary-extraction.md) | 运动摘要提炼 — 单函数粒度自适应（L0/L1/L2）、版本化 schema、毫秒级实测、证据接入训练内容识别与报告 AI |
 | [contact-community.md](contact-community.md) | 联系入口与可更新群二维码 — 统一注入、权限、响应式交互与运维替换 |
-| [13-sae-deployment.md](13-sae-deployment.md) | §13 SAE 部署方案 — 小程序 + 多用户 + OSS，架构、数据隔离、API 设计 |
+| [13-sae-deployment.md](13-sae-deployment.md) | §13 Web 应用部署方案 — 多用户、数据隔离、API、国内轻量/ECS |
+| [14-overseas-deployment.md](14-overseas-deployment.md) | §14 海外部署 — VPS/域名/Cloudflare 渠道选型、架构与验收（未实施） |
 
 ## 规划与备忘
 
 | 文档 | 内容 |
 |------|------|
 | [09-roadmap.md](09-roadmap.md) | §9 实现路线图 — 分阶段交付计划 |
-| [12-multi-platform.md](12-multi-platform.md) | §12 多平台数据源架构 — Garmin/Coros Provider 设计 |
+| [12-multi-platform.md](12-multi-platform.md) | §12 多平台数据源架构 — Garmin/Coros/Huawei 已实现；Strava OAuth 活动同步 Proposed |
 | [10-risks.md](10-risks.md) | §10 风险与注意事项 |
 | [11-garmy-migration.md](11-garmy-migration.md) | §11 garmy 2.0 适配备忘 — API 差异、Schema、实现决策 |
 

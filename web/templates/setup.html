@@ -262,11 +262,11 @@ p.desc{font-size:14px;color:#777;margin-bottom:28px;line-height:1.5}
           <label>目标距离</label>
           <select id="goalDist"><option value="5k">5K</option><option value="10k">10K</option><option value="hm">半马</option><option value="marathon" selected>全马</option></select>
         </div>
-        <div class="form-group"><label>目标成绩</label><input id="goalTime" placeholder="H:MM:SS"></div>
+        <div class="form-group"><label>目标意图</label><select id="goalIntent"><option value="completion">安全完赛</option><option value="performance" selected>成绩突破</option></select></div>
+        <div class="form-group"><label>目标成绩（成绩突破必填）</label><input id="goalTime" placeholder="H:MM:SS"></div>
       </div>
       <div class="form-row">
         <div class="form-group"><label>目标日期</label><input id="goalDate" type="date"></div>
-        <div class="form-group"><label>周跑量目标 (km)</label><input id="goalKm" type="number" placeholder="50" min="10" max="200"></div>
       </div>
 
       <p class="section-heading">⚙️ 训练偏好</p>
@@ -510,9 +510,9 @@ async function doCoaching(){
         body:JSON.stringify({
           name:goalName,
           distance:$('goalDist').value,
+          goal_intent:$('goalIntent').value,
           target_time:$('goalTime').value||null,
           target_date:$('goalDate').value||null,
-          weekly_km:$('goalKm').value||null
         })});
       const goalData = await goalResponse.json();
       if(goalData.status!=='ok') throw new Error(goalData.message||'目标保存失败');

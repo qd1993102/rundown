@@ -68,19 +68,32 @@ graph TD
 graph TD
     D1["neurun daily"]
     D2["1. 确定 target_date<br/>(默认今天, --date 可指定)"]
-    D3["2. 连接 SQLite (只读)"]
-    D4["3. 查询昨日活动<br/>db.get_activities(yesterday)"]
-    D5["4. 查询昨夜睡眠<br/>db.get_health_metrics(today) → sleep"]
-    D6["5. 查询今晨指标<br/>resting_hr, hrv, body_battery, readiness"]
-    D7["6. 计算训练负荷<br/>acute/chronic load, ACWR"]
-    D8["7. 7日趋势分析<br/>各指标 slopes + direction"]
-    D9["8. 异常检测<br/>规则引擎扫描"]
-    D10["9. 生成训练建议<br/>结合偏好 + 目标 + 状态"]
-    D11["10. 渲染 + 写入<br/>auto/daily/YYYY-MM-DD.md"]
-    D12["11. 终端 rich 输出<br/>日报摘要面板"]
+    D3["2. DailyReportReadinessService<br/>检查活动/健康/7d/28d 覆盖"]
+    D3A{"ready?"}
+    D3B["blocked → 结构化错误<br/>不写文件、不调用 AI"]
+    D3C["limited → 默认拒绝<br/>仅显式 mode=limited 继续"]
+    D4["3. 按门禁读取活动与可用健康数据"]
+    D5["4. 只计算覆盖充分的<br/>睡眠/恢复/趋势/ACWR"]
+    D6["5. 写入 readiness 快照<br/>data_as_of + finality + omitted"]
+    D7["6. 完整报告调用 AI<br/>受限版不推测缺失维度"]
+    D8["7. 渲染 Markdown/HTML/PNG<br/>持续显示完整性"]
 
-    D1 --> D2 --> D3 --> D4 --> D5 --> D6 --> D7 --> D8 --> D9 --> D10 --> D11 --> D12
+    D1 --> D2 --> D3 --> D3A
+    D3A -->|blocked| D3B
+    D3A -->|limited| D3C
+    D3A -->|ready| D4
+    D3C -->|用户显式确认| D4
+    D4 --> D5 --> D6 --> D7 --> D8
 ```
+
+Web 的阻断/受限状态把报告日期编码到 `/sync?date=YYYY-MM-DD#single-sync`。同步页校验日期不晚于
+今天后，将其写入单日同步控件、把日历切换到对应月份并定位到单日同步卡；任务完成后的“前往日报页”
+使用 `/reports?tab=daily&date=YYYY-MM-DD` 返回同一生成日期。日期参数只控制页面预填，不自动提交同步。
+单日卡以 `#singleDate` 作为唯一日期真相源，`#singleDateLabel`、`#singleDateHint`、日历 `.selected`
+状态和前一天 / 后一天 / 昨天 / 今天操作都只读写同一值；`#singleDate` 是用户可见的精确修改字段，
+不能用透明覆盖层伪装为按钮。当前日历月份写入 `calendarDaysByDate`，因此目标摘要可显示同一日期的既有
+同步状态和活动计数；改变到其他月份时先更新 `calendarCursor` 后重新读取日历。日期输入最大值为本地今天，
+前端不以样式隐藏日期语义或允许未来日期绕过同步校验。
 
 ### 5.4 memory 子命令执行流程
 
@@ -241,7 +254,7 @@ Coros 活动查询仍按范围分页访问 Training Hub；每一页成功返回�
 ```mermaid
 sequenceDiagram
     actor User as 用户
-    participant Web as chat.html
+    participant Web as dashboard.html
     participant Canvas as Browser Canvas
     participant OS as 系统分享或下载
 

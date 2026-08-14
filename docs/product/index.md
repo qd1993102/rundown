@@ -7,8 +7,9 @@
 
 | 产品文档 | 配套技术设计 | 状态 |
 |---|---|---|
-| [data-source-sync.md](data-source-sync.md) — Garmin、Coros、Huawei 绑定、区域一致性与数据同步 | [12-multi-platform.md](../design/12-multi-platform.md) | 已确认并实现；Coros 真实账号与 ECS 验收待完成 |
-| [training-experience.md](training-experience.md) — 训练主界面、训练方案、执行反馈与交互式调整 | [training-system.md](../design/training-system.md) | 产品方向已确认，尚未实现 |
+| [data-source-sync.md](data-source-sync.md) — Garmin、Coros、Huawei 绑定与同步；Strava OAuth 活动同步（Proposed） | [12-multi-platform.md](../design/12-multi-platform.md) | 三平台已确认并实现；Strava v1 待产品确认 |
+| [daily-report.md](daily-report.md) — 报告中心、日报、周复盘、数据完整性、目标进程与下一阶段建议 | [memory-system.md](../design/memory-system.md) | 报告主线、日报、独立周复盘与报告建议到训练待确认提案的接口/深链已实现；完整自动衔接与真实 Provider 补同步链路待验收 |
+| [training-experience.md](training-experience.md) — 训练方案、处方执行、执行反馈与交互式调整 | [training-system.md](../design/training-system.md) | 报告结论落地的边界已确认；训练方案、Workout Steps v2、个体化动态配速 v1、报告建议待确认提案入口与 `goal_intent` API/存储同步已实现；真实 Provider 逐段执行匹配、真实训练数据验收及配速后续能力待完成 |
 | [contact-community.md](contact-community.md) — 站内联系我们入口与内测交流群二维码 | [contact-community.md](../design/contact-community.md) | 已确认并实现 |
 
 ## 维护规则

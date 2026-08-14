@@ -173,6 +173,22 @@ class GarminActivity(ActivityProvider):
         except Exception:
             return {}
 
+    def fetch_activity_splits(self, activity_id: str) -> list[dict[str, Any]]:
+        """拉取 Garmin 官方分段（/splits → lapDTOs，可信）。
+
+        lapDTOs 距离/时长合计与 summary 一致（替代 detail.splitSummaries 的
+        ×2 异常数据）；仅跑步活动由同步层调用。
+        """
+        api = self._get_api()
+        try:
+            resp = api.connectapi(
+                f"/activity-service/activity/{activity_id}/splits"
+            )
+        except Exception:
+            return []
+        laps = (resp or {}).get("lapDTOs") if isinstance(resp, dict) else None
+        return laps if isinstance(laps, list) else []
+
 
 class GarminHealth(HealthProvider):
     """Garmin 健康数据（通过 SyncManager 存储，从 SQLite 读取）。"""

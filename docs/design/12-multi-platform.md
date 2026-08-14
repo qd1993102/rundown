@@ -1,7 +1,7 @@
 # 设计方案 — 12. 多平台数据源架构
 
-> 属于 [设计方案索引](../design.md) · 版本 v3.4 · 2026-07-29
-> Coros 双认证与默认自动鉴权状态：已实现并通过本地测试，真实账号与 ECS 验收待完成
+> 属于 [设计方案索引](index.md) · 版本 v3.6 · 2026-08-14
+> Coros 双认证、原始活动详情保留、Provider Adapter 单位归一化、Hz 聚合与存量摘要重建已实现；本地真实详情和持久化摘要已验收，线上 Provider/ECS 验收待发布后完成；Strava OAuth 活动同步为 Proposed，尚未实现
 
 ---
 
@@ -9,7 +9,7 @@
 
 ### 12.1 设计目标
 
-neurun 支持 Garmin、Coros 和 Huawei 三种运动平台，通过统一的 `DataProvider` 接口切换。
+neurun 支持 Garmin、Coros、Huawei 和 Strava 四种运动平台，通过统一的 `DataProvider` 接口切换。
 用户只需在 `.env` 中修改一行即可切换数据源：
 
 ```bash
@@ -28,21 +28,25 @@ graph TD
         GARMIN["GarminProvider<br/>(garmy + garmy 2.0)"]
         COROS["CorosProvider<br/>(coros-mcp)"]
         HUAWEI["HuaweiProvider<br/>(CrewPals AT)"]
+        STRAVA["StravaProvider<br/>(official API v3)"]
     end
 
     subgraph Auth
         GA["GarminAuth<br/>OAuth + MFA"]
         CA["CorosAuth<br/>email/phone + MD5<br/>+ mobile encrypt"]
         HA["HuaweiAuth<br/>per-user GROUP_PALS_TOKEN<br/>CrewPals 获取并缓存 AT"]
+        SA["StravaAuth<br/>OAuth 2.0 + refresh token<br/>official consent callback"]
     end
 
     subgraph Data
         G_ACT["GarminActivity<br/>50+ 字段<br/>GPS + 分段配速"]
         C_ACT["CorosActivity<br/>activity_id/name/type<br/>duration/distance/hr/load"]
         H_ACT["HuaweiActivity<br/>activityRecords<br/>列表 + 原始详情"]
+        S_ACT["StravaActivity<br/>activities + details + laps/streams"]
         G_HEALTH["GarminHealth<br/>睡眠/HRV/RHR<br/>压力/Body Battery<br/>训练准备/步数"]
         C_HEALTH["CorosHealth<br/>analyse/query → RHR<br/>dashboard/query → HRV<br/>Mobile API → 睡眠"]
         H_HEALTH["HuaweiHealth<br/>sampleSets<br/>待字段口径确认"]
+        S_HEALTH["StravaHealth<br/>unavailable in v1"]
     end
 
     CLI --> MEMORY
@@ -56,6 +60,8 @@ graph TD
     COROS --> CA --> C_HEALTH
     HUAWEI --> HA --> H_ACT
     HA --> H_HEALTH
+    STRAVA --> SA --> S_ACT
+    SA --> S_HEALTH
 ```
 
 ### 12.3 数据可用性对比
@@ -70,41 +76,41 @@ graph TD
 
 #### 12.3.1 活动数据标准（`ActivityData`）
 
-| 统一字段 | 类型 / 标准单位 | Garmin | Coros | Huawei | 对齐规则 |
+| 统一字段 | 类型 / 标准单位 | Garmin | Coros | Huawei | Strava (Proposed) | 对齐规则 |
 |----------|-----------------|:------:|:-----:|:------:|----------|
-| `activity_id` | string | ✅ | ✅ | ✅ | 保留平台原始 ID，跨平台唯一键使用 `provider + activity_id` |
-| `activity_name` | string | ✅ | ✅ | ✅ | 空值使用通用运动名称；只能作为训练内容识别的辅助证据 |
-| `activity_type` | enum string | ✅ | ◐ | ◐ | Huawei 保留 API 原始类型；原始记录同时放入 `extra` |
-| `start_time` | ISO 8601 + 时区 | ◐ | ◐ | ✅ | Huawei 毫秒时间戳转换为 UTC ISO 8601 |
-| `duration_seconds` | integer, s | ✅ | ✅ | ✅ | Coros 优先使用排除暂停的 `workoutTime`，缺失时回退 `totalTime`；Huawei 无 duration 时以结束减开始计算 |
-| `distance_meters` | float, m | ✅ | ✅ | ✅ | 无距离的运动使用 `0`，未知值不得伪装成实测 `0` |
-| `avg_heart_rate` | integer, bpm / null | ✅ | ✅ | ✅ | 无样本或无权限时为 `null` |
-| `max_heart_rate` | integer, bpm / null | ✅ | △ | ✅ | Coros 当前 summary 未映射，可能存在于详情数据 |
-| `training_load` | float / 平台原值 | ✅ | ✅ | ◐ | 有返回值时映射；各平台算法不可直接横向比较 |
-| `calories` | integer, kcal | ✅ | ✅ | ✅ | 统一为活动消耗；不可与全天总消耗混用 |
-| `elevation_gain` | float, m | ✅ | ✅ | ✅ | 统一为累计爬升，不使用起终点海拔差替代 |
-| `has_gps` | boolean | △ | △ | ◐ | Huawei 根据轨迹或定位字段判断，受详情权限影响 |
-| 活动详情 | provider raw dict | ✅ 丰富 | ✅ 基础 | ✅ raw | Huawei 通过 `activityRecordId` 查询并保留原始详情 |
+| `activity_id` | string | ✅ | ✅ | ✅ | ✅ | 保留平台原始 ID，跨平台唯一键使用 `provider + activity_id` |
+| `activity_name` | string | ✅ | ✅ | ✅ | ✅ | 空值使用通用运动名称；只能作为训练内容识别的辅助证据 |
+| `activity_type` | enum string | ✅ | ◐ | ◐ | ✅ `sport_type` | Huawei 保留 API 原始类型；原始记录同时放入 `extra` |
+| `start_time` | ISO 8601 + 时区 | ◐ | ◐ | ✅ | ✅ | Huawei 毫秒时间戳转换为 UTC ISO 8601 |
+| `duration_seconds` | integer, s | ✅ | ✅ | ✅ | ✅ `moving_time` | Coros 优先使用排除暂停的 `workoutTime`，缺失时回退 `totalTime`；Strava `elapsed_time` 保留在 `extra` |
+| `distance_meters` | float, m | ✅ | ✅ | ✅ | ✅ | 无距离的运动使用 `0`，未知值不得伪装成实测 `0` |
+| `avg_heart_rate` | integer, bpm / null | ✅ | ✅ | ✅ | ✅ | 无样本或无权限时为 `null` |
+| `max_heart_rate` | integer, bpm / null | ✅ | ✅ | ✅ | ✅ | Coros 活动列表返回 `maxHr` 时映射；没有样本时保持 `null` |
+| `training_load` | float / 平台原值 | ✅ | ✅ | ◐ | △ `suffer_score` | 有返回值时映射；各平台算法不可直接横向比较 |
+| `calories` | integer, kcal | ✅ | ✅ | ✅ | ✅ | 统一为活动消耗；不可与全天总消耗混用 |
+| `elevation_gain` | float, m | ✅ | ✅ | ✅ | ✅ `total_elevation_gain` | 统一为累计爬升，不使用起终点海拔差替代 |
+| `has_gps` | boolean | △ | △ | ◐ | ◐ | Huawei 根据轨迹或定位字段判断，受详情权限影响 |
+| 活动详情 | provider raw dict | ✅ 丰富 | ✅ 基础 | ✅ raw | ✅ details/laps/streams | Huawei 通过 `activityRecordId` 查询并保留原始详情 |
 
 #### 12.3.2 每日健康数据标准（`DailyHealth`）
 
-| 统一字段 | 类型 / 标准单位 | Garmin | Coros | Huawei | 对齐规则 |
+| 统一字段 | 类型 / 标准单位 | Garmin | Coros | Huawei | Strava (Proposed) | 对齐规则 |
 |----------|-----------------|:------:|:-----:|:------:|----------|
 | `metric_date` | 本地自然日 | ✅ | ✅ | 🚧 | 以用户时区切日，禁止直接按 UTC 日期聚合 |
-| `sleep_duration_hours` | float, h | ✅ | ✅ | 🚧 | Coros 使用主睡眠 `totalSleepTime`；小睡分钟数保留在 `extra` |
-| `deep_sleep_hours` / `deep_sleep_pct` | h / % | ✅ | ✅ | 🚧 | Coros `deepTime` 转换为小时，百分比以总睡眠为分母 |
-| `rem_sleep_hours` / `rem_sleep_pct` | h / % | ✅ | ✅ | 🚧 | Coros `eyeTime` 作为 REM；平台无 REM 分类时保持未知，不推算 |
-| `resting_heart_rate` | integer, bpm / null | ✅ | ✅ | 🚧 | 使用平台每日静息心率，不用活动最低心率替代 |
-| `hrv_last_night_avg` | float, ms / null | ✅ | ✅ | 🚧 | 统一表达昨夜平均 HRV；需在 `extra` 标注 RMSSD/SDNN 口径 |
-| `hrv_weekly_avg` | float, ms / null | ✅ | ◐ | 🚧 | Coros 当前以当日睡眠 HRV 同值填充，不能视为真实 7 日均值 |
-| `hrv_status` | enum string | ✅ | ◐ | 🚧 | Coros 当前固定为 `balanced`，仅为占位，不参与跨平台判断 |
-| `avg_stress_level` | integer / null | ✅ | ◐ | 🚧 | Coros 使用 `tiredRate` 近似映射，语义不等同 Garmin stress |
-| `body_battery_high/low` | integer / null | ✅ | — | 🚧 | Garmin 专有概念，不强行映射其他平台恢复分数 |
-| `total_steps` | integer, steps | ✅ | — | 🚧 | Coros 当前写入 `0` 表示未提供，不代表真实零步 |
-| `total_distance_meters` | float, m | ✅ | ✅ | 🚧 | 每日总距离，不与单次活动距离混用 |
-| `total_calories` | integer, kcal | ✅ | — | 🚧 | 全天总消耗，包含基础与活动消耗 |
-| `active_calories` | integer, kcal | ✅ | — | 🚧 | 仅活动消耗 |
-| `training_readiness_score/level` | score / label | ✅ | — | 🚧 | Garmin 专有口径；跨平台恢复判断应使用独立派生模型 |
+| `sleep_duration_hours` | float, h | ✅ | ✅ | 🚧 | — | Coros 使用主睡眠 `totalSleepTime`；小睡分钟数保留在 `extra` |
+| `deep_sleep_hours` / `deep_sleep_pct` | h / % | ✅ | ✅ | 🚧 | — | Coros `deepTime` 转换为小时，百分比以总睡眠为分母 |
+| `rem_sleep_hours` / `rem_sleep_pct` | h / % | ✅ | ✅ | 🚧 | — | Coros `eyeTime` 作为 REM；平台无 REM 分类时保持未知，不推算 |
+| `resting_heart_rate` | integer, bpm / null | ✅ | ✅ | 🚧 | — | 使用平台每日静息心率，不用活动最低心率替代 |
+| `hrv_last_night_avg` | float, ms / null | ✅ | ✅ | 🚧 | — | 统一表达昨夜平均 HRV；需在 `extra` 标注 RMSSD/SDNN 口径 |
+| `hrv_weekly_avg` | float, ms / null | ✅ | ◐ | 🚧 | — | Coros 当前以当日睡眠 HRV 同值填充，不能视为真实 7 日均值 |
+| `hrv_status` | enum string | ✅ | ◐ | 🚧 | — | Coros 当前固定为 `balanced`，仅为占位，不参与跨平台判断 |
+| `avg_stress_level` | integer / null | ✅ | ◐ | 🚧 | — | Coros 使用 `tiredRate` 近似映射，语义不等同 Garmin stress |
+| `body_battery_high/low` | integer / null | ✅ | — | 🚧 | — | Garmin 专有概念，不强行映射其他平台恢复分数 |
+| `total_steps` | integer, steps | ✅ | — | 🚧 | — | Coros 当前写入 `0` 表示未提供，不代表真实零步 |
+| `total_distance_meters` | float, m | ✅ | ✅ | 🚧 | — | 每日总距离，不与单次活动距离混用 |
+| `total_calories` | integer, kcal | ✅ | — | 🚧 | — | 全天总消耗，包含基础与活动消耗 |
+| `active_calories` | integer, kcal | ✅ | — | 🚧 | — | 仅活动消耗 |
+| `training_readiness_score/level` | score / label | ✅ | — | 🚧 | — | Garmin 专有口径；跨平台恢复判断应使用独立派生模型 |
 
 #### 12.3.3 缺失值与跨平台比较规范
 
@@ -128,6 +134,24 @@ Provider 层只提供可追溯事实，不输出 neurun 的有氧、节奏、间
 - 数据质量：`complete`、`partial`、`unavailable`，以及 `not_provided`、`not_authorized`、`not_mapped`、`request_failed` 等原因；
 - 来源元数据：Provider、原始字段、原始单位和详情获取时间。
 
+Coros 详情采用显式 Provider-normalizer，不能直接复用 Garmin 字段单位：
+
+| Coros 原始字段 | 原始口径 | 统一字段 |
+|---|---|---|
+| `summary.distance` / `lapItem.distance` | `1/100 m` | 除以 100 → `distance_m` |
+| `summary.workoutTime` / `summary.totalTime` | `1/100 s` | 除以 100 → moving / elapsed seconds |
+| `summary.calories` / 活动 `calorie` | `1/1000 kcal` | 除以 1000 → kcal；`ActivityData` 按整数 kcal 取整 |
+| `lapItem.time` / `lapItem.totalLength` | `1/100 s` | 除以 100 → `duration_s` |
+| `lapItem.avgPace` | `sec/km` | 原值 → `pace_sec_per_km` |
+| `lapItem.avgHr` | `bpm` | 原值 → `avg_hr` |
+| `lapItem.avgCadence` | `spm` | 原值 → `avg_cadence` |
+| `lapItem.avgStrideLength` | `cm` | 原值 → `stride_length_cm` |
+
+`lapList[].lapItemList[]` 是首选叶子分段，父 lap 只作分组/校验；父 lap 无有效子项时才回退父 lap。
+父子不得同时累计。去重与单位归一化后，分段距离合计 / 活动汇总距离必须处于 `[0.85, 1.15]`，
+否则标记 `quantity_unreliable`，禁止输出分段距离、时长和每公里结论。原始 `frequencyList` 保留在
+`detail_json` 但尚未经过字段、单位和样本有效性归一化时，只能标记 `hz_unparsed`；不得据此产生 L2。
+
 `0` 只能表达平台确认的真实零值；未知爬升、未知心率和未知分段必须使用空值及原因。活动汇总先到、详情后到时采用幂等补齐，并使对应派生分析失效或重算。不得为跨平台对齐而合成不存在的分段，也不得用起终点海拔差替代累计爬升。
 
 ### 12.4 Provider 切换
@@ -147,6 +171,13 @@ NEURUN_PASSWORD=xxx
 NEURUN_PROVIDER=huawei
 GROUP_PALS_TOKEN=xxx
 HUAWEI_TOKEN_DIR=./data/user-a/huawei-tokens
+
+# Strava（Proposed；Web OAuth 不读取账号密码）
+NEURUN_PROVIDER=strava
+NEURUN_STRAVA_CLIENT_ID=12345
+NEURUN_STRAVA_CLIENT_SECRET=server-only-secret
+NEURUN_STRAVA_REDIRECT_URI=https://example.com/api/strava/callback
+NEURUN_STRAVA_WEBHOOK_VERIFY_TOKEN=server-only-random-value
 ```
 
 每个 Provider 独立管理自己的数据库和 Token。切换到不同目录 + 不同 `.env` 即可隔离数据。
@@ -176,7 +207,7 @@ JSON，而是原子写入该用户的 `huawei-tokens/group-pals-token`，目录�
 文件权限为 `0600`。后续请求和进程重启从该文件恢复，服务级 `GROUP_PALS_TOKEN`
 只作为单用户 CLI 或旧部署的兼容回退，不能覆盖已经存在的用户级凭证。
 
-### 12.4.1 三平台认证初始化契约
+### 12.4.1 四平台认证初始化契约
 
 所有 Provider 必须遵循相同顺序：
 
@@ -200,7 +231,77 @@ Garmin `provider.authenticate()` 必须先区分 `is_authenticated` 与 `needs_r
 空对象不能直接证明 Token 失效；Provider 应调用可保留原始异常的 profile 请求，401/403 才归类
 认证失效，超时、429、5xx 和响应异常均保持可重试。
 
-### 12.5 Huawei 数据 API 接入细节
+### 12.5 Strava OAuth、活动和 webhook 设计（Proposed）
+
+#### 12.5.1 边界与配置
+
+Strava v1 只服务 Web 中已经登录 neurun 的个人用户，不接受 Strava 密码、不实现 CLI 交互授权，
+也不从 `.env` 读取个人 access token。服务端全局配置为 `NEURUN_STRAVA_CLIENT_ID`、
+`NEURUN_STRAVA_CLIENT_SECRET`、`NEURUN_STRAVA_REDIRECT_URI` 与
+`NEURUN_STRAVA_WEBHOOK_VERIFY_TOKEN`；后三者只允许由部署环境注入，不能进入仓库、README、
+用户 JSON、日志、错误响应或 MCP 输出。`REDIRECT_URI` 必须属于 Strava App 已登记的 callback
+domain；生产 webhook callback 必须是可被 Strava 访问的 HTTPS 地址。
+
+新增 `StravaProvider`，实现现有 `DataProvider`、`ActivityProvider` 与 `HealthProvider`：
+
+- `StravaAuth` 从 `data/<api_key>/tokens/strava-auth.json` 读取 access token、refresh token、
+  `expires_at`、athlete ID 与实际 grants，目录 `0700`、文件 `0600`；`authenticate()` 在过期或
+  一小时内过期时通过官方 token 端点刷新，并用原子写替换响应中的 **全部** token 字段。
+- `StravaActivities.fetch_activities(start, end)` 调用 athlete activities 分页接口，按 `after/before`
+  拉取并在空页停止；`fetch_activity_detail(id)` 获取详情、laps 和所需 streams。详情请求受限流预算
+  控制，单条失败不会把已成功的汇总变成失败。
+- `StravaHealth` 明确返回不支持，而不是创建零值 `DailyHealth`。readiness 层以能力矩阵得到
+  `unavailable`，避免报告将 Strava 用户误判成健康同步缺失或已经恢复。
+
+`UserRecord` 增加非敏感 `strava_athlete_id`（字符串）与 `strava_scope`（规范化 scope 列表），仅用于
+事件路由和连接状态展示；token 不放入用户记录。已存在的用户 JSON 缺字段时按空值兼容，不做强制
+迁移。同步持久化仍以 `provider + activity_id` 为唯一来源键，禁止用 athlete ID 代替当前 neurun
+用户目录边界。
+
+#### 12.5.2 Web OAuth 合同
+
+| 路由 | 认证与输入 | 成功行为 | 失败与安全边界 |
+|---|---|---|---|
+| `GET /api/strava/authorize` | 必须是未绑定或同平台重新绑定的 neurun 会话 | 创建 10 分钟有效、一次性随机 state 并 302 到 Strava `oauth/authorize`，请求 `activity:read_all` | 不透露 client secret；其他已绑定 Provider 返回 409 |
+| `GET /api/strava/callback` | `code`、`scope`、`state` 和原 neurun 会话均须有效 | 交换 token，核对实际 scope 与 athlete ID，原子写 `strava-auth.json`，更新 `UserRecord(provider=strava, token_status=active)` 后 303 到同步页 | 任一校验失败消费 state、删除临时状态且返回设置页；不保留 authorization code |
+| `GET /api/strava/webhook` | Strava 验证 query 的 mode、verify token、challenge | verify token 相等时回显 `hub.challenge` | 不匹配返回 403，不读取用户数据 |
+| `POST /api/strava/webhook` | 仅接受本应用 subscription ID 与合法最小事件字段 | 在两秒内持久化幂等事件并返回 200；后台消费 | 不在请求内访问 Strava、写 SQLite 或调用 AI；未知 athlete / 重复事件安全忽略并审计 |
+| `POST /api/strava/disconnect` | 当前 active Strava 用户的 neurun 会话 | 调用官方 revoke、删除 OAuth 文件、置 `expired`，让用户选择保留或删除本地活动 | 远端已撤销/网络错误不得让 token 继续可用；删除活动必须显式确认且仅限当前用户 |
+
+state 存在 `data/<api_key>/tokens/strava-oauth-state.json`，只保存随机值、API key、创建/过期时间与
+回跳目的地，使用私有权限和原子“读取后删除”。callback 必须同时核验 state 所属 api_key 与 Cookie
+会话；state 不可复用、不可跨用户、不可作为 URL 中的用户身份。Token 交换后必须以返回 athlete ID
+为实际身份，刷新时 athlete ID 发生变化则拒绝并进入 `expired`，不覆盖既有用户凭据。
+
+#### 12.5.3 Webhook、隐私和限流状态机
+
+一个 Strava 应用只建立一个全局 webhook subscription，订阅创建/验证由受控部署命令完成，而不是每个
+用户绑定时创建。事件处理按 `(subscription_id, object_type, object_id, aspect_type, event_time)` 去重：
+
+1. athlete `authorized=false`：原子删除 OAuth 文件并将该 athlete 对应用户置为 `expired`；不访问
+   Strava。用户数据是否删除由断开流程的显式选择决定。
+2. activity `create` / `update`：向现有 `SyncCoordinator` 提交只处理该 `object_id` 的任务；任务读取
+   当前 token 后补齐详情。隐私变化时按当前 scope 和详情响应决定保留、更新或删除本地活动。
+3. activity `delete`：仅按 `provider=strava + activity_id + 当前 api_key` 删除或标为不可用，绝不以
+   webhook 的活动 ID 做跨用户删除。
+4. 429、超时和 5xx：保持 `active` 并记录可重试任务；从 `X-RateLimit-*` 与
+   `X-ReadRateLimit-*` 计算退避与全量回填预算。401 或刷新 token 明确失败才转 `expired`。
+
+事件端点只确认接收；持久化队列消费、Provider 获取和 SQLite 写入全部复用现有同步资源生命周期，确保
+慢上游不会阻塞健康检查。由于 webhook 可以重复或乱序，活动写入、删除和 token 删除均须幂等，并在
+每次执行前再次确认当前 `UserRecord.strava_athlete_id` 与 token 文件身份一致。
+
+#### 12.5.4 测试与上线验收
+
+- Provider 单测：Token 未过期复用、临界过期刷新、refresh token 轮换的原子替换、401 与 429/5xx
+  分类、分页边界、`moving_time`/`elapsed_time`、详情/laps/streams 映射以及健康不支持语义。
+- Web 单测：OAuth state 生成、过期/重放/跨用户 callback 拒绝、scope 不足不绑定、token 不进入用户
+  JSON 或响应、重绑边界、webhook verify、两秒 ACK、重复/乱序/未知 athlete 和解除授权。
+- 集成验收：Strava sandbox/真实个人账号完成同意、刷新、全量回填、Webhook create/update/delete/
+  deauthorize、限流退避、断开；检查官方品牌资产和“View on Strava”归因。通过本地 pytest 不等于
+  Strava App 审核、真实 webhook 可达性或生产部署验收。
+
+### 12.6 Huawei 数据 API 接入细节
 
 通过 Huawei 云端接口的真实参数校验确认：
 
@@ -213,7 +314,7 @@ Garmin `provider.authenticate()` 必须先区分 `is_authenticated` 与 `needs_r
 Huawei API 返回字段存在嵌套差异，Provider 对 ID、名称、类型、起止时间、距离、心率、
 卡路里和爬升使用兼容映射，并将完整原始记录保存在 `ActivityData.extra.raw`。
 
-### 12.6 Coros API 接入细节
+### 12.7 Coros API 接入细节
 
 基于 `coros-mcp` 库（MIT 协议，GitHub: cygnusb/coros-mcp）：
 
@@ -238,6 +339,10 @@ Huawei API 返回字段存在嵌套差异，Provider 对 ID、名称、类型、
   `duration_seconds`，因此重新同步即可修正旧数据，无需删除数据库
 - **HRV 数据**：GET `/dashboard/query`，返回 7 天 HRV
 - **每日指标**：GET `/analyse/query`，返回 RHR/距离/时长/负荷/VO2max
+- **活动详情**：POST `/activity/detail/query`，完整 `data` 原样保存在 `detail_json`，包含
+  `lapList`、`frequencyList`、`graphList` 与 `gpsLightDuration`。原样保存是可回放边界，不是
+  分析完成边界；`frequencyList` 只有经 Provider-normalizer 产出标准秒、米、sec/km、bpm、spm
+  样本并通过质量门禁后才能进入 L2 聚合。
 - **运动认证入口**：`/setup?rebind=coros&scope=training` 只显示 Training Hub 账号、密码和区域。
   账号允许邮箱或手机号；区域使用 `cn/eu/us/asia`，首次默认 `cn`，用户显式选择其他区域时按其
   选择提交，重新授权从现有 Token 预填。不得再通过账号是否为纯数字推断
@@ -277,10 +382,13 @@ Huawei API 返回字段存在嵌套差异，Provider 对 ID、名称、类型、
   必须保持独立降级，不能让接口变化阻断活动同步
 - Mobile 请求需要携带访问 token；应用日志和反向代理不得记录完整查询参数或凭据
 - 身体电量和训练准备仅 Garmin 已映射；Coros `tiredRate` 只近似放入压力字段
+- Coros 真实详情存在与 Garmin 不同的百分之一米/百分之一秒字段和父子 lap 重叠；在 normalizer
+  和存量重算完成前，已有 Coros `activity_splits`/`activity_summary_facts` 可能是 L1 形态但量值
+  不可信，消费端必须按 gap 降级，不能用 granularity 标签替代字段质量检查
 
-### 12.7 Coros 双认证与自动鉴权
+### 12.8 Coros 双认证与自动鉴权
 
-#### 12.7.1 当前缺口与边界
+#### 12.8.1 当前缺口与边界
 
 `coros-mcp.StoredAuth` 同时承载 Training Hub 与 Mobile 字段，但两个认证域使用不同端点、Token 和
 重放材料。Training Hub 没有 Refresh Token，只能在 `result=1019` 后重放登录；Mobile 可以重放
@@ -289,7 +397,7 @@ Huawei API 返回字段存在嵌套差异，Provider 对 ID、名称、类型、
 两个认证域都只处理明确的认证失效，不按 Token 年龄猜测，不把超时、429、5xx 或响应格式异常
 转换为重新登录。自动鉴权选项在安全存储可用时默认开启，但仍由用户在对应表单提交时确认。
 
-#### 12.7.2 凭据模型与密钥边界
+#### 12.8.2 凭据模型与密钥边界
 
 - 两个新认证端点都接受 `auto_refresh: boolean`，前端在服务端报告
   `coros_secure_credential_storage=true` 时默认传 `true`；用户可在提交前取消。存量账号不静默生成
@@ -319,7 +427,7 @@ Huawei API 返回字段存在嵌套差异，Provider 对 ID、名称、类型、
 - “我的”分别展示 `training_auto_refresh_enabled` 与 `sleep_auto_refresh_enabled`。幂等删除接口为
   `DELETE /api/coros/auth/{scope}/refresh-credential`；只删除对应密文，不删除当前 Access Token。
 
-#### 12.7.3 自动重登状态机
+#### 12.8.3 自动重登状态机
 
 1. Training Hub 请求使用 `StoredAuth.access_token`；Mobile 睡眠请求使用
    `StoredAuth.mobile_access_token`，两者分别分类错误。
@@ -340,7 +448,7 @@ Training Hub 重登与 Mobile 睡眠刷新保持两条独立状态机、锁和�
 改变 `has_sleep_access()`；Mobile 失败也不得删除可用的 Training Hub 重登凭据或把运动连接标记
 为失效。
 
-#### 12.7.4 实现与测试影响
+#### 12.8.4 实现与测试影响
 
 - `CorosReloginCredentialStore` 保存 Training Hub 重放对象，`CorosMobileCredentialStore` 保存
   Mobile 重放对象；`CorosAuth` 只在对应刷新调用中取得一次性内存对象。
@@ -359,3 +467,8 @@ Training Hub 重登与 Mobile 睡眠刷新保持两条独立状态机、锁和�
   刷新、分域并发去重、重试上限、独立关闭，以及 Training Hub/Mobile 状态互不污染。
 
 ---
+# Provider Adapter 边界
+
+第三方平台只在 `src/providers/normalization.py` 注册原始详情到 canonical activity detail
+的转换。每个平台负责字段别名、单位、分段层级和高频采样归一化；存储后的分段、
+session-summary、日报、周报和训练草稿只消费 canonical 字段，不得按 Provider 再适配。

@@ -202,6 +202,91 @@ def test_activity_detail_resync_replaces_splits_instead_of_duplicating(tmp_path)
     assert count == 2
 
 
+def test_activity_detail_resync_replaces_versioned_summary_facts(tmp_path):
+    from sqlalchemy import text
+
+    from src.activity import ensure_tables, get_activity_summary_facts, store_activity_detail
+    from src.config import Config
+    from src.storage import Storage
+
+    storage = Storage(Config(db_path=str(tmp_path / "data.db")))
+    ensure_tables(storage)
+    session = storage.db.get_session()
+    session.execute(text("""
+        INSERT INTO activities (user_id, activity_id, activity_date)
+        VALUES (1, 'summary-1', '2026-07-29')
+    """))
+    session.commit()
+    session.close()
+
+    detail = {"summaryDTO": {"duration": 2400, "distance": 6000}, "splitSummaries": [
+        {"distance": 1000, "duration": 240},
+    ]}
+    assert store_activity_detail(storage, 1, "summary-1", detail)
+    assert store_activity_detail(storage, 1, "summary-1", detail)
+    facts = get_activity_summary_facts(storage, "summary-1")
+    assert facts["granularity"] == "L1"
+    session = storage.db.get_session()
+    assert session.execute(text(
+        "SELECT COUNT(*) FROM activity_summary_facts WHERE activity_id = 'summary-1'"
+    )).scalar_one() == 1
+    session.close()
+
+
+def test_store_activity_detail_handles_legacy_summary_version_column(tmp_path):
+    # 存量库可能未被迁移删掉 summary_version NOT NULL 列：store 必须按列兼容，
+    # 不能因 NOT NULL 约束让摘要重建失败（否则 lapDTOs 重拉后 summary 无法更新）。
+    from sqlalchemy import text
+
+    from src.activity import get_activity_summary_facts, store_activity_detail
+    from src.config import Config
+    from src.storage import Storage
+
+    storage = Storage(Config(db_path=str(tmp_path / "data.db")))
+    # 手工建旧结构表（带 summary_version NOT NULL），模拟迁移未执行
+    session = storage.db.get_session()
+    session.execute(text("""
+        CREATE TABLE activity_details (
+            activity_id VARCHAR PRIMARY KEY,
+            user_id INTEGER,
+            detail_json TEXT
+        )
+    """))
+    session.execute(text("""
+        CREATE TABLE activity_splits (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            activity_id VARCHAR, split_index INTEGER,
+            split_type VARCHAR, distance_m FLOAT, duration_sec FLOAT,
+            pace_per_km FLOAT, avg_hr FLOAT, max_hr FLOAT, avg_cadence FLOAT,
+            avg_power FLOAT, normalized_power FLOAT, ground_contact_ms FLOAT,
+            stride_length_cm FLOAT, vertical_osc_mm FLOAT,
+            elevation_gain FLOAT, elevation_loss FLOAT
+        )
+    """))
+    session.execute(text("""
+        CREATE TABLE activity_summary_facts (
+            activity_id VARCHAR PRIMARY KEY,
+            user_id INTEGER NOT NULL,
+            summary_json TEXT NOT NULL,
+            summary_version VARCHAR NOT NULL,
+            detail_hash VARCHAR NOT NULL
+        )
+    """))
+    session.execute(text("""
+        INSERT INTO activities (user_id, activity_id, activity_date)
+        VALUES (1, 'legacy-1', '2026-07-29')
+    """))
+    session.commit()
+    session.close()
+
+    detail = {"summaryDTO": {"duration": 2400, "distance": 6000}, "splitSummaries": [
+        {"distance": 1000, "duration": 240},
+    ]}
+    assert store_activity_detail(storage, 1, "legacy-1", detail)
+    facts = get_activity_summary_facts(storage, "legacy-1")
+    assert facts["granularity"] == "L1"
+
+
 def test_provider_sync_persists_available_activity_splits(tmp_path):
     from src.activity import get_activity_splits
     from src.config import Config
@@ -498,3 +583,135 @@ def test_sync_calendar_tracks_empty_days_and_aggregates_legacy_data(tmp_path):
     assert days["2026-07-27"]["status"] == "future"
     assert result["summary"]["latest_synced_date"] == "2026-07-22"
     assert result["summary"]["synced"] == 4
+
+
+def test_legacy_summary_version_column_is_dropped_by_migration(tmp_path):
+    from sqlalchemy import text
+
+    from src.activity import ensure_tables, get_activity_summary_facts, store_activity_detail
+    from src.config import Config
+    from src.storage import Storage
+
+    storage = Storage(Config(db_path=str(tmp_path / "data.db")))
+    # 构造旧结构表（带 summary_version 列）
+    session = storage.db.get_session()
+    session.execute(text("""
+        CREATE TABLE activity_summary_facts (
+            activity_id VARCHAR PRIMARY KEY,
+            user_id INTEGER NOT NULL,
+            summary_json TEXT NOT NULL,
+            summary_version VARCHAR NOT NULL,
+            detail_hash VARCHAR NOT NULL,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        )
+    """))
+    session.execute(text("""
+        INSERT INTO activities (user_id, activity_id, activity_date)
+        VALUES (1, 'legacy-1', '2026-07-29')
+    """))
+    session.commit()
+    session.close()
+
+    ensure_tables(storage)
+
+    session = storage.db.get_session()
+    cols = [row[1] for row in session.execute(text(
+        "PRAGMA table_info(activity_summary_facts)"
+    )).fetchall()]
+    session.close()
+    assert "summary_version" not in cols
+    assert "detail_hash" in cols
+
+    detail = {"summaryDTO": {"duration": 2400, "distance": 6000}}
+    assert store_activity_detail(storage, 1, "legacy-1", detail)
+    facts = get_activity_summary_facts(storage, "legacy-1")
+    assert facts["granularity"] == "L0"
+    assert "version" not in facts
+
+
+def test_activity_detail_uses_lap_dtos_as_trusted_splits(tmp_path):
+    from sqlalchemy import text
+
+    from src.activity import ensure_tables, get_activity_splits, store_activity_detail
+    from src.config import Config
+    from src.storage import Storage
+
+    storage = Storage(Config(db_path=str(tmp_path / "data.db")))
+    ensure_tables(storage)
+    session = storage.db.get_session()
+    session.execute(text("""
+        INSERT INTO activities (user_id, activity_id, activity_date)
+        VALUES (1, 'lap-1', '2026-07-29')
+    """))
+    session.commit()
+    session.close()
+
+    detail = {
+        "summaryDTO": {"duration": 4000, "distance": 12000, "elevationGain": 20},
+        "splitSummaries": [{"distance": 24000, "duration": 8000}],  # 异常源
+        "lapDTOs": [
+            {"intensityType": "INTERVAL", "distance": 1000, "duration": 300,
+             "averageSpeed": 3.33, "averageHR": 140, "averageRunCadence": 175,
+             "strideLength": 120, "groundContactTime": 230, "elevationGain": 1, "elevationLoss": 1},
+            {"intensityType": "INTERVAL", "distance": 1000, "duration": 300,
+             "averageSpeed": 3.33, "averageHR": 140, "averageRunCadence": 175,
+             "strideLength": 120, "groundContactTime": 230, "elevationGain": 1, "elevationLoss": 1},
+        ],
+    }
+    assert store_activity_detail(storage, 1, "lap-1", detail)
+
+    splits = get_activity_splits(storage, "lap-1")
+    assert len(splits) == 2
+    assert splits[0]["type"] == "INTERVAL"  # intensityType → split_type
+    assert splits[0]["pace_per_km"] is not None
+    assert splits[0]["avg_hr"] == 140
+    assert splits[0]["avg_cadence"] == 175
+    assert splits[0]["stride_length_cm"] == 120
+
+
+def test_coros_detail_store_keeps_raw_json_and_persists_normalized_splits(tmp_path):
+    from sqlalchemy import text
+
+    from src.activity import (
+        ensure_tables, get_activity_detail, get_activity_splits,
+        get_activity_summary_facts, store_activity_detail,
+    )
+    from src.config import Config
+    from src.storage import Storage
+
+    storage = Storage(Config(db_path=str(tmp_path / "data.db")))
+    ensure_tables(storage)
+    session = storage.db.get_session()
+    session.execute(text("""
+        INSERT INTO activities (user_id, activity_id, activity_date)
+        VALUES (1, 'coros-1', '2026-08-14')
+    """))
+    session.commit()
+    session.close()
+    detail = {
+        "summary": {"sportType": 101, "distance": 200000,
+                    "workoutTime": 62043, "totalTime": 70000},
+        "lapList": [{"type": 2, "lapItemList": [
+            {"distance": 100000, "time": 30151, "avgPace": 301.52,
+             "avgHr": 164, "avgCadence": 166, "avgStrideLength": 119},
+            {"distance": 100000, "time": 31892, "avgPace": 318.93,
+             "avgHr": 149, "avgCadence": 159, "avgStrideLength": 118},
+        ]}],
+        "frequencyList": [
+            {"timestamp": 100, "heart": 150, "speed": 300},
+            {"timestamp": 200, "heart": 155, "speed": 320},
+        ],
+    }
+
+    assert store_activity_detail(storage, 1, "coros-1", detail)
+    assert get_activity_detail(storage, "coros-1")["summary"]["distance"] == 200000
+    splits = get_activity_splits(storage, "coros-1")
+    assert [row["distance_m"] for row in splits] == [1000, 1000]
+    assert splits[0]["duration_sec"] == 301.51
+    assert splits[0]["pace_per_km"] == 301.5
+    assert splits[0]["stride_length_cm"] == 119
+    facts = get_activity_summary_facts(storage, "coros-1")
+    assert facts["granularity"] == "L2"
+    assert facts["volume"]["distance_m"] == 2000
+    assert facts["volume"]["duration_s"] == 620.43
+    assert facts["quantity_gate"]["quantity_reliable"] is True

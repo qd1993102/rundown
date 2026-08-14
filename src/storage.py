@@ -520,6 +520,72 @@ class Storage:
             },
         }
 
+    def get_report_readiness_facts(
+        self,
+        user_id: int,
+        start: date,
+        end: date,
+    ) -> dict[str, Any]:
+        """读取日报门禁所需的逐日覆盖、活动和健康事实。"""
+        import sqlite3
+
+        if start > end:
+            raise ValueError("日报覆盖开始日期不能晚于结束日期")
+
+        _ = self.db
+        days: dict[str, dict[str, Any]] = {}
+        current = start
+        while current <= end:
+            days[str(current)] = {
+                "date": str(current),
+                "marker_status": None,
+                "marker_synced_at": None,
+                "marker_error": None,
+                "activity_count": 0,
+                "health": None,
+            }
+            current += timedelta(days=1)
+
+        with sqlite3.connect(str(self._db_path)) as db:
+            db.row_factory = sqlite3.Row
+            for row in db.execute("""
+                SELECT sync_date, status, synced_at, error_message
+                FROM sync_status
+                WHERE user_id = ? AND metric_type = ?
+                  AND sync_date >= ? AND sync_date <= ?
+                ORDER BY sync_date
+            """, (user_id, _CALENDAR_METRIC_TYPE, str(start), str(end))):
+                key = str(row["sync_date"])
+                if key in days:
+                    days[key].update({
+                        "marker_status": row["status"],
+                        "marker_synced_at": row["synced_at"],
+                        "marker_error": row["error_message"],
+                    })
+
+            for row in db.execute("""
+                SELECT activity_date, COUNT(*) AS activity_count
+                FROM activities
+                WHERE user_id = ? AND activity_date >= ? AND activity_date <= ?
+                GROUP BY activity_date
+            """, (user_id, str(start), str(end))):
+                key = str(row["activity_date"])
+                if key in days:
+                    days[key]["activity_count"] = int(row["activity_count"] or 0)
+
+            for row in db.execute("""
+                SELECT metric_date, sleep_duration_hours, resting_heart_rate,
+                       hrv_last_night_avg, avg_stress_level, body_battery_high,
+                       training_readiness_score
+                FROM daily_health_metrics
+                WHERE user_id = ? AND metric_date >= ? AND metric_date <= ?
+            """, (user_id, str(start), str(end))):
+                key = str(row["metric_date"])
+                if key in days:
+                    days[key]["health"] = dict(row)
+
+        return {"days": list(days.values())}
+
     def get_local_user_id(self) -> int | None:
         """从当前用户 SQLite 中读取唯一的平台用户 ID，不访问远端平台。"""
         from sqlalchemy import text

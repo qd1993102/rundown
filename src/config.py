@@ -22,6 +22,9 @@ from .local_files import (
 
 logger = logging.getLogger(__name__)
 
+DEFAULT_AI_BASE_URL = "https://api.deepseek.com"
+DEFAULT_AI_MODEL = "deepseek-chat"
+
 
 def huawei_user_key(group_pals_token: str) -> str:
     """从敏感 token 派生不可逆的稳定本地目录键。"""
@@ -37,6 +40,42 @@ def _default_huawei_token_dir() -> str:
 
 class ConfigError(Exception):
     """配置错误。"""
+
+
+@dataclass(frozen=True)
+class AIConfig:
+    """OpenAI-compatible AI 服务配置。"""
+
+    api_key: str = field(repr=False)
+    base_url: str
+    model: str
+
+    @property
+    def chat_completions_url(self) -> str:
+        """返回 Chat Completions 完整端点，同时兼容传入根地址或完整端点。"""
+        normalized = self.base_url.rstrip("/")
+        if normalized.endswith("/chat/completions"):
+            return normalized
+        return f"{normalized}/chat/completions"
+
+
+def get_ai_config(
+    *,
+    api_key: str | None = None,
+    base_url: str | None = None,
+    model: str | None = None,
+) -> AIConfig:
+    """读取供应商无关的 AI 配置。"""
+    resolved_key = api_key or os.getenv("NEURUN_AI_API_KEY", "")
+    resolved_base_url = base_url or os.getenv(
+        "NEURUN_AI_BASE_URL", DEFAULT_AI_BASE_URL,
+    )
+    resolved_model = model or os.getenv("NEURUN_AI_MODEL", DEFAULT_AI_MODEL)
+    return AIConfig(
+        api_key=resolved_key.strip(),
+        base_url=resolved_base_url.strip().rstrip("/") or DEFAULT_AI_BASE_URL,
+        model=resolved_model.strip() or DEFAULT_AI_MODEL,
+    )
 
 
 def _mask_email(email: str) -> str:
@@ -135,6 +174,17 @@ class Config:
     sync_max_pending: int = field(
         default_factory=lambda: int(os.getenv("NEURUN_SYNC_MAX_PENDING", "100"))
     )
+    ai_max_concurrency: int = field(
+        default_factory=lambda: int(os.getenv("NEURUN_AI_MAX_CONCURRENCY", "32"))
+    )
+    ai_max_pending: int = field(
+        default_factory=lambda: int(os.getenv("NEURUN_AI_MAX_PENDING", "64"))
+    )
+    ai_wait_timeout_seconds: float = field(
+        default_factory=lambda: float(
+            os.getenv("NEURUN_AI_WAIT_TIMEOUT_SECONDS", "5"),
+        )
+    )
     non_interactive: bool = field(
         default_factory=lambda: (
             os.getenv("NEURUN_NON_INTERACTIVE") or
@@ -171,6 +221,9 @@ class Config:
         logger.info("  Sync days:       %s", self.sync_days)
         logger.info("  Sync concurrency:%s", self.sync_max_concurrency)
         logger.info("  Sync pending max:%s", self.sync_max_pending)
+        logger.info("  AI concurrency:  %s", self.ai_max_concurrency)
+        logger.info("  AI pending max:  %s", self.ai_max_pending)
+        logger.info("  AI wait timeout: %ss", self.ai_wait_timeout_seconds)
         logger.info("  Log level:       %s", self.log_level)
         if self.provider_type == "garmin":
             logger.info("  Domain:          %s", self.domain)

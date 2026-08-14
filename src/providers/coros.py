@@ -106,6 +106,14 @@ def _int_value(value: Any) -> int:
         return 0
 
 
+def _calories_kcal(value: Any) -> int:
+    """Convert Coros milli-kilocalories to the canonical kcal unit."""
+    try:
+        return round(float(value or 0) / 1000.0)
+    except (TypeError, ValueError):
+        return 0
+
+
 def _parse_activity_item(item: dict[str, Any]) -> ActivityData:
     """将 Coros 原始活动映射为统一模型，运动时长排除暂停时间。"""
     total_time = _int_value(item.get("totalTime"))
@@ -136,12 +144,13 @@ def _parse_activity_item(item: dict[str, Any]) -> ActivityData:
         avg_heart_rate=item.get("avgHr"),
         max_heart_rate=item.get("maxHr"),
         training_load=float(item.get("trainingLoad") or 0),
-        calories=_int_value(item.get("calorie")),
+        calories=_calories_kcal(item.get("calorie")),
         elevation_gain=_optional_float_value(
             item, ("ascent", "totalAscent", "elevationGain"),
         ),
         extra={
             "provider": "coros",
+            "sport_type": sport_type,
             "total_time_seconds": total_time,
             "workout_time_seconds": workout_time,
             "paused_seconds": max(total_time - active_time, 0),
@@ -741,13 +750,61 @@ class CorosActivity(ActivityProvider):
         logger.info("Coros: %d 条活动 (%s ~ %s)", len(result), start, end)
         return result
 
-    def fetch_activity_detail(self, activity_id: str) -> dict[str, Any]:
-        from coros_mcp.coros_api import fetch_activity_detail as _detail
-        try:
-            raw = _run(_detail(self._auth._auth, str(activity_id), 10))
-            return raw.__dict__ if hasattr(raw, '__dict__') else (raw if isinstance(raw, dict) else {})
-        except Exception:
+    def fetch_activity_detail(
+        self, activity_id: str, sport_type: int = 0,
+    ) -> dict[str, Any]:
+        """拉取 Coros 活动详情，保留 graphList/frequencyList 等全部字段。
+
+        coros-mcp 的 fetch_activity_detail 会主动丢弃 graphList / frequencyList /
+        gpsLightDuration 高频时序数组（见 coros_api.py 的 strip 逻辑）；这里自建请求
+        保留原始响应，供 Hz 级分段配速分析与结构确认。sport_type 为活动类型数字
+        （跑步 100/102/103、骑行 200/2 等），由调用方从活动项 extra 传入。
+        """
+        import httpx
+
+        auth = self._auth
+        if auth is None or not auth.is_authenticated():
             return {}
+        # Coros detail/query 端点不接受 application/json，须用默认 form 编码；
+        # accessToken / yfheader 头来自统一凭据。
+        headers = {
+            **auth.get_headers(),
+            "User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 16_0 like Mac OS X)",
+        }
+        url = _base_for_auth(auth) + "/activity/detail/query"
+        form = {
+            "labelId": str(activity_id),
+            "userId": str(auth.get_user_id()),
+            "sportType": str(sport_type or 0),
+        }
+        try:
+            resp = httpx.post(url, data=form, headers=headers, timeout=30)
+            body = resp.json()
+        except Exception as exc:
+            logger.warning(
+                "Coros 活动详情拉取失败 activity_id=%s error_type=%s",
+                activity_id, type(exc).__name__,
+            )
+            return {}
+        if str(body.get("result")) != "0000" or "data" not in body:
+            logger.warning(
+                "Coros 活动详情响应异常 activity_id=%s result=%s message=%s",
+                activity_id, body.get("result"), str(body.get("message"))[:80],
+            )
+            return {}
+        data = body.get("data") or {}
+        if not isinstance(data, dict):
+            return {}
+        # 记录高频时序字段结构，便于确认 Hz 级配速/心率数据的格式。
+        for key in ("graphList", "frequencyList", "gpsLightDuration"):
+            value = data.get(key)
+            if value is not None:
+                logger.info(
+                    "Coros detail 高频字段: %s type=%s len=%s",
+                    key, type(value).__name__,
+                    len(value) if hasattr(value, "__len__") else "?",
+                )
+        return data
 
 
 class CorosHealth(HealthProvider):
@@ -858,6 +915,8 @@ class CorosHealth(HealthProvider):
         stress_level = None  # Coros: tiredRate
 
         ts_compact = target_date.strftime("%Y%m%d")
+        lthr = None
+        ltsp = None
         for item in day_list:
             if str(item.get("happenDay", "")) == ts_compact:
                 rhr = item.get("rhr")
@@ -865,6 +924,9 @@ class CorosHealth(HealthProvider):
                 duration = float(item.get("duration", 0) or 0)
                 training_load = float(item.get("trainingLoad", 0) or 0)
                 stress_level = item.get("tiredRate")  # 0-100 fatigue index
+                # 平台自算乳酸阈值（/analyse/query）：lthr=阈值心率 bpm，ltsp=阈值配速 s/km
+                lthr = _int_value(item.get("lthr")) if item.get("lthr") is not None else None
+                ltsp = _int_value(item.get("ltsp")) if item.get("ltsp") is not None else None
                 break
 
         # Check t7dayList for RHR if not found
@@ -927,6 +989,8 @@ class CorosHealth(HealthProvider):
                     ),
                     "daily_duration_seconds": duration,
                     "daily_training_load": training_load,
+                    "lthr": lthr,
+                    "ltsp": ltsp,
                 },
             )
 

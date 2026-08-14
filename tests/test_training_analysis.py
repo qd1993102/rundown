@@ -147,10 +147,13 @@ def test_baseline_builder_uses_only_activities_before_target_time():
 
     baseline = AthleteBaselineBuilder().build(
         activities, target_time="2026-07-31 12:00:00",
+        profile={"personal_info": {"max_heart_rate": 200, "resting_heart_rate": 50}},
     )
 
     assert baseline.sample_count == 2
-    assert baseline.threshold_heart_rate < 190
+    # 阈值只来自档案推导（Karvonen：50 + 0.88×(200−50) = 182），不被未来活动抬高
+    assert baseline.threshold_heart_rate == 182
+    assert baseline.source == "profile"
 
 
 def test_baseline_builder_ignores_activities_older_than_42_days():
@@ -170,7 +173,80 @@ def test_baseline_builder_ignores_activities_older_than_42_days():
     ], target_time="2026-07-31 12:00:00")
 
     assert baseline.sample_count == 1
-    assert baseline.threshold_heart_rate == 150
+    # 无档案阈值时不猜测（不再拿单一活动平均心率当阈值）
+    assert baseline.threshold_heart_rate is None
+    assert baseline.source == "unavailable"
+
+
+def test_baseline_threshold_derived_from_profile_max_and_resting_hr():
+    from src.training_analysis import AthleteBaselineBuilder
+
+    baseline = AthleteBaselineBuilder().build(
+        [],
+        profile={"personal_info": {"max_heart_rate": 190, "resting_heart_rate": 55}},
+    )
+    assert baseline.threshold_heart_rate == round(55 + 0.88 * (190 - 55))
+    assert baseline.source == "profile"
+
+
+def test_baseline_threshold_derived_from_profile_max_hr_only():
+    from src.training_analysis import AthleteBaselineBuilder
+
+    baseline = AthleteBaselineBuilder().build(
+        [], profile={"personal_info": {"max_heart_rate": 190}},
+    )
+    assert baseline.threshold_heart_rate == round(190 * 0.88)
+
+
+def test_baseline_explicit_threshold_hr_wins_over_max_hr():
+    from src.training_analysis import AthleteBaselineBuilder
+
+    baseline = AthleteBaselineBuilder().build(
+        [],
+        profile={
+            "threshold_heart_rate": 170,
+            "personal_info": {"max_heart_rate": 190, "resting_heart_rate": 55},
+        },
+    )
+    assert baseline.threshold_heart_rate == 170
+
+
+def test_baseline_without_profile_does_not_guess():
+    from src.training_analysis import AthleteBaselineBuilder
+
+    baseline = AthleteBaselineBuilder().build([])
+    assert baseline.threshold_heart_rate is None
+    assert baseline.threshold_pace_sec_per_km is None
+    assert baseline.status == "insufficient"
+    assert baseline.source == "unavailable"
+
+
+def test_baseline_threshold_pace_derived_from_personal_bests():
+    from src.training_analysis import AthleteBaselineBuilder
+
+    baseline = AthleteBaselineBuilder().build(
+        [], profile={"personal_bests": {"half_marathon": {"time": "1:40:00"}}},
+    )
+    # 半马 100min → 6000s / 21.0975km ≈ 284.4s/km，最接近阈值配速
+    assert baseline.threshold_heart_rate is None
+    assert baseline.threshold_pace_sec_per_km is not None
+    assert abs(baseline.threshold_pace_sec_per_km - (6000 / 21.0975)) < 1
+    assert baseline.source == "personal_bests"
+    assert baseline.status == "sufficient"
+
+
+def test_baseline_explicit_threshold_pace_wins_over_pb():
+    from src.training_analysis import AthleteBaselineBuilder
+
+    baseline = AthleteBaselineBuilder().build(
+        [],
+        profile={
+            "threshold_pace_sec_per_km": 300,
+            "personal_bests": {"half_marathon": {"time": "1:40:00"}},
+        },
+    )
+    assert baseline.threshold_pace_sec_per_km == 300
+    assert baseline.source == "profile"
 
 
 def test_raw_history_does_not_require_daily_report(tmp_path):
@@ -245,6 +321,7 @@ def test_analysis_persistence_is_idempotent_and_versioned(tmp_path):
     assert latest["analysis_id"] == first_id
     assert latest["primary_type"] == "aerobic"
     assert latest["algorithm_version"] == "session-analyzer-v1"
+    assert latest["features"]["activity_id"] == "persisted-analysis"
 
 
 def test_daily_report_contains_structured_training_analysis(tmp_path):
@@ -300,7 +377,17 @@ def test_daily_report_contains_structured_training_analysis(tmp_path):
     memory = MemoryStore(
         str(tmp_path / "memory"), db_getter=lambda: storage.db,
     )
-    report = memory.generate_daily_report(7, date(2026, 7, 29))
+    report = memory.generate_daily_report(
+        7,
+        date(2026, 7, 29),
+        readiness={
+            "status": "ready",
+            "finality": "final",
+            "data_as_of": "2026-07-29 08:00:00",
+            "dimensions": {},
+            "omitted_sections": [],
+        },
+    )
 
     analysis = report.front_matter["session_analyses"][0]
     assert analysis["primary_type"] == "interval"
@@ -311,28 +398,6 @@ def test_daily_report_contains_structured_training_analysis(tmp_path):
         "爬升专项" in item
         for item in report.front_matter["recommendation"]["follow_up_constraints"]
     )
-
-
-def test_coach_history_tool_prefers_raw_sqlite_history():
-    from src.coach import _exec_get_training_history
-
-    class RawHistoryStore:
-        def get_training_history_entries(self, days):
-            return [{
-                "date": "2026-07-29", "is_rest": False,
-                "duration": 60, "distance": 10, "load": 90,
-                "sleep_h": 7.5, "sleep_score": 80,
-                "hrv": 55, "rhr": 48, "bb": 80,
-                "recovery": 75, "readiness": 70,
-            }]
-
-        def get(self, memory_id):
-            raise AssertionError("有 SQLite 历史时不应读取历史日报")
-
-    result = _exec_get_training_history(RawHistoryStore(), 30)
-
-    assert "10.0km" in result
-    assert "L90" in result
 
 
 def test_natural_week_bounds_are_monday_through_sunday():
@@ -377,45 +442,71 @@ def test_history_does_not_treat_unsynced_empty_day_as_rest(tmp_path):
     assert by_date["2026-07-29"]["is_rest"] is False
 
 
-def test_current_week_progress_uses_natural_week_to_date_only():
-    from src.coach import _exec_get_current_week_progress
+def test_platform_thresholds_load_from_health_metrics(tmp_path):
+    """平台乳酸阈值（lthr/ltsp）从 daily_health_metrics 读取，取目标日及之前最近一条。"""
+    from sqlalchemy import text
 
-    class WeekHistoryStore:
-        def get_training_history_entries(self, *, days, end_date):
-            assert days == 3
-            assert end_date == date(2026, 7, 29)
-            return [
-                {
-                    "date": "2026-07-29", "activity_state": "training",
-                    "is_rest": False, "duration": 50, "distance": 10,
-                    "load": 80,
-                },
-                {
-                    "date": "2026-07-28", "activity_state": "unknown",
-                    "is_rest": False, "duration": 0, "distance": 0,
-                    "load": 0,
-                },
-                {
-                    "date": "2026-07-27", "activity_state": "confirmed_rest",
-                    "is_rest": True, "duration": 0, "distance": 0,
-                    "load": 0,
-                },
-            ]
+    from src.config import Config
+    from src.memory import load_platform_thresholds
+    from src.storage import Storage
 
-    result = _exec_get_current_week_progress(
-        WeekHistoryStore(), target_date=date(2026, 7, 29),
-    )
+    storage = Storage(Config(db_path=str(tmp_path / "data" / "data.db")))
+    session = storage.db.get_session()
+    try:
+        session.execute(text("ALTER TABLE daily_health_metrics ADD COLUMN lthr INTEGER"))
+    except Exception:
+        pass
+    try:
+        session.execute(text("ALTER TABLE daily_health_metrics ADD COLUMN ltsp INTEGER"))
+    except Exception:
+        pass
+    session.execute(text("""
+        INSERT INTO daily_health_metrics
+            (user_id, metric_date, resting_heart_rate, lthr, ltsp, created_at, updated_at)
+        VALUES
+            (7, '2026-07-20', 55, 169, 265, datetime('now'), datetime('now')),
+            (7, '2026-07-28', 53, 170, 260, datetime('now'), datetime('now'))
+    """))
+    session.commit()
+    session.close()
 
-    assert "2026-07-27 至 2026-08-02" in result
-    assert "已完成 1 次" in result
-    assert "10.0km" in result
-    assert "1 天运动数据状态未知" in result
+    # 目标日当天及之前最近一条
+    assert load_platform_thresholds(storage.db, 7, date(2026, 7, 20)) == {
+        "threshold_heart_rate": 169, "threshold_pace_sec_per_km": 265,
+    }
+    # 取 <= 目标日最近一条（7-28）
+    assert load_platform_thresholds(storage.db, 7, date(2026, 7, 29)) == {
+        "threshold_heart_rate": 170, "threshold_pace_sec_per_km": 260,
+    }
+    # 早于任何记录 → 空
+    assert load_platform_thresholds(storage.db, 7, date(2026, 7, 1)) == {}
+    storage.close()
 
 
-def test_coach_prompt_uses_natural_week_progress_tool():
-    from src.coach import load_coach_prompt
+def test_platform_threshold_merges_into_baseline_profile():
+    """平台阈值并入档案后 AthleteBaseline 使用它；档案显式阈值优先。"""
+    from unittest import mock
 
-    prompt = load_coach_prompt()
+    from src.memory import MemoryWriter
+    from src.training_analysis import AthleteBaselineBuilder
 
-    assert "get_current_week_progress" in prompt
-    assert "get_training_history(days=7)" not in prompt
+    fake = {"threshold_heart_rate": 170, "threshold_pace_sec_per_km": 260}
+    with mock.patch("src.memory.load_platform_thresholds", return_value=fake):
+        merged = MemoryWriter._merge_platform_thresholds(
+            {"personal_info": {}}, None, 7, "2026-07-29 08:00:00",
+        )
+    assert merged["threshold_heart_rate"] == 170
+    assert merged["threshold_pace_sec_per_km"] == 260
+    baseline = AthleteBaselineBuilder().build([], profile=merged)
+    assert baseline.threshold_heart_rate == 170
+    assert baseline.threshold_pace_sec_per_km == 260
+    assert baseline.source == "profile"
+
+    # 档案显式阈值优先，平台值不覆盖
+    with mock.patch("src.memory.load_platform_thresholds", return_value=fake):
+        merged2 = MemoryWriter._merge_platform_thresholds(
+            {"personal_info": {}, "threshold_heart_rate": 180}, None, 7,
+            "2026-07-29 08:00:00",
+        )
+    assert merged2["threshold_heart_rate"] == 180
+    assert merged2["threshold_pace_sec_per_km"] == 260
