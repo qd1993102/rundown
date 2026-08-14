@@ -12,6 +12,10 @@
 - **影响范围**: `src/training.py`、`web/templates/training.html`、`tests/test_training.py`、`tests/test_web.py`
 - **关联文档**: [训练系统技术设计 §7.2](design/training-system.md)、[训练体验产品方案](product/training-experience.md)
 
+- **改动描述**: 本周尚无完全完成的计划课时，训练页收敛“完成 0 次 / 已跑 0 km”两个计划执行数字（仅展示目标与实际事实），避免用户误以为“没练”。
+- **影响范围**: `web/templates/training.html`、`tests/test_web.py`
+- **关联文档**: [训练体验产品方案](product/training-experience.md)、[训练系统技术设计 §7.2](design/training-system.md)
+
 
 ### Fixed
 

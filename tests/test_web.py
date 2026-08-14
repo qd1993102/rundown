@@ -870,6 +870,9 @@ def test_daily_templates_are_mobile_first_and_support_local_png_export():
     assert 'pill fact' in training
     assert "实际" in training
     assert "跑步" in training
+    # 无完全完成课时收敛“完成/已跑”0 值，避免误解为没练
+    assert "const planPills" in training
+    assert "doneCount>0" in training
     assert "当前教练定位" not in training
     assert "function modeBannerMarkup" not in training
 
