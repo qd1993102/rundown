@@ -4,6 +4,10 @@
 
 ### Fixed
 
+- **改动描述**: 修复训练页“查看本周进度”按钮字体偏大且在手机窄屏与“本周节奏”日期标题互相挤压的问题：通用 `.btn` 补 13px 字号与 `white-space:nowrap`（与报告页按钮一致），窄屏（≤600px）下卡片头部与训练详情头部自动换行，长标题与操作按钮不再并排挤压。
+- **影响范围**: `web/templates/training.html`、训练页移动端布局
+- **关联文档**: [Bug 记录：训练页按钮挤压](bugfixes/2026-08-14-training-week-progress-btn-overflow.md)、[训练体验产品方案](product/training-experience.md)
+
 - **改动描述**: 修复训练页点击每日课程时 `blockLabel` 未定义导致详情无**法**渲染的问题；补充 `blockLabel` 和 `stimulusLabel` 两个缺失的查找表常量定义。
 - **影响范围**: `web/templates/training.html`
 - **关联文档**: [Bug 记录](bugfixes/2026-08-14-training-blockLabel-undefined.md)
