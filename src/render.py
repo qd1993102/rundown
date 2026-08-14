@@ -193,7 +193,7 @@ def _load(fm: dict) -> str:
     return f"""<div class="load-card">
   <div class="load-header"><h3>训练负荷</h3><div class="load-score {st}" style="color:{color}">{acwr}</div></div>
   <div class="load-bar-wrap"><div class="load-bar"><div class="load-zone-optimal" style="left:{zl}%;width:{zr-zl}%"></div><div class="load-indicator" style="left:{pct}%;background:{color}"></div></div><div class="load-bar-labels"><span>0</span><span>0.8</span><span>1.3</span><span>1.5</span><span>2.0</span></div></div>
-  <div class="load-stats"><div class="load-stat"><div class="val">{l.get('acute_load_7d',0)}</div><div class="lbl">急性 7d</div></div><div class="load-stat"><div class="val">{l.get('chronic_load_28d',0):.0f}</div><div class="lbl">慢性 28d</div></div><div class="load-stat"><div class="val" style="color:{color}">{r.get('overall_score','—')}</div><div class="lbl">恢复 /100</div></div></div>
+  <div class="load-stats"><div class="load-stat"><div class="val">{l.get('acute_load_7d',0):.0f}</div><div class="lbl">急性 7d</div></div><div class="load-stat"><div class="val">{l.get('chronic_load_28d',0):.0f}</div><div class="lbl">慢性 28d</div></div><div class="load-stat"><div class="val" style="color:{color}">{r.get('overall_score','—')}</div><div class="lbl">恢复 /100</div></div></div>
 {_athlete_context_line(fm)}
 </div>"""
 

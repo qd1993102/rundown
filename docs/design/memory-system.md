@@ -1212,6 +1212,9 @@ Activity Data Coverage 确定性生成。它包含 `comparison_status`、当日�
      1.3-1.5 → overreaching
      > 1.5  → high_risk
    趋势: compare acute_load vs 7天前
+   精度: acute_load / chronic_load 统一 round(1) 位小数入库。浮点累加会产生二进制
+        精度噪声（历史数据曾出现 acute_load_7d: 1000.6190490722656），
+        日报/仪表盘展示层统一按整数四舍五入，避免长小数溢出。
 
 5. 计算综合恢复评分 (同恢复摘要的加权算法)
    recovery_score = weighted_score(sleep, hrv, hr, stress, battery, readiness)

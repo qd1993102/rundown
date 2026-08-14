@@ -207,6 +207,30 @@ class TestTrainingLoad:
         assert result["acute_load_7d"] == 120.0
         assert result["chronic_load_28d"] == 30.0
 
+    def test_rounds_float_precision_noise_in_acute_load(self):
+        # Garmin training_load 浮点累加会产生二进制精度噪声，
+        # 历史数据曾出现 acute_load_7d: 1000.6190490722656；
+        # 计算层必须与慢性负荷一样保留 1 位小数，防止长小数进入存储与展示。
+        noisy = 1000.6190490722656  # 真实历史数据中的精度噪声值
+        activities = [{"training_load": noisy}]
+
+        result = MemoryWriter._calc_training_load(activities, [])
+
+        assert result["acute_load_7d"] == round(noisy, 1)
+        assert result["acute_load_7d"] == 1000.6
+
+    def test_rounds_accumulated_float_error(self):
+        # 多个带小数负荷累加可能放大浮点误差（0.1+0.2 类误差）。
+        activities = [
+            {"training_load": 0.1}, {"training_load": 0.2}, {"training_load": 300.5},
+        ]
+
+        result = MemoryWriter._calc_training_load(activities, [])
+
+        raw = 0.1 + 0.2 + 300.5
+        assert result["acute_load_7d"] == round(raw, 1)
+        assert result["acute_load_7d"] == 300.8
+
 
 class TestAIInsight:
     @staticmethod

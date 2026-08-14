@@ -4,6 +4,16 @@
 
 ### Fixed
 
+- **改动描述**: 修复训练页点击每日课程时 `blockLabel` 未定义导致详情无**法**渲染的问题；补充 `blockLabel` 和 `stimulusLabel` 两个缺失的查找表常量定义。
+- **影响范围**: `web/templates/training.html`
+- **关联文档**: [Bug 记录](bugfixes/2026-08-14-training-blockLabel-undefined.md)
+
+
+### Fixed
+
+- **改动描述**: 修复急性/慢性负荷展示的小数点溢出：`_calc_training_load` 的急性负荷不再原样写入浮点累加结果（历史数据曾出现 `acute_load_7d: 1000.6190490722656` 类二进制精度噪声），统一 round 1 位小数入库；日报 HTML 急性/慢性统一 `:.0f` 取整展示，Web 仪表盘显示前 `Math.round`，新旧数据都不再出现长小数，两个展示点与观察块规则一致。
+- **影响范围**: `src/memory.py`、`src/render.py`、`web/templates/dashboard.html`、`tests/test_memory.py`、`tests/test_render.py`
+- **关联文档**: [Bug 记录：负荷小数点溢出](bugfixes/2026-08-14-load-decimal-overflow.md)、[记忆系统设计](design/memory-system.md)、[日报产品方案](product/daily-report.md)
 - **改动描述**: 修复报告中心无任务状态和收起周复盘详情仍占据空白布局的问题；隐藏元素和关闭详情正文现在完全退出布局。
 - **影响范围**: `web/templates/reports.html`、报告中心日报与周复盘页面
 - **关联文档**: [Bug 记录：报告页空白布局块](bugfixes/2026-08-14-report-empty-layout-blocks.md)、[日报产品方案](product/daily-report.md)

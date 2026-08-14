@@ -1388,7 +1388,10 @@ class MemoryWriter:
             status = "high_risk"
 
         return {
-            "acute_load_7d": acute,
+            # 负荷统一保留 1 位小数：浮点累加会引入二进制精度噪声
+            # （历史数据曾出现 acute_load_7d: 1000.6190490722656），
+            # 展示层按整数四舍五入，避免长小数溢出。
+            "acute_load_7d": round(acute, 1),
             "chronic_load_28d": round(chronic, 1),
             "acwr": acwr,
             "acwr_status": status,

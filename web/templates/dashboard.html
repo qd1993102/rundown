@@ -516,8 +516,10 @@ function deepAnalysisHtml(analyses){
   // Load（负荷与恢复）：急性/慢性负荷都为 0 或缺失时不展示，避免无效 ACWR 空白块
   var loadHas=Number(ld.acute_load_7d)>0||Number(ld.chronic_load_28d)>0;
   $('loadAcwr').textContent=loadHas&&hasVal(ld.acwr)?ld.acwr:'—';
-  $('loadChronic').textContent=loadHas&&hasVal(ld.chronic_load_28d)?ld.chronic_load_28d:'—';
-  $('loadAcute').textContent=loadHas&&hasVal(ld.acute_load_7d)?ld.acute_load_7d:'—';
+  // 负荷展示统一取整：历史数据含浮点二进制精度噪声（如 1000.6190490722656），
+  // 直接渲染会溢出小数点；Math.round 与日报 HTML 的 :.0f 保持一致。
+  $('loadChronic').textContent=loadHas&&hasVal(ld.chronic_load_28d)?Math.round(Number(ld.chronic_load_28d)):'—';
+  $('loadAcute').textContent=loadHas&&hasVal(ld.acute_load_7d)?Math.round(Number(ld.acute_load_7d)):'—';
   $('loadStatus').textContent=loadHas&&hasVal(ld.acwr_status)?ld.acwr_status:'—';
   var loadCard=document.querySelector('.load-card'),loadTitle=loadCard?loadCard.previousElementSibling:null;
   if(!loadHas){

@@ -145,6 +145,20 @@ class TestHTMLComponents:
         assert "1.05" in l
         assert "optimal" in l
 
+    def test_load_stats_round_load_values_to_integers(self):
+        # 历史数据含浮点二进制精度噪声（acute_load_7d: 1000.6190490722656），
+        # 急性/慢性负荷必须统一取整展示，不得输出长小数。
+        fm = dict(SAMPLE_FM)
+        fm["training_load"] = {
+            "acwr": 1.05, "acwr_status": "optimal",
+            "acute_load_7d": 1000.6190490722656, "chronic_load_28d": 1022.1,
+        }
+        l = _load(fm)
+        assert "1000.6190490722656" not in l
+        assert ">1001<" in l
+        assert ">1022<" in l
+        assert ">1022.1<" not in l
+
     def test_rec(self):
         r = _rec(SAMPLE_FM)
         assert "可以训练" in r
