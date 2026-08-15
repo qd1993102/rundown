@@ -366,6 +366,13 @@ def test_openai_compatible_model_uses_generic_config_and_json_protocol(monkeypat
         OpenAICompatibleSkillModel().generate(framework_spec, "生成框架。", {})
     assert captured["json"]["max_tokens"] == 4000
 
+    # 方案重规划输出完整候选（阶段 + 首四周 + 逐段处方），
+    # 必须与框架/课表一致放宽到 4000，避免 1800 截断 JSON 导致 503
+    revise_spec = SkillRegistry.default().get("revise-training-scheme")
+    with caplog.at_level(logging.INFO, logger="src.coach_runtime.runner"):
+        OpenAICompatibleSkillModel().generate(revise_spec, "重规划。", {})
+    assert captured["json"]["max_tokens"] == 4000
+
     monkeypatch.setenv("NEURUN_AI_DEBUG_PROMPTS", "true")
     with caplog.at_level(logging.WARNING, logger="src.coach_runtime.runner"):
         OpenAICompatibleSkillModel().generate(

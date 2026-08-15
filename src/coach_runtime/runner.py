@@ -367,8 +367,13 @@ class OpenAICompatibleSkillModel:
             # several evidence/risk fields; 1300 frequently truncated valid JSON.
             # 官方 API 的草稿长输出（含近期课表细节）可达 2500+ tokens，
             # 框架/课表两阶段放宽上限，避免 finish_reason=length 截断 JSON。
+            # 方案重规划输出完整候选（阶段 + 首四周课表 + 逐段处方），
+            # 实测 7.4KB（≈2000+ tokens）会被 1800 截断导致 JSON 解析失败（503），同样放宽。
             "max_tokens": (
-                4000 if spec.name in {"build-training-framework", "build-near-term-schedule"}
+                4000 if spec.name in {
+                    "build-training-framework", "build-near-term-schedule",
+                    "revise-training-scheme",
+                }
                 else 1800
             ),
         }

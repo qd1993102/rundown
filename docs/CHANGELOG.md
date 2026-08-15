@@ -18,6 +18,10 @@
 
 ### Fixed
 
+- **改动描述**: 修复方案重规划 503：`revise-training-scheme` 输出完整候选（阶段 + 首四周 + 逐段处方）约 7.4KB/2000+ tokens，但 `max_tokens` 仅 1800 被截断导致 JSON 解析失败；已纳入 4000 放宽名单，与框架/课表两阶段一致。
+- **影响范围**: `src/coach_runtime/runner.py`、`tests/test_coach_runtime.py`
+- **关联文档**: [Bug 记录：重规划 503 输出截断](bugfixes/2026-08-15-scheme-revision-503-max-tokens.md)
+
 - **改动描述**: 修复报告中心生成日报后按钮仍显示“生成日报”的问题：`genReport` 成功路径存在异步竞态（未 `await` 的 `load()` 与末尾 `renderDailyStatus()` 触发的 `checkReadiness()` 竞争，后者晚到把“查看日报”覆盖回“生成日报”）；改为成功路径 `await load()` 后由列表刷新渲染状态，失败路径保留刷新。
 - **影响范围**: `web/templates/reports.html`、`tests/test_web.py`
 - **关联文档**: [Bug 记录：生成日报后按钮状态未切换](bugfixes/2026-08-15-report-gen-btn-stale-state.md)
