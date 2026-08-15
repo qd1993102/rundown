@@ -14,6 +14,10 @@
 
 ### Fixed
 
+- **改动描述**: 修复 ECS 部署后服务启动崩溃（`PermissionError: /etc/neurun/neurun.env`）：部署脚本创建的 `/etc/neurun`（0750 root:root）与 `neurun.env`（0640 root:root）对 `neurun` 进程不可读，而 Python 3.12 的 `Path.exists()` 对 EACCES 直接传播（不返回 False），Web/CLI 首次启动即崩溃（发布后自动回滚）。修复分两处：① `get_config()` 对部署环境文件的存在/可读检查与读取全部 try/except 容错，不可用时 warning 并跳过（Web 仍由 systemd `EnvironmentFile` 注入）；② `scripts/deploy-ecs.sh` 将目录与文件属组改为 `root:运行组`（0750/0640），保证 neurun 进程可读，并对历史遗留 root:root 属主幂等修正。
+- **影响范围**: `src/config.py`、`scripts/deploy-ecs.sh`、`tests/test_config.py`
+- **关联文档**: [Bug 记录：部署环境文件权限导致服务启动崩溃](bugfixes/2026-08-16-deploy-env-permission-crash.md)
+
 - **改动描述**: 修复 ECS release 切换后邀请码生成与读取可能落在不同文件的问题：`config.invite_codes_path` 兜底逻辑改为相对 `data_dir` 固定基于项目根目录（`src/` 上级）解析，不再随进程 cwd（release 目录）漂移；`invite create --output json` 在 stderr 打印实际写入文件路径（stdout JSON 结构不变，AI/MCP 兼容）。ECS/systemd 部署仍以 `NEURUN_INVITE_CODES_FILE=/var/lib/neurun/invite-codes.json` 绝对路径固定读写位置。
 - **影响范围**: `src/config.py`、`src/main.py`、`tests/test_config.py`、`tests/test_main.py`
 - **关联文档**: [Bug 记录：ECS 发布后邀请码读写路径漂移](bugfixes/2026-08-16-invite-code-path-drift.md)

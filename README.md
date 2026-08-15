@@ -170,8 +170,13 @@ CLI 未读到部署配置（旧 release 代码），需发布新版本后再试�
 排查写入路径时可留意启动日志的三条 INFO 诊断日志：
 `配置探测[原始环境]`（进程实际收到的 `NEURUN_*` 值，None 表示 env 没传进去，
 命令折行/被吞时常见）、`配置探测[部署环境文件]`（`/etc/neurun/neurun.env`
-是否存在）、`配置探测[解析结果]`（最终解析出的 `invite_codes_path`），
+是否存在且可读）、`配置探测[解析结果]`（最终解析出的 `invite_codes_path`），
 对比即可定位 env 丢失、`.env` 覆盖或部署环境文件缺失。
+
+> `/etc/neurun/neurun.env` 由发布脚本创建为 `root:neurun` 属组、`0640` 权限，
+> Web/CLI 进程（`User=neurun Group=neurun`）必须可读；若日志显示该文件
+> 「不可读/访问异常」，说明属主是 root:root（历史遗留），重新发布即可修正，
+> 或手工 `sudo chown root:neurun /etc/neurun /etc/neurun/neurun.env`。
 
 若曾经用 `sudo neurun ...` 生成过 `/var/lib/neurun` 下的数据，先修复归属再重启服务：
 

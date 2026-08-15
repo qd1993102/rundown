@@ -101,6 +101,13 @@ fi
 install -d -m 0755 "${RELEASES_DIR}"
 install -d -m 0700 -o "${RUN_USER}" -g "${RUN_GROUP}" "${DATA_DIR}"
 install -d -m 0750 "${ENV_DIR}"
+# 部署环境文件目录属组改为运行组：systemd（root）与 neurun 进程（Web/CLI，
+# 均以 User=neurun Group=neurun 运行）都要能遍历读取；组内可读（0750），
+# 避免向其他本地用户暴露。仅在 root 下执行（部署脚本通常以 root 运行）；
+# 非 root（本地测试）跳过属主修改。
+if [ "$(id -u)" = "0" ]; then
+  chown root:"${RUN_GROUP}" "${ENV_DIR}" 2>/dev/null || true
+fi
 
 # CLI 与 Web 共享同一配置源：确保部署环境文件包含数据目录与邀请码路径。
 # 这样 `neurun invite create` 等管理员命令无需手工传 env，即与 Web
@@ -108,6 +115,11 @@ install -d -m 0750 "${ENV_DIR}"
 if [ ! -f "${ENV_DIR}/neurun.env" ]; then
   umask 077
   : > "${ENV_DIR}/neurun.env"
+fi
+# 老部署可能留下 root:root 属主（目录 root:root 0750 时 neurun 用户连 stat
+# 都会 EACCES），改为 root:RUN_GROUP 保证运行用户可读；文件组内只读 0640。
+if [ "$(id -u)" = "0" ]; then
+  chown root:"${RUN_GROUP}" "${ENV_DIR}/neurun.env" 2>/dev/null || true
 fi
 chmod 0640 "${ENV_DIR}/neurun.env" 2>/dev/null || true
 if ! grep -q '^NEURUN_DATA_DIR=' "${ENV_DIR}/neurun.env"; then

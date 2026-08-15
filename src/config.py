@@ -342,6 +342,28 @@ class UserConfig:
 _DEPLOY_ENV_FILE = Path("/etc/neurun/neurun.env")
 
 
+def _deploy_env_status() -> str:
+    """返回部署环境文件的可读状态描述（绝不抛出异常）。
+
+    - "不存在": 文件不存在（本地开发常见，正常）
+    - "可读": 存在且可读
+    - "不可读(<errno> <msg>)": 存在但无法读取，如 ECS 上目录/文件属主为 root
+      而进程以 neurun 用户运行时 EACCES
+    - "访问异常(<errno> <msg>)": 路径本身不可访问（如父路径不是目录）
+    """
+    try:
+        exists = _DEPLOY_ENV_FILE.exists()
+    except OSError as exc:
+        return f"访问异常({exc.errno} {exc.strerror})"
+    if not exists:
+        return "不存在"
+    try:
+        with _DEPLOY_ENV_FILE.open("r", encoding="utf-8"):
+            return "可读"
+    except OSError as exc:
+        return f"不可读({exc.errno} {exc.strerror})"
+
+
 def get_config(*, validate_credentials: bool = True) -> Config:
     """创建并校验配置的单次入口。
 
@@ -360,13 +382,14 @@ def get_config(*, validate_credentials: bool = True) -> Config:
     # 诊断探测：在加载任何 .env 之前捕获进程实际收到的环境变量。
     # 日志在下方 basicConfig 之后输出，用于排查 ECS 上 invite create
     # 写入路径与预期不符（env 被吞/被 .env 覆盖/部署环境文件缺失）。
+    deploy_env_status = _deploy_env_status()
     raw_probe = (
         os.getenv("NEURUN_HOME"),
         os.getenv("NEURUN_DATA_DIR"),
         os.getenv("RUNDOWN_DATA_DIR"),
         os.getenv("NEURUN_INVITE_CODES_FILE"),
         str(Path.cwd()),
-        _DEPLOY_ENV_FILE.exists(),
+        deploy_env_status,
     )
 
     # 1. 加载 .env：优先当前目录（或 NEURUN_HOME），再加载全局
@@ -374,9 +397,23 @@ def get_config(*, validate_credentials: bool = True) -> Config:
     cwd_env = base_dir / ".env"
     if cwd_env.exists():
         load_dotenv(cwd_env, override=True)  # 当前目录 .env 优先
-    # 部署环境文件（ECS systemd 部署）：CLI 与 Web 共享配置源，只补缺失项
-    if _DEPLOY_ENV_FILE.exists():
-        load_dotenv(_DEPLOY_ENV_FILE, override=False)
+    # 部署环境文件（ECS systemd 部署）：CLI 与 Web 共享配置源，只补缺失项。
+    # 目录/文件对运行用户（User=neurun）可能不可读（部署权限未收敛前），
+    # 必须容错跳过，否则 Web/CLI 启动即崩溃（Path.exists 对 EACCES 直接抛
+    # PermissionError）。Web 进程仍可依赖 systemd EnvironmentFile 注入。
+    if deploy_env_status == "可读":
+        try:
+            load_dotenv(_DEPLOY_ENV_FILE, override=False)
+        except OSError as exc:
+            logger.warning(
+                "读取部署环境文件失败，已跳过: %s (%s)",
+                _DEPLOY_ENV_FILE, exc,
+            )
+    elif deploy_env_status.startswith(("不可读", "访问异常")):
+        logger.warning(
+            "部署环境文件不可用，已跳过（Web 仍由 systemd EnvironmentFile 注入）: %s",
+            deploy_env_status,
+        )
     home_env = Path.home() / ".neurun" / ".env"
     if not neurun_home and home_env.exists():
         load_dotenv(home_env, override=False)  # 全局配置只补充缺失项
@@ -411,7 +448,7 @@ def get_config(*, validate_credentials: bool = True) -> Config:
     )
     config.log_config()
     # 诊断日志（basicConfig 之后输出，避免被根 logger 未初始化吞掉）
-    neurun_home, raw_data, raw_rundown_data, raw_invite, raw_cwd, deploy_exists = raw_probe
+    neurun_home, raw_data, raw_rundown_data, raw_invite, raw_cwd, deploy_env_status = raw_probe
     logger.info(
         "配置探测[原始环境]: cwd=%s NEURUN_HOME=%r NEURUN_DATA_DIR=%r "
         "RUNDOWN_DATA_DIR=%r NEURUN_INVITE_CODES_FILE=%r",
@@ -422,9 +459,9 @@ def get_config(*, validate_credentials: bool = True) -> Config:
         raw_invite,
     )
     logger.info(
-        "配置探测[部署环境文件]: %s 存在=%s",
+        "配置探测[部署环境文件]: %s 状态=%s",
         _DEPLOY_ENV_FILE,
-        deploy_exists,
+        deploy_env_status,
     )
     logger.info(
         "配置探测[解析结果]: data_dir=%r invite_codes_file=%r -> invite_codes_path=%s",

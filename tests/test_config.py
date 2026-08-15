@@ -2,8 +2,11 @@
 
 import logging
 import os
+import pathlib
 from pathlib import Path
 from unittest import mock
+
+import pytest
 
 from src.config import Config, ConfigError, _mask_email, get_ai_config, get_config
 
@@ -245,7 +248,7 @@ class TestConfigDiagnosticLogs:
         records = self._records(caplog)
         assert any("配置探测[原始环境]" in r and "NEURUN_DATA_DIR='/var/lib/neurun'" in r
                    and f"NEURUN_INVITE_CODES_FILE='{target}'" in r for r in records)
-        assert any("配置探测[部署环境文件]" in r and "存在=True" in r for r in records)
+        assert any("配置探测[部署环境文件]" in r and "状态=可读" in r for r in records)
         assert any("配置探测[解析结果]" in r and f"invite_codes_path={target}" in r
                    for r in records)
 
@@ -265,6 +268,41 @@ class TestConfigDiagnosticLogs:
                    and "NEURUN_INVITE_CODES_FILE=None" in r for r in records)
         assert any("配置探测[解析结果]" in r
                    and "invite_codes_path=" in r for r in records)
+
+
+    def test_unreadable_deploy_env_file_does_not_crash(
+        self, tmp_path, monkeypatch, caplog
+    ):
+        """ECS 部署权限未收敛场景：部署环境文件对运行用户不可访问（EACCES）
+        时 get_config 不崩溃，跳过该文件并回退默认路径。
+
+        线上事故复现：/etc/neurun 目录 root:root 0750，neurun 用户 stat 即
+        PermissionError。注意 Python 3.12 的 Path.exists() 对 EACCES 会传播、
+        不返回 False（3.13+ 才吞掉），因此必须 try/except 包住；这里用
+        定向 monkeypatch 模拟 3.12 的传播行为。
+        """
+        deploy_env = tmp_path / "neurun.env"
+        monkeypatch.setattr("src.config._DEPLOY_ENV_FILE", deploy_env)
+
+        real_exists = pathlib.Path.exists
+
+        def fake_exists(self, *args, **kwargs):
+            if str(self) == str(deploy_env):
+                raise PermissionError(13, "Permission denied")
+            return real_exists(self, *args, **kwargs)
+
+        monkeypatch.setattr("pathlib.Path.exists", fake_exists)
+        with mock.patch.dict(os.environ, {}, clear=True), \
+                mock.patch("src.config.Path.home",
+                           return_value=tmp_path / "home"), \
+                caplog.at_level(logging.INFO, logger="src.config"):
+            config = get_config(validate_credentials=False)
+
+        project_root = Path(__file__).resolve().parent.parent
+        assert config.invite_codes_path == str(project_root / "data" / "invite-codes.json")
+        records = [r.getMessage() for r in caplog.records]
+        assert any("配置探测[部署环境文件]" in r and "访问异常" in r for r in records)
+        assert any("部署环境文件不可用" in r for r in records)
 
 
 class TestWebSyncCapacityConfig:
