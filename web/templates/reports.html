@@ -421,10 +421,10 @@ async function genReport(mode){
     if(j.code==='ai_request_in_progress'){await refreshAIStatus();return}
     if(j.status==='ok'){
       msg.innerHTML='<span style="color:var(--performance)">✅ 已生成'+(j.data_readiness==='limited'?'受限版':'完整日报')+' <a href="/?date='+encodeURIComponent(j.date)+'" style="color:var(--recovery)">查看 →</a></span>';
-      load();
-    }else{msg.innerHTML='<span style="color:var(--danger)">❌ '+esc(j.message||'失败')+'</span>';if(j.readiness){currentReadiness=j.readiness;checkReadiness()}}
-  }catch(e){msg.innerHTML='<span style="color:var(--danger)">网络错误</span>'}
-  renderDailyStatus();
+      // 等待列表刷新完成（selectedDaily 才有新日报），期间不再触发 checkReadiness 竞态覆盖
+      await load();
+    }else{msg.innerHTML='<span style="color:var(--danger)">❌ '+esc(j.message||'失败')+'</span>';if(j.readiness){currentReadiness=j.readiness;checkReadiness()}renderDailyStatus()}
+  }catch(e){msg.innerHTML='<span style="color:var(--danger)">网络错误</span>';renderDailyStatus()}
 }
 
 async function genWeeklyReport(){

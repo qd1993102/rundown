@@ -788,6 +788,9 @@ def test_daily_templates_are_mobile_first_and_support_local_png_export():
     assert 'id="aiTaskStatus"' in reports
     assert "/api/ai/tasks/current" in reports
     assert "function refreshAIStatus()" in reports
+    # 日报生成后按钮状态不得被 readiness 竞态覆盖：成功路径 await load() 后再渲染状态
+    assert "await load();" in reports
+    assert "await load()" in reports
     assert "[hidden]{display:none!important}" in reports
     assert ".weekly-review-details:not([open])>.weekly-review-body{display:none}" in reports
     # 周进度数据新鲜度与手动刷新（渐进披露）

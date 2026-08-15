@@ -10,6 +10,10 @@
 
 ### Fixed
 
+- **改动描述**: 修复报告中心生成日报后按钮仍显示“生成日报”的问题：`genReport` 成功路径存在异步竞态（未 `await` 的 `load()` 与末尾 `renderDailyStatus()` 触发的 `checkReadiness()` 竞争，后者晚到把“查看日报”覆盖回“生成日报”）；改为成功路径 `await load()` 后由列表刷新渲染状态，失败路径保留刷新。
+- **影响范围**: `web/templates/reports.html`、`tests/test_web.py`
+- **关联文档**: [Bug 记录：生成日报后按钮状态未切换](bugfixes/2026-08-15-report-gen-btn-stale-state.md)
+
 - **改动描述**: 修复训练页“训练前说明”等异步按钮在 `await` 后访问 `event.currentTarget` 被重置为 `null` 导致的 `Cannot set properties of null (setting 'disabled')` 报错：6 个异步回调（训练前说明、比赛策略、方案修订/反馈提交、提案确认/拒绝）改为同步阶段捕获按钮引用。
 - **影响范围**: `web/templates/training.html`、`tests/test_web.py`
 - **关联文档**: [Bug 记录：异步事件 currentTarget 为空](bugfixes/2026-08-15-async-event-currenttarget-null.md)
