@@ -513,11 +513,17 @@ def _detail_pace(summary: dict, analysis: dict | None = None) -> str:
                 parts = []
                 if work_pace:
                     text = f"快 {_pace_text(work_pace)}/km"
+                    work_distance = group.get("work_distance_m")
+                    if work_distance and classification.get("quantity_reliable") is not False:
+                        text += f" · {work_distance / 1000:.1f}km"
                     if work_hr:
                         text += f"(hr{work_hr:.0f})"
                     parts.append(text)
                 if recovery_pace:
                     text = f"慢 {_pace_text(recovery_pace)}/km"
+                    recovery_distance = group.get("recovery_distance_m")
+                    if recovery_distance and classification.get("quantity_reliable") is not False:
+                        text += f" · {recovery_distance / 1000:.1f}km"
                     if recovery_hr:
                         text += f"(hr{recovery_hr:.0f})"
                     parts.append(text)

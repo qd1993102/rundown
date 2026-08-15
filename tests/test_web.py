@@ -873,6 +873,12 @@ def test_daily_templates_are_mobile_first_and_support_local_png_export():
     # 无完全完成课时收敛“完成/已跑”0 值，避免误解为没练
     assert "const planPills" in training
     assert "doneCount>0" in training
+    # 异步回调不得在 await 后访问 event.currentTarget（会被重置为 null）
+    assert "const button=event.currentTarget" in training
+    assert "const submitter=event.submitter" in training
+    assert "finally{event.currentTarget.disabled=false}" not in training
+    assert "event.currentTarget.disabled=false" not in training
+    assert "event.submitter.disabled=false" not in training
     assert "当前教练定位" not in training
     assert "function modeBannerMarkup" not in training
 

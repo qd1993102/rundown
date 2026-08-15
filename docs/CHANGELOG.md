@@ -1,5 +1,19 @@
 # Changelog
 
+## 2026-08-15
+
+### Changed
+
+- **改动描述**: 训练结构识别按距离口径输出：`composition` 增加 `basis` 字段（`quantity_reliable` 且分段携带距离时按各角色距离占比，否则回退段数占比），消除“快段占比”被误读为距离占比的语义歧义；`work_recovery_groups` 每组新增 `work_distance_m` / `work_duration_s` / `recovery_distance_m` / `recovery_duration_s`，日报与详情“每组配速”在距离可信时展示每组距离（如 `快 3'04"/km · 1.0km(hr148)`）。
+- **影响范围**: `src/summary_extraction.py`、`src/memory.py`、`src/render.py`、`tests/test_summary_extraction.py`、`tests/test_render.py`
+- **关联文档**: [摘要提取设计 §10.5](design/summary-extraction.md)
+
+### Fixed
+
+- **改动描述**: 修复训练页“训练前说明”等异步按钮在 `await` 后访问 `event.currentTarget` 被重置为 `null` 导致的 `Cannot set properties of null (setting 'disabled')` 报错：6 个异步回调（训练前说明、比赛策略、方案修订/反馈提交、提案确认/拒绝）改为同步阶段捕获按钮引用。
+- **影响范围**: `web/templates/training.html`、`tests/test_web.py`
+- **关联文档**: [Bug 记录：异步事件 currentTarget 为空](bugfixes/2026-08-15-async-event-currenttarget-null.md)
+
 ## 2026-08-14
 
 ### Changed

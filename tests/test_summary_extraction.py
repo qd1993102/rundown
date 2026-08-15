@@ -345,6 +345,14 @@ def _seq(rows):
     ]
 
 
+def _seq_with_distance(rows):
+    return [
+        {"pace_sec_per_km": p, "avg_hr": h, "avg_cadence": c, "stride_length_cm": s,
+         "split_type": t, "distance_m": d}
+        for p, h, c, s, t, d in rows
+    ]
+
+
 def test_classify_fartlek_two_alternations_with_hr_and_cadence():
     # 变速：主体 320s/km，2 组快慢交替（快 255s，慢 360s），
     # 快段未达阈值（阈值 255=快段），无 INTERVAL 标记，心率与步频同步响应
@@ -428,6 +436,52 @@ def test_classify_missing_hr_and_other_dimensions_lowers_confidence():
     assert "心率" in result["missing_evidence"]
     assert "步频" in result["missing_evidence"]
     assert "步幅" in result["missing_evidence"]
+
+
+def test_composition_and_groups_carry_distance_when_quantity_reliable():
+    # 距离可信时：快段占比按距离口径（快段距离 / 总距离），组明细携带每组距离/时长
+    seq = _seq_with_distance([
+        (320, 140, 170, 110, "warmup", 4000),
+        (255, 160, 180, 120, "fast", 1000),
+        (380, 145, 172, 112, "recovery", 1000),
+        (255, 162, 181, 121, "fast", 1000),
+        (380, 146, 172, 112, "recovery", 1000),
+        (320, 140, 170, 110, "cooldown", 2000),
+    ])
+    result = classify_training_structure(
+        seq, threshold_heart_rate=165, threshold_pace_sec_per_km=255,
+    )
+    assert result["structure_type"] == "fartlek"
+    by_role = {item["role"]: item for item in result["composition"]}
+    assert by_role["fast"]["basis"] == "distance"
+    assert by_role["fast"]["pct"] == 20.0  # 2×1000m / 10000m
+    assert by_role["slow"]["pct"] == 20.0  # 2×1000m / 10000m
+    assert by_role["body"]["pct"] == 60.0  # 4000 + 2000
+    groups = result["work_recovery_groups"]
+    assert groups[0]["work_distance_m"] == 1000
+    assert groups[0]["recovery_distance_m"] == 1000
+    assert "work_duration_s" in groups[0]
+    assert "recovery_duration_s" in groups[0]
+
+
+def test_composition_falls_back_to_segment_count_without_distance():
+    # 分段无距离（如旧数据）时，占比回退按段数口径并标记 basis
+    seq = _seq([
+        (320, 140, 170, 110, "warmup"),
+        (255, 160, 180, 120, "fast"),
+        (360, 145, 172, 112, "recovery"),
+        (255, 162, 181, 121, "fast"),
+        (360, 146, 172, 112, "recovery"),
+        (320, 140, 170, 110, "cooldown"),
+    ])
+    result = classify_training_structure(
+        seq, threshold_heart_rate=165, threshold_pace_sec_per_km=255,
+    )
+    by_role = {item["role"]: item for item in result["composition"]}
+    assert by_role["fast"]["basis"] == "segment_count"
+    assert by_role["fast"]["pct"] == round(2 / 6 * 100, 1)
+    groups = result["work_recovery_groups"]
+    assert groups[0]["work_distance_m"] is None
     assert result["structure_type"] in ("fartlek", "interval")
 
 

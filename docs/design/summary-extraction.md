@@ -411,8 +411,10 @@ quantity_gate: {"ratio": float, "quantity_reliable": bool}  # ratio ∈ [0.85, 1
 ### 10.5 数据门禁与降级
 
 - `quantity_reliable=false`（×2 等）→ 只输出强度模式（序列特征），不输出段距离/时长。
+- **结构组成占比口径（2026-08-15 起）**：`composition` 增加 `basis` 字段——分段距离合计与总量偏差可接受（`quantity_reliable`）且分段携带 `distance_m` 时，`basis=distance`，占比按各角色距离合计/总距离（“快段占比”即快段距离占比）；否则回退 `basis=segment_count`（按段数占比）。避免“快段占比 3.2%”被当作距离占比而实际是段数占比的语义误导。
+- **每组距离/时长（2026-08-15 起）**：`segment_sequence` 每段携带 `distance_m`；`work_recovery_groups` 每组新增 `work_distance_m` / `work_duration_s` / `recovery_distance_m` / `recovery_duration_s`，日报“每组配速”在 `quantity_reliable` 时展示每组距离（如 `快 3'04"/km · 1.0km(hr148)`），不可信时不展示并沿用“仅强度模式有效”标注。
 - 0811 真实案例：lapDTOs 注入后 quantity_gate ratio=1.0 reliable，
-  识别"间歇（4 组快慢交替）· 置信 100% · 成分 fast 16%/slow 16%/body 68%"；
+  识别“间歇（4 组快慢交替）· 置信 100% · 成分 fast 16%/slow 16%/body 68%”；
   ×2 兜底路径仍可靠识别强度模式（不误判为变速）。
 - **存量活动兜底**（`memory._segment_sequence_fallback`，2026-08-12 已实现）：旧 schema summary
   无 `segment_sequence`/`quantity_gate` 时，日报分析层从 `activity_splits` 表重建分段特征序列

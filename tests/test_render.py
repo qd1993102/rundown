@@ -401,12 +401,12 @@ def test_detail_shows_per_group_pace():
         "composition": [], "quantity_reliable": True,
         "fatigue_signal": {"detected": False},
         "work_recovery_groups": [
-            {"group": 1, "work_pace_sec_per_km": 255, "work_avg_hr": 160,
-             "recovery_pace_sec_per_km": 360, "recovery_avg_hr": 145},
-            {"group": 2, "work_pace_sec_per_km": 255, "work_avg_hr": 162,
-             "recovery_pace_sec_per_km": 360, "recovery_avg_hr": 146},
+            {"group": 1, "work_pace_sec_per_km": 255, "work_distance_m": 1000, "work_avg_hr": 160,
+             "recovery_pace_sec_per_km": 360, "recovery_distance_m": 1000, "recovery_avg_hr": 145},
+            {"group": 2, "work_pace_sec_per_km": 255, "work_distance_m": 1200, "work_avg_hr": 162,
+             "recovery_pace_sec_per_km": 360, "recovery_distance_m": 1200, "recovery_avg_hr": 146},
         ],
     }
     html = _detail(fm)
-    assert "每组配速：第1组 快 4'15\"/km(hr160) → 慢 6'00\"/km(hr145)" in html
-    assert "第2组" in html
+    assert "每组配速：第1组 快 4'15\"/km · 1.0km(hr160) → 慢 6'00\"/km · 1.0km(hr145)" in html
+    assert "第2组 快 4'15\"/km · 1.2km(hr162)" in html

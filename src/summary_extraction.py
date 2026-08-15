@@ -570,6 +570,7 @@ def build_session_summary(detail: dict[str, Any]) -> SessionSummaryFacts:
         segment_sequence.append({
             "pace_sec_per_km": round(pace, 1) if pace else None,
             "duration_s": _first(s, "duration", "duration_sec", "durationSeconds"),
+            "distance_m": _first(s, "distance", "distance_m", "distanceMeters"),
             "avg_hr": _first(s, "averageHR", "avgHr", "avg_hr"),
             "avg_cadence": _first(s, "averageRunCadence", "avgCadence", "avg_cadence"),
             "stride_length_cm": _first(s, "strideLength", "stride_length_cm", "avgStepLength"),
@@ -845,10 +846,14 @@ def classify_training_structure(
         work_recovery_groups.append({
             "group": len(work_recovery_groups) + 1,
             "work_pace_sec_per_km": work_pace,
+            "work_distance_m": work.get("distance_m"),
+            "work_duration_s": work.get("duration_s"),
             "work_avg_hr": work.get("avg_hr"),
             "work_cadence": work.get("avg_cadence"),
             "work_stride_cm": work.get("stride_length_cm"),
             "recovery_pace_sec_per_km": recovery.get("pace_sec_per_km") if recovery else None,
+            "recovery_distance_m": recovery.get("distance_m") if recovery else None,
+            "recovery_duration_s": recovery.get("duration_s") if recovery else None,
             "recovery_avg_hr": recovery.get("avg_hr") if recovery else None,
         })
 
@@ -888,11 +893,31 @@ def classify_training_structure(
     structure_type = "unknown"
     label = "未知"
     composition: list[dict[str, Any]] = []
-    role_pcts = {
-        role: round(roles.count(role) / len(roles) * 100, 1)
-        for role in sorted(set(roles), key=lambda r: ("fast", "slow", "body").index(r) if r in ("fast", "slow", "body") else 9)
-    }
-    composition = [{"role": role, "pct": pct} for role, pct in role_pcts.items()]
+    # ── 结构组成占比：距离可信时按距离口径（快段占比 = 快段距离 / 总距离），
+    #    否则回退按段数口径；basis 标记来源供下游解释。 ──
+    role_order = lambda r: ("fast", "slow", "body").index(r) if r in ("fast", "slow", "body") else 9
+    dist_by_role: dict[str, float] = {}
+    for role, segment in zip(roles, segments):
+        dist = _num(segment.get("distance_m")) or 0.0
+        dist_by_role[role] = dist_by_role.get(role, 0.0) + dist
+    total_dist = sum(dist_by_role.values())
+    use_distance = bool(total_dist > 0 and quantity_reliable)
+    if use_distance:
+        role_pcts = {
+            role: round(dist_by_role[role] / total_dist * 100, 1)
+            for role in sorted(set(roles), key=role_order)
+        }
+        basis = "distance"
+    else:
+        role_pcts = {
+            role: round(roles.count(role) / len(roles) * 100, 1)
+            for role in sorted(set(roles), key=role_order)
+        }
+        basis = "segment_count"
+    composition = [
+        {"role": role, "pct": pct, "basis": basis}
+        for role, pct in role_pcts.items()
+    ]
 
     if alternations >= 2:
         # 间歇 vs 变速：设备间歇标记（INTERVAL_*）优先；其次快段达阈值强度
