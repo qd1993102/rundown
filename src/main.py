@@ -1671,10 +1671,21 @@ def _admin_mcp_tools_enabled(transport: str, host: str) -> bool:
     return True
 
 
-def _invite_output(args: argparse.Namespace, payload: Any) -> None:
-    """输出邀请码管理员命令结果。"""
+def _invite_output(
+    args: argparse.Namespace,
+    payload: Any,
+    *,
+    file_path: Path | None = None,
+) -> None:
+    """输出邀请码管理员命令结果。
+
+    file_path 仅在 create 时传入：table 模式直接打印，json 模式写入 stderr，
+    保持 stdout JSON 结构稳定（供 AI/MCP 消费）。
+    """
     if args.output == "json":
         console.print_json(json.dumps(payload, ensure_ascii=False, default=str))
+        if file_path is not None:
+            print(f"已写入文件: {file_path}", file=sys.stderr)
         return
 
     records = payload if isinstance(payload, list) else [payload]
@@ -1696,6 +1707,8 @@ def _invite_output(args: argparse.Namespace, payload: Any) -> None:
             str(item.get("used_by") or "—"),
         )
     console.print(table)
+    if file_path is not None:
+        console.print(f"已写入文件: {file_path}")
 
 
 def cmd_invite(args: argparse.Namespace) -> None:
@@ -1709,7 +1722,7 @@ def cmd_invite(args: argparse.Namespace) -> None:
         store = InvitationStore(config.invite_codes_path)
         if args.invite_subcommand == "create":
             records = [item.to_admin_dict(reveal=True) for item in store.create(args.count)]
-            _invite_output(args, records)
+            _invite_output(args, records, file_path=store.path)
         elif args.invite_subcommand == "list":
             _invite_output(args, [item.to_admin_dict() for item in store.list_all()])
         elif args.invite_subcommand == "show":

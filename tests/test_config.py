@@ -1,6 +1,7 @@
 """测试 config.py — 环境变量加载和向后兼容。"""
 
 import os
+from pathlib import Path
 from unittest import mock
 
 from src.config import Config, ConfigError, _mask_email, get_ai_config, get_config
@@ -163,6 +164,13 @@ class TestInviteCodeConfig:
     def test_invite_codes_default_to_web_data_dir(self, tmp_path):
         config = Config(data_dir=str(tmp_path))
         assert config.invite_codes_path == str(tmp_path / "invite-codes.json")
+
+    def test_relative_data_dir_resolves_against_project_root(self):
+        """相对 data_dir（含默认 ./data）固定基于项目根解析，不随 cwd 漂移。"""
+        with mock.patch.dict(os.environ, {}, clear=True):
+            config = Config()
+        project_root = Path(__file__).resolve().parent.parent
+        assert config.invite_codes_path == str(project_root / "data" / "invite-codes.json")
 
     def test_explicit_invite_codes_file_wins(self, tmp_path):
         custom = tmp_path / "private" / "codes.json"

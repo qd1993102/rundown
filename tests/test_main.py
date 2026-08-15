@@ -543,3 +543,21 @@ def test_sync_activity_details_rebuilds_missing_summary_facts(tmp_path):
     assert (facts.get("intensity") or {}).get("pace_bands_pct"), \
         "重建的摘要应含分段配速带（intensity.pace_bands_pct）"
     assert facts.get("structure"), "重建的摘要应含结构（n_splits/步频等）"
+
+
+def test_invite_create_reports_written_file(tmp_path, monkeypatch, capsys):
+    """invite create 的 json 模式在 stderr 输出实际写入路径，stdout 保持纯 JSON。"""
+    from src.main import cmd_invite
+
+    target = tmp_path / "invite-codes.json"
+    fake_config = SimpleNamespace(invite_codes_path=str(target))
+    monkeypatch.setattr("src.main.get_config", lambda **kw: fake_config)
+
+    args = SimpleNamespace(invite_subcommand="create", count=1, output="json")
+    cmd_invite(args)
+
+    captured = capsys.readouterr()
+    assert '"code"' in captured.out, "stdout 应输出 JSON 邀请码"
+    assert "已写入文件" in captured.err
+    assert "invite-codes.json" in captured.err
+    assert target.exists(), "邀请码应写入解析出的文件"

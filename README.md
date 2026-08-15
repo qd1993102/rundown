@@ -111,6 +111,12 @@ neurun invite show inv_xxx --reveal --output json
 neurun invite revoke inv_xxx --output json
 ```
 
+> **路径固定规则**：邀请码的生成与 Web 注册读取**始终使用同一个解析逻辑**
+> （`config.invite_codes_path`）：`NEURUN_INVITE_CODES_FILE` 显式指定优先；未指定时
+> 使用 `<data_dir>/invite-codes.json`，其中相对 `data_dir` 固定基于项目根目录解析，
+> 不随进程 cwd（如 ECS release 目录）漂移。`invite create` 输出时会在 stderr 打印
+> 实际写入文件路径，便于确认。ECS/systemd 部署建议显式固定绝对路径（见下方）。
+
 | 子命令 | 关键参数 | 说明 |
 |--------|----------|------|
 | `invite create` | `-n/--count`, `-o/--output` | 生成 1–100 个 6 位随机一次性邀请码，返回完整码 |
@@ -147,14 +153,19 @@ docker compose exec neurun neurun invite create --output json
 ```
 
 systemd/ECS 部署必须使用与 Web 服务相同的低权限用户写入持久化目录，不能直接以
-root 运行邀请码或同步命令。例如服务用户为 `neurun` 时：
+root 运行邀请码或同步命令。**关键：CLI 生成时必须显式传入与 Web 进程相同的
+`NEURUN_DATA_DIR` / `NEURUN_INVITE_CODES_FILE`（且用 `/opt/neurun-current/.venv/bin/neurun`
+绝对路径，不要用 PATH 里的 `neurun` 旧命令），否则会写入默认相对路径。**
+例如服务用户为 `neurun` 时：
 
 ```bash
-sudo -u neurun env \
+cd /tmp && sudo -u neurun env \
   NEURUN_DATA_DIR=/var/lib/neurun \
   NEURUN_INVITE_CODES_FILE=/var/lib/neurun/invite-codes.json \
-  /opt/neurun-venv/bin/neurun invite create --count 5 --output json
+  /opt/neurun-current/.venv/bin/neurun invite create --count 30 --output json
 ```
+
+`--output json` 时 stderr 会打印 `已写入文件: <路径>`，可据此确认写到了 Web 同款文件。
 
 若曾经用 `sudo neurun ...` 生成过 `/var/lib/neurun` 下的数据，先修复归属再重启服务：
 

@@ -24,7 +24,7 @@
 | `NEURUN_MEMORY_DIR` | ❌ | `./memory` | 记忆存储根目录（目标、档案、日报等） |
 | `NEURUN_HOME` | ❌ | (当前目录) | 数据工作目录，设后所有相对路径基于此解析 |
 | `NEURUN_DATA_DIR` | Web | `./data` | Web 多用户持久化目录 |
-| `NEURUN_INVITE_CODES_FILE` | Web | `<data_dir>/invite-codes.json` | 邀请码 JSON 路径 |
+| `NEURUN_INVITE_CODES_FILE` | Web | `<data_dir>/invite-codes.json` | 邀请码 JSON 路径；相对 `data_dir` 固定基于项目根解析，不随 cwd 漂移，部署时建议显式设绝对路径 |
 | `NEURUN_ENABLE_ADMIN_TOOLS` | 本地 MCP | `false` | 仅 stdio/localhost 启用邀请码管理员 tools；公网 Web 禁止 |
 | `NEURUN_SYNC_MAX_CONCURRENCY` | Web | `4` | 单进程同时执行的不同用户同步数 |
 | `NEURUN_SYNC_MAX_PENDING` | Web | `100` | 单进程执行中与排队中的不同用户总数 |

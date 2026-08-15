@@ -1,5 +1,13 @@
 # Changelog
 
+## 2026-08-16
+
+### Fixed
+
+- **改动描述**: 修复 ECS release 切换后邀请码生成与读取可能落在不同文件的问题：`config.invite_codes_path` 兜底逻辑改为相对 `data_dir` 固定基于项目根目录（`src/` 上级）解析，不再随进程 cwd（release 目录）漂移；`invite create --output json` 在 stderr 打印实际写入文件路径（stdout JSON 结构不变，AI/MCP 兼容）。ECS/systemd 部署仍以 `NEURUN_INVITE_CODES_FILE=/var/lib/neurun/invite-codes.json` 绝对路径固定读写位置。
+- **影响范围**: `src/config.py`、`src/main.py`、`tests/test_config.py`、`tests/test_main.py`
+- **关联文档**: [Bug 记录：ECS 发布后邀请码读写路径漂移](bugfixes/2026-08-16-invite-code-path-drift.md)
+
 ## 2026-08-15
 
 ### Added

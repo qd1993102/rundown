@@ -236,8 +236,22 @@ class Config:
 
     @property
     def invite_codes_path(self) -> str:
-        """邀请码 JSON 路径；默认随 Web 数据目录持久化。"""
-        return self.invite_codes_file or str(Path(self.data_dir) / "invite-codes.json")
+        """邀请码 JSON 路径。
+
+        优先级：
+        1. `NEURUN_INVITE_CODES_FILE` 显式指定；ECS/容器部署推荐设置为
+           持久化数据目录的绝对路径（如 `/var/lib/neurun/invite-codes.json`），
+           保证 release 切换后生成与读取位置一致。
+        2. `<data_dir>/invite-codes.json`；其中 data_dir 为相对路径时固定基于
+           项目根目录（`src/` 的上级）解析，不随进程 cwd 漂移，避免 ECS
+           release 目录切换导致邀请码生成与读取落在不同文件。
+        """
+        if self.invite_codes_file:
+            return self.invite_codes_file
+        data_dir = Path(self.data_dir)
+        if not data_dir.is_absolute():
+            data_dir = Path(__file__).resolve().parent.parent / data_dir
+        return str(data_dir / "invite-codes.json")
 
 
 @dataclass
