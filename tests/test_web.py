@@ -888,6 +888,9 @@ def test_daily_templates_are_mobile_first_and_support_local_png_export():
     assert "function adjustmentsInlineMarkup(adjustments)" in training
     assert "方案已做哪些安全调整" in training
     assert "方案已通过确定性安全校验" in training
+    # 课程格子展示时长与距离（定时跑换算距离标记“约”）
+    assert "duration_minutes?`${esc(w.duration_minutes)} 分钟`" in training
+    assert "w.distance_estimated?'约 ':'" in training
     assert "当前教练定位" not in training
     assert "function modeBannerMarkup" not in training
 

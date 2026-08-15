@@ -837,15 +837,14 @@ def test_reconcile_estimates_duration_only_workouts_in_weekly_total():
     assert estimated["duration_minutes"] == 60
     total = sum(w.get("distance_km") or 0 for w in normalized_week["workouts"])
     assert total == pytest.approx(target)
-    # 定时跑换算的文案须是用户视角执行导向（时长为主、距离为参考）
-    trace_adj = "；".join(str(x) for x in (trace.get("adjustments") or []))
-    assert "按你的配速换算" in trace_adj
-    assert "实际按时长跑" in trace_adj
+    # 定时跑换算距离是课程属性补全：课程带估算标记，且不进入 adjustments（不是安全调整）
+    assert estimated.get("distance_estimated") is True
+    assert not any("定时跑" in str(x) for x in (trace.get("adjustments") or []))
     # 定时跑参与对齐后，距离型课程不再被过度放大
     max_km = max(w.get("distance_km") or 0 for w in normalized_week["workouts"])
     assert max_km <= target * 0.5
-    # 估算被记录进调整说明
-    assert any("定时跑" in item or "估算" in item for item in normalized_week["reconciliation"]["adjustments"])
+    # 换算不进入 reconciliation 调整说明（课程距离估算标记已承载该信息）
+    assert not any("定时跑" in item or "估算" in item for item in normalized_week["reconciliation"]["adjustments"])
 
 
 class _AuditDagRunner(CoachSkillRunner):

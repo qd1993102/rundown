@@ -12,9 +12,9 @@
 - **影响范围**: `web/templates/training.html`、`tests/test_web.py`
 - **关联文档**: [训练体验产品方案](product/training-experience.md)、[训练系统设计](design/training-system.md)
 
-- **改动描述**: 定时跑课程的距离换算文案改为用户视角执行导向——“定时跑 40 分钟 ≈ 7.2 km（按你的配速换算，实际按时长跑，距离为参考）”，明确该距离是周量换算参考、执行按时长；替换原“按个人配速估算约”的系统视角表述。
-- **影响范围**: `src/training_planning.py`、`tests/test_training_planning.py`
-- **关联文档**: [训练系统设计](design/training-system.md)
+- **改动描述**: 定时跑距离换算从“安全调整”列表移出（换算属课程属性补全而非安全规范化，以 `distance_estimated` 标记承载，不再进入 `adjustments`），避免脱离课程上下文的“为什么要跑 40 分钟/什么是我的配速”困惑；日历课表格子改为时长优先（定时跑显示“40分钟”而非换算距离），legacy 课程格子显示“40 分钟 · 约 7.2 km”。
+- **影响范围**: `src/training_planning.py`、`web/templates/training.html`、`tests/test_training_planning.py`、`tests/test_web.py`
+- **关联文档**: [训练系统设计 §10](design/training-system.md)
 
 ### Fixed
 
