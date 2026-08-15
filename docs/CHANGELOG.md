@@ -8,6 +8,10 @@
 - **影响范围**: `src/training.py`、`src/web.py`、`web/templates/training.html`、`tests/test_training.py`、`tests/test_web.py`
 - **关联文档**: [训练体验产品方案 §8.6](product/training-experience.md)、[训练系统设计](design/training-system.md)
 
+- **改动描述**: 同一调整范围只保留一个待确认提案：连续重规划/同日局部调整生成新提案时，旧 pending 原子标记 superseded（today 级按 target_date 区分、scheme 级全局互斥）；作废方案当天即结束（effective_to=昨天，resolve 不再选中）并清理该方案未决提案与历史 active 版本。存量堆积的 4 个待确认提案与已作废方案已一并修复（备份 .bak-20260815）。
+- **影响范围**: `src/training.py`、`tests/test_training.py`
+- **关联文档**: [训练体验产品方案 §8.6](product/training-experience.md)、[训练系统设计](design/training-system.md)
+
 ### Changed
 
 - **改动描述**: 训练结构识别按距离口径输出：`composition` 增加 `basis` 字段（`quantity_reliable` 且分段携带距离时按各角色距离占比，否则回退段数占比），消除“快段占比”被误读为距离占比的语义歧义；`work_recovery_groups` 每组新增 `work_distance_m` / `work_duration_s` / `recovery_distance_m` / `recovery_duration_s`，日报与详情“每组配速”在距离可信时展示每组距离（如 `快 3'04"/km · 1.0km(hr148)`）。
