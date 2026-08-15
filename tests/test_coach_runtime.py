@@ -272,6 +272,30 @@ def test_non_draft_skill_keeps_full_model_payload():
     assert context.to_model_payload("review-daily-training") == context.to_payload()
 
 
+def test_framework_optional_mapping_fields_tolerate_non_object():
+    """可选的映射字段（ability_summary/goal_demand_summary/weekly_principles）
+    模型偶发返回字符串或 null 时宽容降级为空对象，不让整份草稿失败。"""
+    from src.coach_runtime.schemas import validate_training_framework
+
+    raw = {
+        "feasibility": {"level": "feasible", "confidence": 0.9, "summary": "可行"},
+        "periodization": [{"name": "基础期", "weeks": 4, "purpose": "建立基础"}],
+        "load_progression": [{"week": 1, "target_km": 40}],
+        "goal_demand_summary": "不应是字符串",
+        "ability_summary": None,
+        "weekly_principles": 123,
+    }
+    result = validate_training_framework(raw)
+    assert result["goal_demand_summary"] == {}
+    assert result["ability_summary"] == {}
+    assert result["weekly_principles"] == {}
+    assert result["periodization"][0]["name"] == "基础期"
+    # 核心结构仍严格：periodization 为空仍失败
+    import pytest
+    with pytest.raises(Exception):
+        validate_training_framework({"periodization": []})
+
+
 def test_runner_rejects_race_skill_in_continuous_mode():
     runner = CoachSkillRunner(SkillRegistry.default(), FakeModel())
     context = CoachRunContext(
