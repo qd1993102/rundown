@@ -93,6 +93,26 @@ def _facts_fingerprint(value: Any) -> str:
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:24]
 
 
+# 重规划注入当前方案时只保留结构字段，剔除旧结论/依据（data_basis、feasibility、
+# review、adjustments 等）：AI 若看到旧 data_basis（如旧的长距离能力结论）会复述旧结论，
+# 与重规划时刻实时计算的能力事实冲突；同时大幅减小载荷（active_scheme 曾达 180KB/45K tokens）。
+_REVISION_SCHEME_STRUCTURE_KEYS = (
+    "plan_id", "version", "goal_id", "goal_snapshot", "constraints",
+    "coaching_mode", "periodization", "weekly_pattern", "first_four_weeks",
+    "load_progression", "weekly_mileage_target", "current_phase",
+    "activation", "effective_from", "created_at", "updated_at",
+)
+
+
+def _active_scheme_structure(scheme: dict[str, Any]) -> dict[str, Any]:
+    """重规划时只向 AI 暴露当前方案的结构，不暴露历史结论字段。"""
+    return {
+        key: copy.deepcopy(scheme[key])
+        for key in _REVISION_SCHEME_STRUCTURE_KEYS
+        if key in scheme
+    }
+
+
 def _coerce_date(value: Any, *, field: str = "date") -> date:
     try:
         return value if isinstance(value, date) else date.fromisoformat(str(value))
@@ -3877,7 +3897,7 @@ class TrainingService:
                     facts,
                     envelope,
                     execution_summary=execution_summary,
-                    active_scheme=scheme,
+                    active_scheme=_active_scheme_structure(scheme),
                     recovery_snapshot=setup.get("recovery_snapshot") or {},
                 )
             except TrainingSchemeCandidateUnavailable as exc:

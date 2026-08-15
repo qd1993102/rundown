@@ -2,13 +2,77 @@
 
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, timedelta
+from pathlib import Path
 from types import SimpleNamespace
 
 from src.training_service_factory import (
     build_capacity_athlete_context,
     project_capacity_profile,
+    _running_distances,
 )
+
+
+def test_running_distances_filters_by_window_and_running_only():
+    items = [
+        {"activity_type": "running", "activity_name": "早跑",
+         "activity_date": "2026-08-09", "distance_meters": 20000},
+        {"activity_type": "running", "activity_name": "本周长跑",
+         "activity_date": "2026-08-15", "distance_meters": 30000},
+        {"activity_type": "cycling", "activity_name": "骑行",
+         "activity_date": "2026-08-09", "distance_meters": 50000},
+        {"activity_type": "running", "activity_name": "超窗",
+         "activity_date": "2026-08-20", "distance_meters": 10000},
+    ]
+    got = _running_distances(items, date(2026, 8, 3), date(2026, 8, 9))
+    assert got == [20.0]  # 仅上一周内跑步活动，骑行与窗口外排除
+
+
+class _MockStorage:
+    def __init__(self, activities):
+        self._activities = activities
+
+    def get_local_user_id(self):
+        return "u1"
+
+    def get_activities_range(self, user_id, start, end):
+        result = []
+        for item in self._activities:
+            d = date.fromisoformat(str(item["activity_date"])[:10])
+            if start <= d <= end:
+                result.append(item)
+        return result
+
+    def get_sync_calendar(self, user_id, start, end, today=None):
+        return {"summary": {"synced": 7}}
+
+    def close(self):
+        pass
+
+
+def test_setup_baseline_longest_distance_uses_28d_window(tmp_path):
+    """周量基线取上一完整自然周，但长距离能力取近 28 天窗口：
+    本周刚完成的 30km 长距离不得被上一周窗口漏掉。"""
+    from src.config import Config
+    from src.training_service_factory import build_training_service
+
+    activities = [
+        {"activity_id": "a1", "activity_type": "running", "activity_name": "上周长跑",
+         "activity_date": "2026-08-09", "distance_meters": 20000},
+        {"activity_id": "a2", "activity_type": "running", "activity_name": "本周长跑",
+         "activity_date": "2026-08-15", "distance_meters": 30000},
+    ]
+    storage = _MockStorage(activities)
+    config = Config(data_dir=str(tmp_path))
+    Path(config.db_path).parent.mkdir(parents=True, exist_ok=True)
+    Path(config.db_path).touch()  # 触发 storage 分支而非空基线
+    service = build_training_service(config, storage_factory=lambda cfg: storage)
+
+    setup = service._setup_context(target=date(2026, 8, 15))
+    baseline = setup["baseline"]
+    assert baseline["previous_week_km"] == 20.0      # 周量：上一完整自然周 08-03~08-09
+    assert baseline["longest_distance_km"] == 30.0   # 长距离能力：28 天窗口（含本周 30km）
+    assert baseline["reference_window_end"] == "2026-08-09"
 
 
 def test_capacity_context_gates_training_load_omitted():

@@ -1530,6 +1530,39 @@ def test_race_strategy_rejects_requests_that_are_too_early(tmp_path):
     assert exc_info.value.code == "race_strategy_not_available"
 
 
+def test_active_scheme_structure_excludes_stale_conclusions():
+    """重规划注入当前方案只保留结构，剔除旧 data_basis/feasibility 等结论字段：
+    AI 不得复述旧结论（如旧的长距离能力），能力事实以重规划时刻实时计算为准。"""
+    from src.training import _active_scheme_structure
+    scheme = {
+        "plan_id": "p1", "version": 3, "goal_id": "g1",
+        "goal_snapshot": {"name": "全马", "target_date": "2026-10-18"},
+        "constraints": {"available_days": [1, 3, 5]},
+        "periodization": [{"name": "基础期", "weeks": 4}],
+        "weekly_pattern": [{"weekday": 1, "title": "轻松跑"}],
+        "first_four_weeks": [{"week": 1, "target_km": 50}],
+        "load_progression": [{"week": 1, "target_km": 50}],
+        "weekly_mileage_target": 50,
+        "current_phase": {"name": "基础期"},
+        "data_basis": ["旧结论：长距离最长仅 20km"],
+        "feasibility": {"summary": "旧可行性"},
+        "review": {"items": []},
+        "adjustments": ["旧调整"],
+        "audit": {},
+        "planning_trace": [],
+        "risk_flags": [],
+        "baseline_snapshot": {"longest_distance_km": 20},
+        "user_explanation": "旧解释",
+    }
+    structure = _active_scheme_structure(scheme)
+    for key in ("data_basis", "feasibility", "review", "adjustments", "audit",
+                "planning_trace", "risk_flags", "baseline_snapshot", "user_explanation"):
+        assert key not in structure, key
+    for key in ("plan_id", "version", "goal_snapshot", "periodization",
+                "weekly_pattern", "first_four_weeks", "weekly_mileage_target"):
+        assert key in structure, key
+
+
 def test_scheme_revision_is_a_confirmed_new_version_and_preserves_active_plan(tmp_path):
     service = TrainingService(tmp_path / "memory")
     active = _active(service)

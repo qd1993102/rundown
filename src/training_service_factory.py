@@ -17,6 +17,28 @@ from .storage import Storage
 from .training import TrainingService
 
 
+def _running_distances(
+    items: list[dict], start: date, end: date,
+) -> list[float]:
+    """返回窗口内跑步活动距离（km）。长距离能力指标与周量共用，
+    避免把单周窗口当成个人长距离能力。"""
+    result: list[float] = []
+    for item in items:
+        raw_date = item.get("activity_date") or item.get("date")
+        try:
+            activity_date = date.fromisoformat(str(raw_date)[:10])
+        except (TypeError, ValueError):
+            continue
+        if not (start <= activity_date <= end):
+            continue
+        if (
+            "run" in str(item.get("activity_type") or "").lower()
+            or "跑" in str(item.get("activity_name") or "")
+        ):
+            result.append(float(item.get("distance_meters") or 0) / 1000)
+    return result
+
+
 def _load_platform_thresholds_for_config(config: Any, storage_factory: Any) -> Callable[[date], dict[str, Any]]:
     """平台自算乳酸阈值加载器：按目标日期读 daily_health_metrics 的 lthr/ltsp。"""
     def load(target: date) -> dict[str, Any]:
@@ -173,13 +195,16 @@ def build_training_service(
             user_id = storage.get_local_user_id()
             if user_id is None:
                 return result()
-            # 草稿基线只读取上一完整自然周；当前周/最近 7 天属于动态执行事实，
-            # 只能用于执行反馈和恢复判断，不能抬高新草稿的起始周量。
+            # 草稿基线只读取上一完整自然周作为起始周量；当前周/最近 7 天属于
+            # 动态执行事实，不能抬高新草稿的起始周量。长距离能力指标则取近 28 天
+            # 窗口（与 AthleteBaselineBuilder 一致），避免把单周窗口当成个人
+            # 长距离能力——例如本周刚完成的 30km 长距离不能被上周窗口漏掉。
             as_of = target or date.today()
             current_monday = as_of - timedelta(days=as_of.weekday())
             end = current_monday - timedelta(days=1)
             start = end - timedelta(days=6)
-            activities = storage.get_activities_range(user_id, start, end)
+            long_start = as_of - timedelta(days=28)
+            activities = storage.get_activities_range(user_id, long_start, as_of)
             calendar = storage.get_sync_calendar(user_id, start, end, today=end)
             calendar_counts = calendar.get("summary") or calendar.get("counts") or {}
             synced_days = int(calendar_counts.get("synced") or 0)
@@ -187,33 +212,18 @@ def build_training_service(
                 "sufficient" if synced_days >= 5
                 else "partial" if synced_days else "unknown"
             )
-            fixed_week_activities: list[dict[str, Any]] = []
-            for item in activities:
-                raw_date = item.get("activity_date") or item.get("date")
-                try:
-                    activity_date = date.fromisoformat(str(raw_date)[:10])
-                except (TypeError, ValueError):
-                    continue
-                if start <= activity_date <= end:
-                    fixed_week_activities.append(item)
-            running_activities = [
-                item for item in fixed_week_activities
-                if "run" in str(item.get("activity_type") or "").lower()
-                or "跑" in str(item.get("activity_name") or "")
-            ]
-            distances = [
-                float(item.get("distance_meters") or 0) / 1000
-                for item in running_activities
-            ]
-            previous_week_km = round(sum(distances), 1)
+            week_distances = _running_distances(activities, start, end)
+            long_distances = _running_distances(activities, long_start, as_of)
+            previous_week_km = round(sum(week_distances), 1)
             baseline = {
                 "coverage": coverage, "window_days": 7,
                 "reference_window_kind": "previous_completed_natural_week",
                 "reference_window_start": str(start),
                 "reference_window_end": str(end),
-                "activity_count": len(running_activities),
+                "activity_count": len(week_distances),
                 "distance_km": previous_week_km,
-                "longest_distance_km": round(max(distances, default=0), 1),
+                # 长距离能力：近 28 天最长跑步距离（非上一周）
+                "longest_distance_km": round(max(long_distances, default=0), 1),
                 "previous_week_km": previous_week_km,
                 # 兼容旧读模型字段，但值与上一完整自然周一致，不代表滚动 7 天。
                 "average_weekly_km": previous_week_km,

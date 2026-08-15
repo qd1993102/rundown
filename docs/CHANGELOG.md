@@ -18,6 +18,10 @@
 
 ### Fixed
 
+- **改动描述**: 修复方案重规划“长距离最长仅 20km”结论与实时能力事实不符：`load_setup` 的长距离能力指标改用近 28 天窗口（周量仍取上一完整自然周）；重规划注入当前方案时只保留结构字段、剔除旧 data_basis/feasibility 等结论（AI 不再复述旧结论，载荷从 180KB 大幅减小）。真实重规划结论由“长距离仅 20km、远低于专项需求”变为“长距离 30km、具备较高有氧基础”。
+- **影响范围**: `src/training_service_factory.py`、`src/training.py`、`tests/test_training_service_factory.py`、`tests/test_training.py`
+- **关联文档**: [Bug 记录：重规划旧长距离结论](bugfixes/2026-08-15-revision-stale-long-run-conclusion.md)
+
 - **改动描述**: 修复方案重规划 503：`revise-training-scheme` 输出完整候选（阶段 + 首四周 + 逐段处方）约 7.4KB/2000+ tokens，但 `max_tokens` 仅 1800 被截断导致 JSON 解析失败；已纳入 4000 放宽名单，与框架/课表两阶段一致。
 - **影响范围**: `src/coach_runtime/runner.py`、`tests/test_coach_runtime.py`
 - **关联文档**: [Bug 记录：重规划 503 输出截断](bugfixes/2026-08-15-scheme-revision-503-max-tokens.md)
