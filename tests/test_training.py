@@ -1593,6 +1593,53 @@ def test_scheme_revision_race_rescheduled_updates_goal_date_on_approve(tmp_path)
     assert service.goals.list_active()[0]["target_date"] == new_date
 
 
+def test_close_active_scheme_ends_today_and_clears_pending(tmp_path):
+    """作废方案当天即结束（resolve 不再选中），并清理该方案未决提案。"""
+    service = TrainingService(tmp_path / "memory")
+    active = _active(service)
+    proposal = service.propose_scheme_revision({
+        "trigger": "execution_deviation", "reason": "待作废前生成提案",
+        "constraints": {"available_days": [1, 3, 5], "max_session_minutes": 90},
+    })
+
+    closed = service.close_active_scheme(reason="测试作废")
+
+    assert closed["status"] == "completed"
+    assert closed["effective_to"] == str(date.today() - timedelta(days=1))
+    assert service.home(today=date.today())["has_active_plan"] is False
+    assert service.plan() is None
+    # 未决提案被 superseded，不再作为待确认展示
+    archived = service.repository.get_proposal(proposal["proposal_id"])
+    assert archived["status"] == "superseded"
+
+
+def test_repeated_scheme_revision_supersedes_older_pending(tmp_path):
+    """连续多次重规划只保留最新一个待确认提案，旧 pending 标记 superseded。"""
+    service = TrainingService(tmp_path / "memory")
+    active = _active(service)
+
+    first = service.propose_scheme_revision({
+        "trigger": "execution_deviation", "reason": "第一次重规划",
+        "constraints": {"available_days": [1, 3, 5], "max_session_minutes": 90},
+    })
+    second = service.propose_scheme_revision({
+        "trigger": "execution_deviation", "reason": "第二次重规划",
+        "constraints": {"available_days": [1, 4, 6], "max_session_minutes": 80},
+    })
+
+    pendings = service.repository.pending_proposals(active["plan_id"])
+    assert [p["proposal_id"] for p in pendings] == [second["proposal_id"]]
+    archived = service.repository.get_proposal(first["proposal_id"])
+    assert archived["status"] == "superseded"
+    assert archived.get("superseded_at")
+    # 确认最新提案正常（版本按 active 推进）
+    approved = service.approve(
+        second["proposal_id"], base_version=active["version"],
+        idempotency_key="scheme-supersede-1",
+    )
+    assert approved["scheme"]["version"] == active["version"] + 1
+
+
 def test_scheme_revision_race_rescheduled_rejects_past_or_missing_date(tmp_path):
     from datetime import date, timedelta
 

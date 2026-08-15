@@ -764,12 +764,38 @@ class TrainingRepository:
         closed["status"] = "completed"
         closed["updated_at"] = _now()
         closed["closed_at"] = _now()
-        closed["effective_to"] = str(date.today())
+        # 作废即昨天结束：当天起 resolve 不再选中该方案，训练页回到无方案引导
+        closed["effective_to"] = str(date.today() - timedelta(days=1))
         closed["closure_reason"] = reason
         _write_document(
             self.plans / "history" / f"{closed['plan_id']}-v{closed['version']}.md",
             closed,
         )
+        # 历史中同方案仍为 active/scheduled 的旧版本一并标记 superseded，
+        # 避免 resolve 按日期解析时重新选中已作废方案。
+        for path in (self.plans / "history").glob("*.md"):
+            item = _read_document(path)
+            if not (
+                item
+                and item.get("plan_id") == closed.get("plan_id")
+                and item.get("status") in {"active", "scheduled"}
+            ):
+                continue
+            item["status"] = "superseded"
+            item["superseded_at"] = _now()
+            item["effective_to"] = str(date.today() - timedelta(days=1))
+            _write_document(path, item)
+        # 作废时把该方案未决提案标记为 superseded，避免重新制定方案后残留待确认
+        for path in (self.plans / "proposals").glob("*.md"):
+            item = _read_document(path)
+            if (
+                item
+                and item.get("plan_id") == closed.get("plan_id")
+                and item.get("status") == "pending"
+            ):
+                item["status"] = "superseded"
+                item["superseded_at"] = _now()
+                _write_document(path, item)
         if self.active_path.exists():
             self.active_path.unlink()
         return closed
@@ -840,6 +866,30 @@ class TrainingRepository:
             if item and item.get("plan_id") == plan_id and item.get("status") == "pending":
                 result.append(item)
         return sorted(result, key=lambda item: item.get("created_at", ""), reverse=True)
+
+    def supersede_pending_proposals(
+        self, plan_id: str, scope: str, target_date: str | None = None,
+    ) -> int:
+        """把同方案同范围（可选同日）的其他 pending 提案标记为 superseded
+        （保留文件便于回溯），保证同一调整范围只保留最新一个待决策提案。
+        scheme 级（重规划）全局互斥；today 级按 target_date 区分。"""
+        count = 0
+        for path in (self.plans / "proposals").glob("*.md"):
+            item = _read_document(path)
+            if not (
+                item
+                and item.get("plan_id") == plan_id
+                and item.get("scope") == scope
+                and item.get("status") == "pending"
+            ):
+                continue
+            if target_date is not None and item.get("target_date") != target_date:
+                continue
+            item["status"] = "superseded"
+            item["superseded_at"] = _now()
+            _write_document(path, item)
+            count += 1
+        return count
 
     def list_adjustment_records(self) -> list[dict[str, Any]]:
         """Return terminal adjustment proposals as immutable history records."""
@@ -3779,6 +3829,11 @@ class TrainingService:
                 ),
                 "created_at": _now(), "expires_at": str(date.today() + timedelta(days=1)),
             }
+            # 同一调整范围只保留最新待决策提案，旧 pending 标记 superseded
+            self.repository.supersede_pending_proposals(
+                str(scheme["plan_id"]), "today",
+                target_date=feedback["target_date"],
+            )
             self.repository.save_proposal(proposal)
             return proposal
 
@@ -4031,6 +4086,10 @@ class TrainingService:
                 "created_at": _now(),
                 "expires_at": str(date.today() + timedelta(days=7)),
             }
+            # 同一调整范围只保留最新待决策提案，旧 pending 标记 superseded
+            self.repository.supersede_pending_proposals(
+                str(scheme["plan_id"]), "scheme",
+            )
             self.repository.save_proposal(proposal)
             return proposal
 
