@@ -1397,8 +1397,8 @@ class TrainingPlanReconciler:
                         workout["distance_estimated"] = True
                         distance = round(estimated, 1)
                         week_adjustments.append(
-                            f"定时跑 {int(workout.get('duration_minutes') or 0)} 分钟按个人配速估算约 "
-                            f"{distance:g} km"
+                            f"定时跑 {int(workout.get('duration_minutes') or 0)} 分钟 ≈ {distance:g} km"
+                            "（按你的配速换算，实际按时长跑，距离为参考）"
                         )
                 distances.append(max(0.0, distance))
             current_km = sum(distances)

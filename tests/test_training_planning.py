@@ -837,6 +837,10 @@ def test_reconcile_estimates_duration_only_workouts_in_weekly_total():
     assert estimated["duration_minutes"] == 60
     total = sum(w.get("distance_km") or 0 for w in normalized_week["workouts"])
     assert total == pytest.approx(target)
+    # 定时跑换算的文案须是用户视角执行导向（时长为主、距离为参考）
+    trace_adj = "；".join(str(x) for x in (trace.get("adjustments") or []))
+    assert "按你的配速换算" in trace_adj
+    assert "实际按时长跑" in trace_adj
     # 定时跑参与对齐后，距离型课程不再被过度放大
     max_km = max(w.get("distance_km") or 0 for w in normalized_week["workouts"])
     assert max_km <= target * 0.5
