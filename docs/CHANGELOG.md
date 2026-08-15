@@ -28,6 +28,10 @@
 
 ### Fixed
 
+- **改动描述**: 修复草稿生成“goal_demand_summary 必须是对象”失败：`validate_training_framework` 对可选映射字段（`ability_summary` / `goal_demand_summary` / `weekly_principles`）由严格 `_mapping` 改为宽容降级（非对象 → 空对象，与已有降级模式一致），模型偶发类型瑕疵不再让整份草稿失败；核心结构仍严格校验。
+- **影响范围**: `src/coach_runtime/schemas.py`、`tests/test_coach_runtime.py`
+- **关联文档**: [Bug 记录：草稿可选映射字段过度严格](bugfixes/2026-08-15-framework-optional-mapping-strict.md)
+
 - **改动描述**: 修复方案重规划“长距离最长仅 20km”结论与实时能力事实不符：`load_setup` 的长距离能力指标改用近 28 天窗口（周量仍取上一完整自然周）；重规划注入当前方案时只保留结构字段、剔除旧 data_basis/feasibility 等结论（AI 不再复述旧结论，载荷从 180KB 大幅减小）。真实重规划结论由“长距离仅 20km、远低于专项需求”变为“长距离 30km、具备较高有氧基础”。
 - **影响范围**: `src/training_service_factory.py`、`src/training.py`、`tests/test_training_service_factory.py`、`tests/test_training.py`
 - **关联文档**: [Bug 记录：重规划旧长距离结论](bugfixes/2026-08-15-revision-stale-long-run-conclusion.md)
