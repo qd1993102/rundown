@@ -38,21 +38,25 @@ sudo -u neurun env NEURUN_DATA_DIR=/var/lib/neurun NEURUN_INVITE_CODES_FILE=/var
 1. `src/config.py` — `invite_codes_path` 兜底逻辑：相对 `data_dir`（含默认 `./data`）
    固定基于**项目根目录**（`src/` 的上级）解析，不再随进程 cwd 漂移；显式
    `NEURUN_INVITE_CODES_FILE`（推荐 ECS 用绝对路径）优先级不变。
-2. `src/main.py` — `invite create --output json` 时在 **stderr** 打印
+2. `src/config.py` — `get_config()` 自动读取部署环境文件 `/etc/neurun/neurun.env`
+   （ECS systemd 部署的持久化环境文件，只补缺失项、不覆盖系统环境变量）：
+   CLI 管理员命令与 Web（systemd `EnvironmentFile` 同源）共享同一配置源，
+   ECS 上执行 `neurun invite create` **无需手工传 env** 即与 Web 读写同一文件。
+3. `scripts/deploy-ecs.sh` — 发布时把 `NEURUN_DATA_DIR` / `NEURUN_INVITE_CODES_FILE`
+   幂等写入部署环境文件（已存在则跳过），保证新旧发布都指向持久化数据目录。
+4. `src/main.py` — `invite create --output json` 时在 **stderr** 打印
    `已写入文件: <路径>`（stdout JSON 结构不变，AI/MCP 消费不受影响），
    table 模式直接打印，避免生成后无法确认写入位置。
-3. 运维侧约定（写入 README）：ECS 上生成邀请码必须：
-   - 使用 `/opt/neurun-current/.venv/bin/neurun` 绝对路径（不用 PATH 里的旧 `neurun`）；
-   - 显式传入与 Web 进程相同的 `NEURUN_DATA_DIR` / `NEURUN_INVITE_CODES_FILE`；
-   - 从 `/tmp` 等中立目录执行，避免 cwd 干扰；
-   - 发布新版本（当前 release 代码为旧版，不支持环境变量）后，systemd 注入的
-     `NEURUN_INVITE_CODES_FILE=/var/lib/neurun/invite-codes.json` 才会被新代码生效。
+5. 运维侧约定（写入 README）：ECS 上生成邀请码必须使用
+   `/opt/neurun-current/.venv/bin/neurun` 绝对路径（不用 PATH 里的旧 `neurun`），
+   不要从暂存区等目录执行；发布新版本（含本修复）后生效。
 
 ## 相关文件
 
-- [src/config.py](src/config.py) — `invite_codes_path` 兜底固定项目根
+- [src/config.py](src/config.py) — `invite_codes_path` 兜底固定项目根；读取部署环境文件
 - [src/main.py](src/main.py) — `_invite_output` 支持输出写入路径
-- [tests/test_config.py](tests/test_config.py) — 相对 data_dir 固定项目根测试
+- [scripts/deploy-ecs.sh](scripts/deploy-ecs.sh) — 发布时写入部署环境文件路径变量
+- [tests/test_config.py](tests/test_config.py) — 相对 data_dir 固定项目根 / 部署环境文件测试
 - [tests/test_main.py](tests/test_main.py) — `invite create` 输出写入路径测试
 - [README.md](README.md) — 邀请码路径固定规则与 ECS 生成命令
 

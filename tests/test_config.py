@@ -178,6 +178,37 @@ class TestInviteCodeConfig:
         assert config.invite_codes_path == str(custom)
 
 
+class TestDeployEnvFile:
+    """ECS/systemd 部署环境文件：CLI 无需手工传 env 即与 Web 共享配置源。"""
+
+    def _deploy_env(self, tmp_path, body):
+        deploy_env = tmp_path / "neurun.env"
+        deploy_env.write_text(body, encoding="utf-8")
+        return deploy_env
+
+    def test_deploy_env_file_supplies_invite_path(self, tmp_path, monkeypatch):
+        target = tmp_path / "codes.json"
+        deploy_env = self._deploy_env(tmp_path, f"NEURUN_INVITE_CODES_FILE={target}\n")
+        monkeypatch.setattr("src.config._DEPLOY_ENV_FILE", deploy_env)
+        with mock.patch.dict(os.environ, {}, clear=True), \
+                mock.patch("src.config.Path.home", return_value=tmp_path / "home"):
+            config = get_config(validate_credentials=False)
+        assert config.invite_codes_path == str(target)
+
+    def test_real_env_wins_over_deploy_env(self, tmp_path, monkeypatch):
+        deploy_env = self._deploy_env(
+            tmp_path,
+            f"NEURUN_INVITE_CODES_FILE={tmp_path / 'codes.json'}\n",
+        )
+        explicit = tmp_path / "explicit.json"
+        monkeypatch.setattr("src.config._DEPLOY_ENV_FILE", deploy_env)
+        with mock.patch.dict(
+            os.environ, {"NEURUN_INVITE_CODES_FILE": str(explicit)}, clear=True
+        ), mock.patch("src.config.Path.home", return_value=tmp_path / "home"):
+            config = get_config(validate_credentials=False)
+        assert config.invite_codes_path == str(explicit)
+
+
 class TestWebSyncCapacityConfig:
     def test_defaults_support_one_hundred_admitted_users(self):
         with mock.patch.dict(os.environ, {}, clear=True):

@@ -102,6 +102,21 @@ install -d -m 0755 "${RELEASES_DIR}"
 install -d -m 0700 -o "${RUN_USER}" -g "${RUN_GROUP}" "${DATA_DIR}"
 install -d -m 0750 "${ENV_DIR}"
 
+# CLI 与 Web 共享同一配置源：确保部署环境文件包含数据目录与邀请码路径。
+# 这样 `neurun invite create` 等管理员命令无需手工传 env，即与 Web
+# （systemd EnvironmentFile 同源）读写同一文件，发布切换后位置不变。
+if [ ! -f "${ENV_DIR}/neurun.env" ]; then
+  umask 077
+  : > "${ENV_DIR}/neurun.env"
+fi
+chmod 0640 "${ENV_DIR}/neurun.env" 2>/dev/null || true
+if ! grep -q '^NEURUN_DATA_DIR=' "${ENV_DIR}/neurun.env"; then
+  echo "NEURUN_DATA_DIR=${DATA_DIR}" >> "${ENV_DIR}/neurun.env"
+fi
+if ! grep -q '^NEURUN_INVITE_CODES_FILE=' "${ENV_DIR}/neurun.env"; then
+  echo "NEURUN_INVITE_CODES_FILE=${DATA_DIR}/invite-codes.json" >> "${ENV_DIR}/neurun.env"
+fi
+
 if [ ! -f "${ENV_DIR}/neurun.env" ] \
   || ! grep -q '^NEURUN_COROS_CREDENTIAL_KEY=.' "${ENV_DIR}/neurun.env"
 then

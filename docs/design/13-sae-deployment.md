@@ -640,11 +640,12 @@ docker compose exec neurun neurun invite create --output json
 
 > **邀请码读写路径收敛**：`config.invite_codes_path` 解析优先级为
 > `NEURUN_INVITE_CODES_FILE` > `<data_dir>/invite-codes.json`；相对 `data_dir`
-> 固定基于项目根目录解析，不随进程 cwd（release 目录）漂移。ECS/systemd 与
-> Docker 部署均通过 `NEURUN_INVITE_CODES_FILE` 显式固定绝对路径（如
-> `/var/lib/neurun/invite-codes.json`、`/app/data/invite-codes.json`），
-> 保证 Web 读取与 CLI 生成落在同一文件，发布切换后位置不变；`invite create
-> --output json` 会在 stderr 打印实际写入路径便于确认。
+> 固定基于项目根目录解析，不随进程 cwd（release 目录）漂移。
+> `get_config()` 自动读取部署环境文件 `/etc/neurun/neurun.env`（发布脚本写入
+> `NEURUN_DATA_DIR` / `NEURUN_INVITE_CODES_FILE`），因此 CLI 管理员命令与 Web
+> 共享同一配置源：ECS 上 `sudo -u neurun /opt/neurun-current/.venv/bin/neurun
+> invite create` 无需手工传 env，即与 Web 读写同一文件；`invite create
+> --output json` 在 stderr 打印实际写入路径便于确认。
 
 ### 加 HTTPS
 

@@ -153,19 +153,19 @@ docker compose exec neurun neurun invite create --output json
 ```
 
 systemd/ECS 部署必须使用与 Web 服务相同的低权限用户写入持久化目录，不能直接以
-root 运行邀请码或同步命令。**关键：CLI 生成时必须显式传入与 Web 进程相同的
-`NEURUN_DATA_DIR` / `NEURUN_INVITE_CODES_FILE`（且用 `/opt/neurun-current/.venv/bin/neurun`
-绝对路径，不要用 PATH 里的 `neurun` 旧命令），否则会写入默认相对路径。**
-例如服务用户为 `neurun` 时：
+root 运行邀请码或同步命令。**CLI 会自动读取部署环境文件
+`/etc/neurun/neurun.env`（`scripts/deploy-ecs.sh` 发布时写入 `NEURUN_DATA_DIR` /
+`NEURUN_INVITE_CODES_FILE`），与 Web（systemd `EnvironmentFile` 同源）共享配置，
+无需手工传 env。** 仍须使用 `/opt/neurun-current/.venv/bin/neurun` 绝对路径
+（不要用 PATH 里的 `neurun` 旧命令）：
 
 ```bash
-cd /tmp && sudo -u neurun env \
-  NEURUN_DATA_DIR=/var/lib/neurun \
-  NEURUN_INVITE_CODES_FILE=/var/lib/neurun/invite-codes.json \
-  /opt/neurun-current/.venv/bin/neurun invite create --count 30 --output json
+sudo -u neurun /opt/neurun-current/.venv/bin/neurun invite create --count 30 --output json
 ```
 
-`--output json` 时 stderr 会打印 `已写入文件: <路径>`，可据此确认写到了 Web 同款文件。
+`--output json` 时 stderr 会打印 `已写入文件: <路径>`，应显示
+`/var/lib/neurun/invite-codes.json`；若显示 release 目录内的路径，说明
+CLI 未读到部署配置（旧 release 代码），需发布新版本后再试。
 
 若曾经用 `sudo neurun ...` 生成过 `/var/lib/neurun` 下的数据，先修复归属再重启服务：
 

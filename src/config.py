@@ -336,11 +336,17 @@ class UserConfig:
         return self.parent.coros_credential_key
 
 
+# ECS/systemd 部署（scripts/deploy-ecs.sh）生成的持久化环境文件。
+# CLI 管理员命令（invite 等）自动读取它，与 Web 进程
+# （systemd EnvironmentFile 同源）保持同一配置，无需手工传 env。
+_DEPLOY_ENV_FILE = Path("/etc/neurun/neurun.env")
+
+
 def get_config(*, validate_credentials: bool = True) -> Config:
     """创建并校验配置的单次入口。
 
     每次调用都重新加载 .env，确保读取当前工作目录的配置。
-    优先级: 系统环境变量 > 项目 .env > ~/.neurun/.env > 默认值
+    优先级: 系统环境变量 > 项目 .env > 部署环境文件 > ~/.neurun/.env > 默认值
 
     若设置 NEURUN_HOME 环境变量（须为实际环境变量，不可写在 .env 中）：
     - 从 NEURUN_HOME/.env 加载项目配置
@@ -356,6 +362,9 @@ def get_config(*, validate_credentials: bool = True) -> Config:
     cwd_env = base_dir / ".env"
     if cwd_env.exists():
         load_dotenv(cwd_env, override=True)  # 当前目录 .env 优先
+    # 部署环境文件（ECS systemd 部署）：CLI 与 Web 共享配置源，只补缺失项
+    if _DEPLOY_ENV_FILE.exists():
+        load_dotenv(_DEPLOY_ENV_FILE, override=False)
     home_env = Path.home() / ".neurun" / ".env"
     if not neurun_home and home_env.exists():
         load_dotenv(home_env, override=False)  # 全局配置只补充缺失项

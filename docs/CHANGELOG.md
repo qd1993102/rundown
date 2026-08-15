@@ -2,6 +2,12 @@
 
 ## 2026-08-16
 
+### Changed
+
+- **改动描述**: CLI 管理员命令与 Web 共享同一配置源：`get_config()` 自动读取部署环境文件 `/etc/neurun/neurun.env`（只补缺失项，系统环境变量优先），ECS/systemd 部署下 `neurun invite create` 等命令无需手工传 `NEURUN_DATA_DIR` / `NEURUN_INVITE_CODES_FILE` 即与 Web 读写同一邀请码文件；`scripts/deploy-ecs.sh` 发布时把这两个变量幂等写入部署环境文件（已存在则跳过）。
+- **影响范围**: `src/config.py`、`scripts/deploy-ecs.sh`、`tests/test_config.py`
+- **关联文档**: [Bug 记录：ECS 发布后邀请码读写路径漂移](bugfixes/2026-08-16-invite-code-path-drift.md)
+
 ### Fixed
 
 - **改动描述**: 修复 ECS release 切换后邀请码生成与读取可能落在不同文件的问题：`config.invite_codes_path` 兜底逻辑改为相对 `data_dir` 固定基于项目根目录（`src/` 上级）解析，不再随进程 cwd（release 目录）漂移；`invite create --output json` 在 stderr 打印实际写入文件路径（stdout JSON 结构不变，AI/MCP 兼容）。ECS/systemd 部署仍以 `NEURUN_INVITE_CODES_FILE=/var/lib/neurun/invite-codes.json` 绝对路径固定读写位置。
