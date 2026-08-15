@@ -4,6 +4,10 @@
 
 ### Changed
 
+- **改动描述**: `get_config()` 新增三条 INFO 诊断日志：`配置探测[原始环境]`（进程实际收到的 `NEURUN_DATA_DIR` / `NEURUN_INVITE_CODES_FILE` 等，在加载 .env 前捕获）、`配置探测[部署环境文件]`（`/etc/neurun/neurun.env` 是否存在）、`配置探测[解析结果]`（叠加 .env / 部署环境文件后的最终 `invite_codes_path`），用于 ECS 上排查邀请码写入路径与预期不符（命令折行导致 env 丢失、cwd `.env` 覆盖、部署环境文件缺失）。
+- **影响范围**: `src/config.py`、`tests/test_config.py`
+- **关联文档**: [Bug 记录：ECS 发布后邀请码读写路径漂移](bugfixes/2026-08-16-invite-code-path-drift.md)
+
 - **改动描述**: CLI 管理员命令与 Web 共享同一配置源：`get_config()` 自动读取部署环境文件 `/etc/neurun/neurun.env`（只补缺失项，系统环境变量优先），ECS/systemd 部署下 `neurun invite create` 等命令无需手工传 `NEURUN_DATA_DIR` / `NEURUN_INVITE_CODES_FILE` 即与 Web 读写同一邀请码文件；`scripts/deploy-ecs.sh` 发布时把这两个变量幂等写入部署环境文件（已存在则跳过）。
 - **影响范围**: `src/config.py`、`scripts/deploy-ecs.sh`、`tests/test_config.py`
 - **关联文档**: [Bug 记录：ECS 发布后邀请码读写路径漂移](bugfixes/2026-08-16-invite-code-path-drift.md)

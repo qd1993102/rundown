@@ -53,7 +53,8 @@ sudo -u neurun env NEURUN_DATA_DIR=/var/lib/neurun NEURUN_INVITE_CODES_FILE=/var
 
 ## 相关文件
 
-- [src/config.py](src/config.py) — `invite_codes_path` 兜底固定项目根；读取部署环境文件
+- [src/config.py](src/config.py) — `invite_codes_path` 兜底固定项目根；读取部署环境文件；
+  配置解析诊断日志（`配置探测[原始环境]` / `配置探测[部署环境文件]` / `配置探测[解析结果]`）
 - [src/main.py](src/main.py) — `_invite_output` 支持输出写入路径
 - [scripts/deploy-ecs.sh](scripts/deploy-ecs.sh) — 发布时写入部署环境文件路径变量
 - [tests/test_config.py](tests/test_config.py) — 相对 data_dir 固定项目根 / 部署环境文件测试
@@ -68,3 +69,46 @@ sudo -u neurun env NEURUN_DATA_DIR=/var/lib/neurun NEURUN_INVITE_CODES_FILE=/var
 - `pytest tests/test_config.py tests/test_main.py` 全部通过；
 - ECS：发布新版本后，用 `/opt/neurun-current/.venv/bin/neurun` + 显式 env 生成，
   stderr 应显示 `已写入文件: /var/lib/neurun/invite-codes.json`，用该码注册成功。
+
+## 再发现（2026-08-16）：手工传 env 被吞，仍落盘 release/data
+
+### 现象
+
+ECS 上执行
+
+```bash
+sudo -u neurun env NEURUN_DATA_DIR=/var/lib/neurun NEURUN_INVITE_CODES_FILE=/var/lib/neurun/invite-codes.json /opt/neurun-current/.venv/bin/neurun invite create -n 1 --output json
+```
+
+stderr 仍显示 `已写入文件: /opt/neurun-releases/<id>/data/invite-codes.json`。
+
+### 定位
+
+本地复现（当前 HEAD 代码）确认两种输入下 `invite_codes_path` 的差异：
+
+| 场景 | `配置探测[原始环境]` | `配置探测[解析结果]` |
+|------|---------------------|---------------------|
+| 无 env（命令折行/env 被吞） | `NEURUN_DATA_DIR=None NEURUN_INVITE_CODES_FILE=None` | `data_dir='./data'` → `<release>/data/invite-codes.json`（正是线上看到的路径） |
+| env 显式传入 | 两个变量均有值 | `/var/lib/neurun/invite-codes.json` |
+
+结论：进程实际没收到 `NEURUN_DATA_DIR` / `NEURUN_INVITE_CODES_FILE`（长命令被终端
+折行破坏，与上一条 changelog 描述的失败模式一致），退回兜底路径。
+
+### 加固：配置解析诊断日志
+
+`get_config()` 新增三条 INFO 日志，一次 ECS 运行即可定位丢在哪一环：
+
+1. `配置探测[原始环境]` — 加载任何 .env 之前进程实际收到的 `NEURUN_*` 值
+   （None = env 没传进去；有值但最终路径不对 = 被 .env 覆盖）；
+2. `配置探测[部署环境文件]` — `/etc/neurun/neurun.env` 是否存在（False = 部署脚本未写入）；
+3. `配置探测[解析结果]` — 叠加 .env / 部署环境文件后的最终 `invite_codes_path`。
+
+同时强调运维约定：**不要手工传 env，直接依赖部署环境文件**
+（`/etc/neurun/neurun.env` 由 `scripts/deploy-ecs.sh` 发布时写入）：
+
+```bash
+sudo -u neurun /opt/neurun-current/.venv/bin/neurun invite create -n 1 --output json
+```
+
+若 `/opt/neurun-current` 指向的 release 由旧版 deploy 脚本发布（`/etc/neurun/neurun.env`
+不存在），需重新发布含部署环境文件写入逻辑的版本后生效。

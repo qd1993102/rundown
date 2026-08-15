@@ -357,6 +357,18 @@ def get_config(*, validate_credentials: bool = True) -> Config:
     if neurun_home:
         os.environ["NEURUN_HOME"] = neurun_home  # 确保后续 Config() 也能读到
 
+    # 诊断探测：在加载任何 .env 之前捕获进程实际收到的环境变量。
+    # 日志在下方 basicConfig 之后输出，用于排查 ECS 上 invite create
+    # 写入路径与预期不符（env 被吞/被 .env 覆盖/部署环境文件缺失）。
+    raw_probe = (
+        os.getenv("NEURUN_HOME"),
+        os.getenv("NEURUN_DATA_DIR"),
+        os.getenv("RUNDOWN_DATA_DIR"),
+        os.getenv("NEURUN_INVITE_CODES_FILE"),
+        str(Path.cwd()),
+        _DEPLOY_ENV_FILE.exists(),
+    )
+
     # 1. 加载 .env：优先当前目录（或 NEURUN_HOME），再加载全局
     base_dir = Path(neurun_home) if neurun_home else Path.cwd()
     cwd_env = base_dir / ".env"
@@ -398,4 +410,26 @@ def get_config(*, validate_credentials: bool = True) -> Config:
         datefmt="%H:%M:%S",
     )
     config.log_config()
+    # 诊断日志（basicConfig 之后输出，避免被根 logger 未初始化吞掉）
+    neurun_home, raw_data, raw_rundown_data, raw_invite, raw_cwd, deploy_exists = raw_probe
+    logger.info(
+        "配置探测[原始环境]: cwd=%s NEURUN_HOME=%r NEURUN_DATA_DIR=%r "
+        "RUNDOWN_DATA_DIR=%r NEURUN_INVITE_CODES_FILE=%r",
+        raw_cwd,
+        neurun_home,
+        raw_data,
+        raw_rundown_data,
+        raw_invite,
+    )
+    logger.info(
+        "配置探测[部署环境文件]: %s 存在=%s",
+        _DEPLOY_ENV_FILE,
+        deploy_exists,
+    )
+    logger.info(
+        "配置探测[解析结果]: data_dir=%r invite_codes_file=%r -> invite_codes_path=%s",
+        config.data_dir,
+        config.invite_codes_file,
+        config.invite_codes_path,
+    )
     return config

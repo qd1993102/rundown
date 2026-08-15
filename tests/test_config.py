@@ -1,5 +1,6 @@
 """测试 config.py — 环境变量加载和向后兼容。"""
 
+import logging
 import os
 from pathlib import Path
 from unittest import mock
@@ -207,6 +208,63 @@ class TestDeployEnvFile:
         ), mock.patch("src.config.Path.home", return_value=tmp_path / "home"):
             config = get_config(validate_credentials=False)
         assert config.invite_codes_path == str(explicit)
+
+
+class TestConfigDiagnosticLogs:
+    """get_config 诊断日志：原始环境 / 部署环境文件 / 解析结果三层探测。
+
+    用于排查 ECS 上 invite create 写入路径与预期不符：日志会显示
+    进程实际收到的 NEURUN_* 值（命令折行/env 被吞时为空）以及最终
+    invite_codes_path 从哪一层解析出来。
+    """
+
+    def _records(self, caplog):
+        return [r.getMessage() for r in caplog.records]
+
+    def test_probe_logs_with_explicit_env(self, tmp_path, monkeypatch, caplog):
+        target = tmp_path / "codes.json"
+        deploy_env = tmp_path / "neurun.env"
+        deploy_env.write_text(
+            f"NEURUN_DATA_DIR=/var/lib/neurun\nNEURUN_INVITE_CODES_FILE={target}\n",
+            encoding="utf-8",
+        )
+        monkeypatch.setattr("src.config._DEPLOY_ENV_FILE", deploy_env)
+        with mock.patch.dict(
+            os.environ,
+            {
+                "NEURUN_DATA_DIR": "/var/lib/neurun",
+                "NEURUN_INVITE_CODES_FILE": str(target),
+            },
+            clear=True,
+        ), mock.patch(
+            "src.config.Path.home", return_value=tmp_path / "home"
+        ), caplog.at_level(logging.INFO, logger="src.config"):
+            config = get_config(validate_credentials=False)
+
+        assert config.invite_codes_path == str(target)
+        records = self._records(caplog)
+        assert any("配置探测[原始环境]" in r and "NEURUN_DATA_DIR='/var/lib/neurun'" in r
+                   and f"NEURUN_INVITE_CODES_FILE='{target}'" in r for r in records)
+        assert any("配置探测[部署环境文件]" in r and "存在=True" in r for r in records)
+        assert any("配置探测[解析结果]" in r and f"invite_codes_path={target}" in r
+                   for r in records)
+
+    def test_probe_logs_env_lost_falls_back_to_project_root(self, caplog):
+        """ECS 场景：env 未传入时探测日志显示 None，解析结果回退到项目根 data/。"""
+        with mock.patch.dict(os.environ, {}, clear=True), \
+                mock.patch("src.config.Path.home",
+                           return_value=Path("/nonexistent-home")):
+            with caplog.at_level(logging.INFO, logger="src.config"):
+                config = get_config(validate_credentials=False)
+
+        project_root = Path(__file__).resolve().parent.parent
+        assert config.invite_codes_path == str(project_root / "data" / "invite-codes.json")
+        records = self._records(caplog)
+        assert any("配置探测[原始环境]" in r
+                   and "NEURUN_DATA_DIR=None" in r
+                   and "NEURUN_INVITE_CODES_FILE=None" in r for r in records)
+        assert any("配置探测[解析结果]" in r
+                   and "invite_codes_path=" in r for r in records)
 
 
 class TestWebSyncCapacityConfig:
