@@ -882,6 +882,12 @@ def test_daily_templates_are_mobile_first_and_support_local_png_export():
     assert "finally{event.currentTarget.disabled=false}" not in training
     assert "event.currentTarget.disabled=false" not in training
     assert "event.submitter.disabled=false" not in training
+    # 安全规范化分级展示：安排变化直接展示，技术性对齐计数合并
+    assert "function adjustmentKind(text)" in training
+    assert "function adjustmentsMarkup(adjustments)" in training
+    assert "function adjustmentsInlineMarkup(adjustments)" in training
+    assert "方案已做哪些安全调整" in training
+    assert "方案已通过确定性安全校验" in training
     assert "当前教练定位" not in training
     assert "function modeBannerMarkup" not in training
 
@@ -1259,7 +1265,7 @@ def test_training_template_supports_320px_and_explicit_confirmation():
     assert "保守规则兜底" in html
     assert "AI 方案 · 已安全规范化" in html
     assert "AI 风险评估 · 待你选择" in html
-    assert "系统做了哪些安全规范化" in html
+    assert "方案已做哪些安全调整" in html
     assert "可选路线" in html
     assert "首四周负荷" in html
     assert "near_term_schedule" in html

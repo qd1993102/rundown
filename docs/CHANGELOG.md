@@ -8,6 +8,10 @@
 - **影响范围**: `src/summary_extraction.py`、`src/memory.py`、`src/render.py`、`tests/test_summary_extraction.py`、`tests/test_render.py`
 - **关联文档**: [摘要提取设计 §10.5](design/summary-extraction.md)
 
+- **改动描述**: 安全规范化信息分级展示：`adjustments` 按“安排变化 / 技术性对齐”分类——课程被改、距离/周数被调整等安排变化直接展示；逐周“跑量对齐/负荷结算”等内部技术条目计数合并（不再逐条平铺），全为技术性对齐时收敛为一句“方案已通过确定性安全校验”；草稿预览、长期方案卡、重规划候选四处展示统一走 `adjustmentKind` / `adjustmentsMarkup` / `adjustmentsInlineMarkup`。
+- **影响范围**: `web/templates/training.html`、`tests/test_web.py`
+- **关联文档**: [训练体验产品方案](product/training-experience.md)、[训练系统设计](design/training-system.md)
+
 ### Fixed
 
 - **改动描述**: 修复报告中心生成日报后按钮仍显示“生成日报”的问题：`genReport` 成功路径存在异步竞态（未 `await` 的 `load()` 与末尾 `renderDailyStatus()` 触发的 `checkReadiness()` 竞争，后者晚到把“查看日报”覆盖回“生成日报”）；改为成功路径 `await load()` 后由列表刷新渲染状态，失败路径保留刷新。
