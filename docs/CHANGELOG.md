@@ -2,6 +2,12 @@
 
 ## 2026-08-15
 
+### Added
+
+- **改动描述**: 补全两个能力入口：① 重规划支持赛事延期——表单选“赛事延期”显示新赛事日期输入（默认当前目标日期、须晚于今天），候选按新日期重排周期，确认提案后同步目标记录（避免下次重规划回旧日期）；② 作废方案——新增 `POST /api/training/scheme/close` 与长期方案卡“作废方案”按钮（确认后归档当前方案，回到制定方案引导）。
+- **影响范围**: `src/training.py`、`src/web.py`、`web/templates/training.html`、`tests/test_training.py`、`tests/test_web.py`
+- **关联文档**: [训练体验产品方案 §8.6](product/training-experience.md)、[训练系统设计](design/training-system.md)
+
 ### Changed
 
 - **改动描述**: 训练结构识别按距离口径输出：`composition` 增加 `basis` 字段（`quantity_reliable` 且分段携带距离时按各角色距离占比，否则回退段数占比），消除“快段占比”被误读为距离占比的语义歧义；`work_recovery_groups` 每组新增 `work_distance_m` / `work_duration_s` / `recovery_distance_m` / `recovery_duration_s`，日报与详情“每组配速”在距离可信时展示每组距离（如 `快 3'04"/km · 1.0km(hr148)`）。

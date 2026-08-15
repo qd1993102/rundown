@@ -1044,6 +1044,22 @@ def register_web_routes(server, user_manager: UserManager, config: Config):
         except Exception as exc:
             return training_failure(exc)
 
+    @server.custom_route("/api/training/scheme/close", methods=["POST"])
+    async def api_close_scheme(request: Request) -> Response:
+        """作废当前方案：标记 completed 并归档，回到无方案引导。"""
+        api_key = _get_api_key(request)
+        user = user_manager.get(api_key) if api_key else None
+        if not user or user.token_status != "active":
+            return JSONResponse({"status": "error", "message": "请先绑定数据源"}, status_code=401)
+        try:
+            body = await request.json() if (request.headers.get("content-length") or "0") != "0" else {}
+        except Exception:
+            body = {}
+        closed = training_service(api_key).close_active_scheme(
+            reason=str((body or {}).get("reason") or "").strip() or "用户主动作废",
+        )
+        return JSONResponse({"status": "ok", "closed": closed})
+
     @server.custom_route("/api/training/feedback", methods=["POST"])
     async def api_training_feedback(request: Request) -> Response:
         """记录结构化训练反馈；此操作不修改方案。"""

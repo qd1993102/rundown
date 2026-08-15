@@ -1563,6 +1563,57 @@ def test_active_scheme_structure_excludes_stale_conclusions():
         assert key in structure, key
 
 
+def test_scheme_revision_race_rescheduled_updates_goal_date_on_approve(tmp_path):
+    """赛事延期重规划：候选携带新目标日期，确认后同步 goals 记录（避免下次重规划回旧日期）。"""
+    from datetime import date, timedelta
+
+    service = TrainingService(tmp_path / "memory")
+    active = _active(service)
+    old_goal = service.goals.list_active()[0]
+    new_date = str(date.today() + timedelta(days=60))
+
+    proposal = service.propose_scheme_revision({
+        "trigger": "race_rescheduled",
+        "reason": "赛事改期",
+        "new_target_date": new_date,
+        "constraints": {"available_days": [1, 3, 5], "max_session_minutes": 90},
+    })
+
+    assert proposal["proposed_scheme"]["goal_snapshot"]["target_date"] == new_date
+    # 确认前：goals 记录仍是旧日期（生效方案目标变化走预览/提案确认路径）
+    assert service.goals.list_active()[0]["target_date"] == old_goal["target_date"]
+
+    approved = service.approve(
+        proposal["proposal_id"],
+        base_version=active["version"],
+        idempotency_key="race-rescheduled-1",
+    )
+    # 确认后：新方案目标日期 + goals 记录同步
+    assert approved["scheme"]["goal_snapshot"]["target_date"] == new_date
+    assert service.goals.list_active()[0]["target_date"] == new_date
+
+
+def test_scheme_revision_race_rescheduled_rejects_past_or_missing_date(tmp_path):
+    from datetime import date, timedelta
+
+    service = TrainingService(tmp_path / "memory")
+    _active(service)
+
+    with pytest.raises(TrainingError) as past:
+        service.propose_scheme_revision({
+            "trigger": "race_rescheduled", "reason": "赛事延期",
+            "new_target_date": str(date.today() - timedelta(days=1)),
+        })
+    assert past.value.code == "invalid_race_date"
+
+    with pytest.raises(TrainingError) as missing:
+        service.propose_scheme_revision({
+            "trigger": "race_rescheduled", "reason": "赛事延期",
+            "new_target_date": "not-a-date",
+        })
+    assert missing.value.code == "invalid_race_date"
+
+
 def test_scheme_revision_is_a_confirmed_new_version_and_preserves_active_plan(tmp_path):
     service = TrainingService(tmp_path / "memory")
     active = _active(service)

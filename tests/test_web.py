@@ -882,6 +882,12 @@ def test_daily_templates_are_mobile_first_and_support_local_png_export():
     assert "finally{event.currentTarget.disabled=false}" not in training
     assert "event.currentTarget.disabled=false" not in training
     assert "event.submitter.disabled=false" not in training
+    # 重规划支持赛事延期日期输入 + 作废方案入口
+    assert "reviseRaceDate" in training
+    assert "new_target_date" in training
+    assert "data-close-scheme" in training
+    assert "closeSchemeRevision" in training
+    assert "作废方案" in training
     # 安全规范化分级展示：安排变化直接展示，技术性对齐计数合并
     assert "function adjustmentKind(text)" in training
     assert "function adjustmentsMarkup(adjustments)" in training
@@ -1476,6 +1482,23 @@ def test_current_ai_task_status_is_scoped_to_logged_in_user(tmp_path, monkeypatc
     assert payload["task"]["state"] == "running"
     assert seen == [user.api_key]
     assert response.headers["cache-control"] == "no-store"
+
+
+def test_close_scheme_route_returns_ok_without_active_plan(tmp_path):
+    from src.training import TrainingService
+
+    manager, user = _active_user(tmp_path)
+    server = _FakeServer()
+    config = Config(data_dir=str(tmp_path))
+    register_web_routes(server, manager, config)
+
+    response = asyncio.run(server.routes[("/api/training/scheme/close", "POST")](
+        _request("/api/training/scheme/close", {"reason": "测试"}, user.api_key)
+    ))
+    payload = json.loads(response.body)
+    assert response.status_code == 200
+    assert payload["status"] == "ok"
+    assert payload["closed"] is None  # 无方案时作废为空，不报错
 
 
 def test_weekly_report_routes_require_explicit_generation(tmp_path):

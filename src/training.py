@@ -1013,6 +1013,11 @@ class TrainingService:
     def archive_goal(self, goal_id: str) -> None:
         self.goals.archive(goal_id)
 
+    def close_active_scheme(self, *, reason: str) -> dict[str, Any] | None:
+        """作废当前方案：标记 completed 并归档，回到无方案引导。"""
+        with self._lock:
+            return self.repository.close_active_scheme(reason=reason)
+
     def _athlete_profile_document(
         self, target: date | None = None,
     ) -> dict[str, Any] | None:
@@ -3798,6 +3803,25 @@ class TrainingService:
             goal = current_goal or copy.deepcopy(scheme.get("goal_snapshot") or {})
             if not goal.get("target_date"):
                 raise TrainingError("race_date_required", "方案级重规划仍需要明确赛事日期")
+            # 赛事延期：重规划请求可携带新赛事日期，候选按新日期生成周期；
+            # 不直接改已生效 goal（update_goal 有预览保护），确认提案时才落库。
+            new_target_date = payload.get("new_target_date") or (
+                payload.get("target_date")
+                if trigger == "race_rescheduled" else None
+            )
+            if new_target_date:
+                try:
+                    new_date = date.fromisoformat(str(new_target_date)[:10])
+                except (TypeError, ValueError):
+                    raise TrainingError(
+                        "invalid_race_date", "赛事日期必须使用 YYYY-MM-DD",
+                    )
+                if new_date <= date.today():
+                    raise TrainingError(
+                        "invalid_race_date", "新赛事日期必须晚于今天",
+                    )
+                goal = copy.deepcopy(goal)
+                goal["target_date"] = str(new_date)
             setup = self._setup_context()
             baseline = copy.deepcopy(setup["baseline"])
             existing_constraints = copy.deepcopy(scheme.get("constraints") or {})
@@ -4208,6 +4232,24 @@ class TrainingService:
                 else:
                     self.repository.save_scheme(updated)
                     self._materialize_week(updated, date.today(), persist=True)
+                # 重规划确认后同步目标记录（如赛事延期的新日期），
+                # 避免下次重规划读到旧 target_date。
+                proposed_goal = proposed_fields.get("goal_snapshot") or {}
+                if proposed_goal and str(updated.get("goal_id") or ""):
+                    try:
+                        self.goals.update(
+                            str(updated["goal_id"]),
+                            {
+                                "name": proposed_goal.get("name"),
+                                "distance": proposed_goal.get("distance"),
+                                "goal_intent": proposed_goal.get("goal_intent"),
+                                "target_time": proposed_goal.get("target_time"),
+                                "target_date": proposed_goal.get("target_date"),
+                            },
+                        )
+                    except Exception:
+                        # 目标记录同步失败不阻塞方案确认；下次读取以方案 goal_snapshot 为准。
+                        pass
                 proposal["status"] = "approved"
                 proposal["approved_at"] = _now()
                 proposal["applied_version"] = updated["version"]
