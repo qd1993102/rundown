@@ -1,5 +1,13 @@
 # Changelog
 
+## 2026-08-17
+
+### Changed
+
+- **改动描述**: Huawei 健康数据新用户注册入口暂时下线：Web 绑定 API（`POST /api/setup` provider=huawei）返回 503 并提示"恢复时间另行通知"；CLI `init` 命令不再列出 Huawei 选项；Web 绑定页面隐藏 Huawei 选择器。现有已绑定华为账号的同步、日历、报告等能力不受影响。
+- **影响范围**: `src/web.py`、`src/main.py`、`web/templates/setup.html`
+- **关联文档**: [产品方案 — 数据源绑定与同步](product/data-source-sync.md)
+
 ## 2026-08-16
 
 ### Changed

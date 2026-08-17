@@ -1,12 +1,12 @@
 # 产品方案 — 数据源绑定与同步
 
-> 版本: v2.5 · 日期: 2026-08-14
-> 状态: Garmin、Coros、Huawei 既有绑定与同步已实现；Coros 活动详情、原始 Hz 保留、单位归一化和 L2 聚合已有本地回放证据。`CanonicalActivityDetail` 到三消费者投影的统一强合同已确认，工程收敛与线上 Provider/ECS 存量重建验收待完成；Strava 个人用户活动同步为 Proposed
+> 版本: v2.6 · 日期: 2026-08-17
+> 状态: Garmin、Coros 既有绑定与同步已实现；Huawei 新用户注册入口已于 2026-08-17 暂时下线，现有华为绑定用户同步不受影响；Coros 活动详情、原始 Hz 保留、单位归一化和 L2 聚合已有本地回放证据。`CanonicalActivityDetail` 到三消费者投影的统一强合同已确认，工程收敛与线上 Provider/ECS 存量重建验收待完成；Strava 个人用户活动同步为 Proposed
 > 配套技术设计: [12-multi-platform.md](../design/12-multi-platform.md) · [13-sae-deployment.md](../design/13-sae-deployment.md)
 
 ## 1. 背景与问题
 
-neurun 用户需要先绑定 Garmin、Coros、Huawei 或 Strava，才能把活动与健康数据同步到自己的本地数据空间。
+neurun 用户需要先绑定 Garmin、Coros 或 Strava（Huawei 新用户注册暂不可用），才能把活动与健康数据同步到自己的本地数据空间。
 绑定成功必须意味着后续同步访问的是同一平台、同一账号和同一区域；不能出现登录校验通过，实际数据请求却发往
 另一区域并误报 Token 失效的情况。
 
@@ -39,7 +39,7 @@ neurun 用户需要先绑定 Garmin、Coros、Huawei 或 Strava，才能把活�
   独立失败边界；任一授权失败不得撤销或误报另一条授权。
 - Coros 两条授权都提供默认开启的自动鉴权选项；用户授权后保存各自经过认证加密的可重放凭据，
   在对应 Access Token 明确失效时自动刷新并只重试原请求一次。
-- Huawei 的既有绑定和同步流程。
+- Huawei 的既有绑定和同步流程（新用户注册入口已于 2026-08-17 暂时下线）。
 - 单日、批量同步及同步日历状态。
 - Web 异步同步任务的发起、进度查询、刷新恢复和终态错误展示。
 - Token 失效后的同平台重新绑定。

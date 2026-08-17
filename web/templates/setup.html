@@ -131,9 +131,7 @@ p.desc{font-size:14px;color:#777;margin-bottom:28px;line-height:1.5}
     <div class="provider-opt" data-provider="coros" onclick="selectProvider('coros')">
       <span class="icon">⌚</span>Coros
     </div>
-    <div class="provider-opt" data-provider="huawei" onclick="selectProvider('huawei')">
-      <span class="icon">⌚</span>Huawei
-    </div>
+
   </div>
 
   <!-- Garmin / Coros fields -->
@@ -172,14 +170,7 @@ p.desc{font-size:14px;color:#777;margin-bottom:28px;line-height:1.5}
     </div>
   </div>
 
-  <!-- Huawei fields -->
-  <div id="huawei-fields" style="display:none">
-    <div class="form-group">
-      <label>CrewPals GROUP_PALS_TOKEN</label>
-      <input id="group-token" type="password" placeholder="输入你的 GROUP_PALS_TOKEN">
-      <div class="form-hint">从 Huawei Health 数据代理获取的访问令牌</div>
-    </div>
-  </div>
+
 
   <!-- MFA -->
   <div id="mfa-section">
@@ -344,15 +335,8 @@ function selectProvider(p){
   document.querySelectorAll('.provider-opt').forEach(el=>el.classList.remove('selected'));
   document.querySelector(`[data-provider="${p}"]`).classList.add('selected');
 
-  if(p==='huawei'){
-    $('cred-fields').style.display='none';
-    $('huawei-fields').style.display='block';
-    $('mfa-section').style.display='none';
-    $('coros-auto-relogin-group').style.display='none';
-    $('coros-region-group').style.display='none';
-  }else{
+  {
     $('cred-fields').style.display='block';
-    $('huawei-fields').style.display='none';
     $('mfa-section').style.display='none';
     if(p==='coros'){
       $('domain-group').style.display='none';
@@ -402,22 +386,7 @@ async function doBind(){
   const btn = $('step1-btn');
   btn.disabled = true;
 
-  if(provider==='huawei'){
-    const token = $('group-token').value.trim();
-    if(!token){showError('请输入 GROUP_PALS_TOKEN');btn.disabled=false;return}
-    btn.innerHTML='<span class="spinner"></span>绑定中...';
-    try{
-      const r = await fetch('/api/setup',{method:'POST',headers:{'Content-Type':'application/json'},
-        body:JSON.stringify({provider:'huawei',group_pals_token:token})});
-      const d = await r.json();
-      if(d.status==='ok'){
-        showSuccess('Huawei 绑定成功！');
-        setTimeout(()=>goStep(2),800);
-      }else{showError(d.message||'绑定失败')}
-    }catch(e){showError('网络错误: '+e.message)}
-    btn.disabled=false;btn.textContent='绑定并继续';
-    return;
-  }
+
 
   // Garmin / Coros
   const email = $('email').value.trim();

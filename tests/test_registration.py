@@ -691,7 +691,7 @@ def test_setup_api_requires_application_session(tmp_path):
     assert "请先登录" in _json(response)["message"]
 
 
-def test_huawei_setup_persists_user_credential_after_authentication(tmp_path, monkeypatch):
+def test_huawei_setup_now_rejected_when_registration_offline(tmp_path, monkeypatch):
     invite_path = tmp_path / "invite-codes.json"
     _write_invites(invite_path)
     config = Config(data_dir=str(tmp_path), invite_codes_file=str(invite_path))
@@ -700,28 +700,18 @@ def test_huawei_setup_persists_user_credential_after_authentication(tmp_path, mo
     server = _FakeServer()
     register_web_routes(server, manager, config)
 
-    class FakeHuaweiProvider:
-        def __init__(self, user_config):
-            assert user_config.group_pals_token == "group-user-token"
-
-        def authenticate(self):
-            return True
-
-    monkeypatch.setattr("src.providers.huawei.HuaweiProvider", FakeHuaweiProvider)
-
     response = asyncio.run(server.routes[("/api/setup", "POST")](_request(
         "/api/setup",
         {"provider": "huawei", "group_pals_token": "group-user-token"},
         cookie=f"neurun_key={user.api_key}",
     )))
 
-    assert response.status_code == 200
-    assert manager.get(user.api_key).provider == "huawei"
-    assert manager.get(user.api_key).token_status == "active"
-    token_path = tmp_path / user.api_key / "huawei-tokens" / "group-pals-token"
-    assert token_path.read_text(encoding="utf-8").strip() == "group-user-token"
-    assert stat.S_IMODE(token_path.parent.stat().st_mode) == 0o700
-    assert stat.S_IMODE(token_path.stat().st_mode) == 0o600
+    assert response.status_code == 503
+    body = json.loads(response.body)
+    assert "暂时下线" in body["message"]
+    # 用户状态不应变化
+    assert manager.get(user.api_key).token_status == "none"
+    assert manager.get(user.api_key).provider == "garmin"
 
 
 def test_huawei_setup_does_not_persist_credential_when_authentication_fails(
@@ -735,26 +725,16 @@ def test_huawei_setup_does_not_persist_credential_when_authentication_fails(
     server = _FakeServer()
     register_web_routes(server, manager, config)
 
-    class FakeHuaweiProvider:
-        def __init__(self, user_config):
-            pass
-
-        def authenticate(self):
-            return False
-
-    monkeypatch.setattr("src.providers.huawei.HuaweiProvider", FakeHuaweiProvider)
-
     response = asyncio.run(server.routes[("/api/setup", "POST")](_request(
         "/api/setup",
         {"provider": "huawei", "group_pals_token": "invalid-token"},
         cookie=f"neurun_key={user.api_key}",
     )))
 
-    assert response.status_code == 400
+    # 注册入口已下线，任何 Huawei 绑定请求都返回 503
+    assert response.status_code == 503
     assert manager.get(user.api_key).token_status == "none"
     assert manager.get(user.api_key).provider == "garmin"
-    token_path = tmp_path / user.api_key / "huawei-tokens" / "group-pals-token"
-    assert not token_path.exists()
 
 
 def test_invite_cli_generates_json_without_provider_credentials(tmp_path, monkeypatch, capsys):

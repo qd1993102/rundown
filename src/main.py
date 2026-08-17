@@ -1372,49 +1372,38 @@ def cmd_init(args: argparse.Namespace) -> None:
     console.print("首次使用？让我帮你创建配置文件。\n")
 
     # 1. 选择 Provider
-    provider = _ask("运动平台 (garmin/coros/huawei)", "garmin")
-    if provider not in ("garmin", "coros", "huawei"):
-        console.print("[red]无效的平台，请输入 garmin、coros 或 huawei[/]")
+    provider = _ask("运动平台 (garmin/coros)", "garmin")
+    if provider not in ("garmin", "coros"):
+        console.print("[red]无效的平台，请输入 garmin 或 coros[/]")
         return
 
     # 2. 账号
     account = password = ""
-    if provider != "huawei":
-        hint = "邮箱或手机号" if provider == "coros" else "Garmin Connect 邮箱"
-        account = _ask(f"账号 ({hint})")
-        if not account:
-            console.print("[red]账号不能为空[/]")
-            return
-        password = _ask("密码")
-        if not password:
-            console.print("[red]密码不能为空[/]")
-            return
+    hint = "邮箱或手机号" if provider == "coros" else "Garmin Connect 邮箱"
+    account = _ask(f"账号 ({hint})")
+    if not account:
+        console.print("[red]账号不能为空[/]")
+        return
+    password = _ask("密码")
+    if not password:
+        console.print("[red]密码不能为空[/]")
+        return
 
     # 4. 存储位置
     console.print("\n[dim]数据存储位置（回车使用默认）[/]")
     location = _ask("数据库路径", "./data/rundown_data.db")
     sync_days = _ask("默认同步天数", "30")
 
-    huawei_token_dir = ""
     env_content = f"""# neurun 配置
 NEURUN_PROVIDER={provider}
 NEURUN_DB_PATH={location}
 NEURUN_SYNC_DAYS={sync_days}
 NEURUN_LOG_LEVEL=INFO
 """
-    if provider != "huawei":
-        env_content += f"NEURUN_ACCOUNT={account}\nNEURUN_PASSWORD={password}\n"
+    env_content += f"NEURUN_ACCOUNT={account}\nNEURUN_PASSWORD={password}\n"
     if provider == "garmin":
         domain = _ask("Garmin 区域 (garmin.com/garmin.cn)", "garmin.com")
         env_content += f"GARMIN_DOMAIN={domain}\n"
-    elif provider == "huawei":
-        group_pals_token = _ask("CrewPals GROUP_PALS_TOKEN")
-        from .config import huawei_user_key
-        default_token_dir = str(Path.home() / ".neurun" / "users" /
-                                huawei_user_key(group_pals_token) / "huawei-tokens")
-        huawei_token_dir = _ask("Huawei Token 目录", default_token_dir)
-        env_content += (f"GROUP_PALS_TOKEN={group_pals_token}\n"
-                        f"HUAWEI_TOKEN_DIR={huawei_token_dir}\n")
 
     # 写入
     env_path = Path(".env")
@@ -1426,11 +1415,6 @@ NEURUN_LOG_LEVEL=INFO
 
     atomic_write_private(env_path, env_content, private_parent=False)
     console.print(f"\n[green]✅ 配置已写入: {env_path}[/]")
-    if provider == "huawei":
-        token_path = Path(huawei_token_dir).expanduser()
-        ensure_private_dir(token_path)
-        console.print(f"[green]✅ Huawei Token 目录已准备: {token_path}[/]")
-
     # 询问全局配置
     make_global = _ask("同时写入全局配置 ~/.neurun/.env？(y/n)", "y")
     if make_global.lower() == "y":

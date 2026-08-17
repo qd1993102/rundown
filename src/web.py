@@ -1330,6 +1330,10 @@ def register_web_routes(server, user_manager: UserManager, config: Config):
 
         # ── Huawei: GROUP_PALS_TOKEN 认证 ──
         if provider == "huawei":
+            return JSONResponse(
+                {"status": "error", "message": "Huawei 健康数据绑定入口暂时下线，恢复时间另行通知"},
+                status_code=503,
+            )
             group_token = body.get("group_pals_token", "").strip()
             if not group_token:
                 return JSONResponse({"status": "error", "message": "请输入 GROUP_PALS_TOKEN"}, status_code=400)
