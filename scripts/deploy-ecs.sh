@@ -159,13 +159,53 @@ printf '%s\n' "${SOURCE_COMMIT}" > "${RELEASE_DIR}/.neurun-release"
 
 "${PYTHON_BIN}" -m venv --clear "${RELEASE_DIR}/.venv"
 "${RELEASE_DIR}/.venv/bin/python" -m pip install --upgrade pip
-"${RELEASE_DIR}/.venv/bin/python" -m pip install -e "${RELEASE_DIR}"
+# 必须带 [image] extra，否则缺少 playwright，分享卡图片生成会回退失败
+"${RELEASE_DIR}/.venv/bin/python" -m pip install -e "${RELEASE_DIR}[image]"
 
 # 在切换和重启前先确认服务入口可导入。
 (
   cd "${RELEASE_DIR}"
   "${RELEASE_DIR}/.venv/bin/python" -c 'from src.main import cmd_serve'
 )
+
+install_browser_engine() {
+  # 分享卡 PNG 渲染依赖 Chromium（Playwright）。无 GUI 的 ECS 需要：
+  # 1) 系统依赖库（playwright install-deps，root 执行）
+  # 2) 中文字体（缺失时中文渲染为方块，不报错但图不正确）
+  # 3) Chromium 浏览器本体（官方 CDN 失败时回退 npmmirror 镜像）
+  echo "安装 Chromium 渲染引擎与系统依赖..."
+  BROWSERS_DIR="${BROWSERS_DIR:-/opt/neurun-browsers}"
+  install -d -m 0755 "${BROWSERS_DIR}"
+
+  if command -v apt-get >/dev/null 2>&1; then
+    # Ubuntu / Debian
+    "${RELEASE_DIR}/.venv/bin/python" -m playwright install-deps chromium || {
+      echo "错误：playwright install-deps 失败，无法安装 Chromium 系统依赖" >&2
+      exit 1
+    }
+    apt-get install -y fonts-noto-cjk >/dev/null 2>&1       || echo "警告：中文字体 fonts-noto-cjk 安装失败，分享卡中文可能显示为方块"
+  elif command -v yum >/dev/null 2>&1; then
+    # CentOS / RHEL / Alibaba Cloud Linux
+    "${RELEASE_DIR}/.venv/bin/python" -m playwright install-deps chromium || {
+      echo "错误：playwright install-deps 失败，无法安装 Chromium 系统依赖" >&2
+      exit 1
+    }
+    yum install -y wqy-zenhei-fonts >/dev/null 2>&1       || yum install -y google-noto-sans-cjk-fonts >/dev/null 2>&1       || echo "警告：中文字体安装失败，分享卡中文可能显示为方块"
+  else
+    echo "警告：未知发行版，跳过系统依赖与中文字体安装；请手动执行 playwright install-deps" >&2
+  fi
+
+  if PLAYWRIGHT_BROWSERS_PATH="${BROWSERS_DIR}"      "${RELEASE_DIR}/.venv/bin/python" -m playwright install chromium
+  then
+    :
+  else
+    echo "官方 CDN 下载 Chromium 失败，回退 npmmirror 镜像..." >&2
+    PLAYWRIGHT_DOWNLOAD_HOST=https://npmmirror.com/mirrors/playwright       PLAYWRIGHT_BROWSERS_PATH="${BROWSERS_DIR}"       "${RELEASE_DIR}/.venv/bin/python" -m playwright install chromium
+  fi
+
+  # 确保 neurun 运行用户可读可执行浏览器目录
+  chmod -R a+rX "${BROWSERS_DIR}" 2>/dev/null || true
+}
 
 write_service_file() {
   local release_sha="$1"
@@ -190,6 +230,8 @@ Environment=MCP_PORT=8080
 Environment=MCP_TRANSPORT=sse
 EnvironmentFile=-${ENV_DIR}/neurun.env
 Environment=NEURUN_RELEASE_SHA=${release_sha}
+Environment=PLAYWRIGHT_BROWSERS_PATH=${BROWSERS_DIR}
+Environment=HOME=/home/${RUN_USER}
 
 ExecStart=${CURRENT_LINK}/.venv/bin/python -c "from src.main import cmd_serve; cmd_serve()"
 
@@ -202,6 +244,8 @@ LimitNOFILE=8192
 WantedBy=multi-user.target
 EOF
 }
+
+install_browser_engine
 
 write_service_file "${SOURCE_COMMIT}"
 

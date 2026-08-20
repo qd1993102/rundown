@@ -215,6 +215,11 @@ curl -fsS http://<ECS_PRIVATE_IP>:8080/healthz
 `/opt/neurun-deploy/code_deploy_application` 只是暂存区；在线服务运行于独立的
 `/opt/neurun-releases/<release-id>`，并通过 `/opt/neurun-current` 切换。如果 Git 未下载成功或
 新版本依赖安装失败，脚本会在重启 systemd 前退出，保留当前应用继续运行。
+
+分享卡 PNG 渲染依赖 Playwright Chromium。`deploy-ecs.sh` 会自动安装 `[image]` extra、
+Chromium 系统依赖、中文字体，并把浏览器装入共享目录 `/opt/neurun-browsers`
+（systemd 服务注入 `PLAYWRIGHT_BROWSERS_PATH`，避免 HOME 未设置导致找不到浏览器）。
+国内 ECS 官方 CDN 下载失败时会自动回退 npmmirror 镜像。
 阿里云控制台的“启动脚本”使用：
 
 ```bash

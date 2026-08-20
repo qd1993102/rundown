@@ -25,6 +25,10 @@
 - **关联文档**: [操作手册 — ECS 用户数据本地还原](operations/ecs-user-data-restore.md)
 
 ### Changed
+- **改动描述**: 修复 ECS 分享卡图片生成失败：`deploy-ecs.sh` 安装 `[image]` extra（playwright 包）、Chromium 系统依赖、中文字体，浏览器装入共享目录 `/opt/neurun-browsers` 并注入 `PLAYWRIGHT_BROWSERS_PATH`（官方 CDN 失败回退 npmmirror），解决无 GUI ECS 上「未找到 Chrome」导致图片生成 500 的问题。
+- **影响范围**: `scripts/deploy-ecs.sh`、`README.md`
+- **关联文档**: [README 部署说明](../README.md)
+
 
 - **改动描述**: 质量课识别增加体积门禁：`prepare_daily_analysis()` 中距离 < 3km 且时长 < 15min 的跑步活动不再被识别为质量课（tempo/interval/fartlek），避免短距离慢跑因配速落入强度带被误判为质量课；误判场例如 1km 配速 4:32/km 被标记为节奏跑。
 - **影响范围**: `src/training_day_summary.py`（prepare_daily_analysis 新增 volume gate）、`tests/test_training_day_summary.py`（新增两个测试）
