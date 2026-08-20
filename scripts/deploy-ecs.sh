@@ -13,6 +13,9 @@ SYSTEMCTL_BIN="${SYSTEMCTL_BIN:-systemctl}"
 RUN_USER="${RUN_USER:-neurun}"
 RUN_GROUP="${RUN_GROUP:-neurun}"
 DEPLOY_LOCK_FILE="${DEPLOY_LOCK_FILE:-${WORK_DIR}/neurun-deploy.lock}"
+# 健康检查轮询次数（每次约 1 秒）。启动时会先逐个恢复用户 SQLite 备份再监听 8080，
+# 用户较多时启动可能接近 20 秒；轮询窗口必须大于启动耗时，否则会误判失败并触发回滚。
+HEALTH_CHECK_ATTEMPTS="${HEALTH_CHECK_ATTEMPTS:-60}"
 CURRENT_SWITCHED=0
 
 report_candidate_failure() {
@@ -85,6 +88,11 @@ fi
 
 if ! command -v curl >/dev/null 2>&1; then
   echo "错误：未找到 curl，无法执行发布后健康检查；当前应用保持运行" >&2
+  exit 1
+fi
+
+if [[ ! "${HEALTH_CHECK_ATTEMPTS}" =~ ^[0-9]+$ ]] || [ "${HEALTH_CHECK_ATTEMPTS}" -lt 1 ]; then
+  echo "错误：HEALTH_CHECK_ATTEMPTS 必须为正整数（当前：${HEALTH_CHECK_ATTEMPTS}）；当前应用保持运行" >&2
   exit 1
 fi
 
@@ -217,7 +225,7 @@ wait_for_health() {
   local response
   local actual_release
 
-  for attempt in $(seq 1 20); do
+  for attempt in $(seq 1 "${HEALTH_CHECK_ATTEMPTS}"); do
     response="$(curl -fsS http://127.0.0.1:8080/healthz 2>/dev/null || true)"
     if [ -z "${response}" ]; then
       sleep 1
