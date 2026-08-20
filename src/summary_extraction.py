@@ -108,14 +108,27 @@ class VolumeFacts:
 
 @dataclass(frozen=True)
 class StructureFacts:
+    """跑步动力学画像：各维度均值、变异系数、前后半程差。
+
+    配速相关的 CV/前后半程差由 PaceProfileFacts 独立管理，不在本类重复。
+    """
     n_splits: int
-    half_diff_s: float | None
-    cv_pct: float | None
     avg_cadence: float | None = None
     max_cadence: float | None = None
+    cadence_cv_pct: float | None = None
+    cadence_half_diff: float | None = None
     avg_stride: float | None = None
+    stride_cv_pct: float | None = None
+    stride_half_diff: float | None = None
     avg_gct: float | None = None
+    gct_cv_pct: float | None = None
+    gct_half_diff: float | None = None
     avg_vo: float | None = None
+    vo_cv_pct: float | None = None
+    vo_half_diff: float | None = None
+    avg_vertical_ratio: float | None = None
+    hr_cv_pct: float | None = None
+    hr_half_diff: float | None = None
     evidence: tuple[dict[str, Any], ...] = ()
 
 
@@ -255,8 +268,8 @@ def _weighted_quantile(pairs: list[tuple[float, float]], fraction: float) -> flo
     return round(items[-1][0], 1)
 
 
-def _half_pace_diff(pairs: list[tuple[float, float]]) -> dict[str, float | None]:
-    """按累计时长切半，返回前后半段时长加权平均配速差（sec/km，正=后程慢）。"""
+def _half_metric_diff(pairs: list[tuple[float, float]]) -> dict[str, float | None]:
+    """按累计权重切半，返回前后半段加权平均差（正=后程增大）。"""
     items = [(p, d) for p, d in pairs if p and d > 0]
     if len(items) < 2:
         return {"first": None, "second": None, "diff": None}
@@ -283,6 +296,14 @@ def _half_pace_diff(pairs: list[tuple[float, float]]) -> dict[str, float | None]
         "second": round(second_avg, 1),
         "diff": round(second_avg - first_avg, 1),
     }
+
+
+def _cv_pct(pairs: list[tuple[float, float]]) -> float | None:
+    """时长加权变异系数（%），不足 2 对返回 None。"""
+    values = [v for v, _ in pairs if v is not None]
+    if len(values) < 2:
+        return None
+    return round((pstdev(values) / (mean(values) or 1)) * 100, 2)
 
 
 _WORK_TOKENS = (
@@ -428,16 +449,32 @@ def build_session_summary(detail: dict[str, Any]) -> SessionSummaryFacts:
     structure = None
     terrain = None
     if splits:
-        first_count = (len(split_durations) + 1) // 2
-        first_half = sum(split_durations[:first_count])
-        second_half = sum(split_durations[first_count:])
+        # ── 跑步动力学画像：各维度均值、CV、前后半程差 ──
+        _avg_cad = _weighted(metric_cadence or cadence)
+        _avg_st = _weighted(stride)
+        _avg_gct = _weighted(gct)
+        _avg_vo = _weighted(vo)
+        _avg_vr = round((_avg_vo / _avg_st * 100), 1) if _avg_vo and _avg_st else None
+        # 心率来源：优先 metrics 序列，否则分段 hr
+        _hr_pairs = metric_hr or hrs
         structure = StructureFacts(
             n_splits=len(splits),
-            half_diff_s=round(second_half - first_half, 2) if split_duration else None,
-            cv_pct=round((pstdev([v for v, _ in split_values]) / (mean([v for v, _ in split_values]) or 1)) * 100, 2) if len(split_values) > 1 else None,
-            avg_cadence=_weighted(metric_cadence or cadence),
+            avg_cadence=_avg_cad,
             max_cadence=_first(source, "maxRunCadence", "max_run_cadence", "maxCadence"),
-            avg_stride=_weighted(stride), avg_gct=_weighted(gct), avg_vo=_weighted(vo),
+            cadence_cv_pct=_cv_pct(metric_cadence or cadence),
+            cadence_half_diff=_half_metric_diff(metric_cadence or cadence)["diff"] if (metric_cadence or cadence) else None,
+            avg_stride=_avg_st,
+            stride_cv_pct=_cv_pct(stride),
+            stride_half_diff=_half_metric_diff(stride)["diff"] if stride else None,
+            avg_gct=_avg_gct,
+            gct_cv_pct=_cv_pct(gct),
+            gct_half_diff=_half_metric_diff(gct)["diff"] if gct else None,
+            avg_vo=_avg_vo,
+            vo_cv_pct=_cv_pct(vo),
+            vo_half_diff=_half_metric_diff(vo)["diff"] if vo else None,
+            avg_vertical_ratio=_avg_vr,
+            hr_cv_pct=_cv_pct(_hr_pairs),
+            hr_half_diff=_half_metric_diff(_hr_pairs)["diff"] if _hr_pairs else None,
             evidence=(_evidence("structure.n_splits", "splitSummaries", len(splits)),),
         )
         total_ascent = ascent if ascent is not None else (split_ascent or None)
@@ -507,7 +544,7 @@ def build_session_summary(detail: dict[str, Any]) -> SessionSummaryFacts:
         fastest_pace = round(min(p for p, _ in pace_pairs), 1)
     pace_profile = None
     if pace_pairs:
-        half = _half_pace_diff(pace_pairs)
+        half = _half_metric_diff(pace_pairs)
         overall_pace = (
             duration / (distance / 1000)
             if duration > 0 and distance > 0
@@ -700,6 +737,7 @@ def compact_session_summary_for_planning(summary: dict[str, Any]) -> dict[str, A
     intensity = summary.get("intensity") or {}
     pace_profile = summary.get("pace_profile") or {}
     structure_profile = summary.get("structure_profile") or {}
+    structure = summary.get("structure") or {}
     return {
         "schema_version": summary.get("schema_version"),
         "fact_version": summary.get("fact_version"),
@@ -721,6 +759,18 @@ def compact_session_summary_for_planning(summary: dict[str, Any]) -> dict[str, A
             for key in (
                 "avg_pace_sec_per_km", "cv_pct",
                 "half_pace_diff_s", "positive_split",
+            )
+        },
+        "structure": {
+            key: structure.get(key)
+            for key in (
+                "avg_cadence", "max_cadence",
+                "cadence_cv_pct", "cadence_half_diff",
+                "avg_stride", "stride_cv_pct", "stride_half_diff",
+                "avg_gct", "gct_cv_pct", "gct_half_diff",
+                "avg_vo", "vo_cv_pct", "vo_half_diff",
+                "avg_vertical_ratio",
+                "hr_cv_pct", "hr_half_diff",
             )
         },
         "structure_profile": {

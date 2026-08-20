@@ -3,64 +3,15 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
+<link rel="stylesheet" href="/static/tokens.css">
+<link rel="stylesheet" href="/static/reset.css">
+<link rel="stylesheet" href="/static/components.css">
+<link rel="stylesheet" href="/static/utilities.css">
 <title>neurun — 训练日报</title>
 <style>
 /* ═══════════════════════════════════════════
    neurun Dashboard — 复用 render.py 三主题系统
    ═══════════════════════════════════════════ */
-
-[data-theme="fresh"] {
-  --bg:#e8efe9; --bg-card:#fff; --text:#1a2e23; --text-secondary:#5a7d6e; --text-muted:#8aa89a;
-  --accent:#2d9d6f; --accent-glow:rgba(45,157,111,.1); --recovery:#3b82b6; --recovery-glow:rgba(59,130,246,.08);
-  --performance:#22a86e; --performance-glow:rgba(34,168,110,.08); --sleep:#7c6fcf; --sleep-glow:rgba(124,111,207,.08);
-  --warning:#d4a017; --danger:#dc5b51; --hrv:#3b9fc6;
-  --card-shadow:0 2px 8px rgba(0,0,0,.06); --card-shadow-hover:0 8px 30px rgba(0,0,0,.1);
-  --border-subtle:#dde5df; --bg-subtle:#f0f4f0;
-}
-[data-theme="sport"] {
-  --bg:#f0f0f0; --bg-card:#fff; --text:#171717; --text-secondary:#525252; --text-muted:#a3a3a3;
-  --accent:#f15b2a; --accent-glow:rgba(241,91,42,.08); --recovery:#2563eb; --recovery-glow:rgba(37,99,235,.08);
-  --performance:#16a34a; --performance-glow:rgba(22,163,74,.08); --sleep:#7c3aed; --sleep-glow:rgba(124,58,237,.08);
-  --warning:#eab308; --danger:#ef4444; --hrv:#0891b2;
-  --card-shadow:0 2px 10px rgba(0,0,0,.07); --card-shadow-hover:0 10px 35px rgba(0,0,0,.1);
-  --border-subtle:#ebebeb; --bg-subtle:#f5f5f5;
-}
-[data-theme="dark"] {
-  --bg:#0b1120; --bg-card:#1a2333; --text:#e2e8f0; --text-secondary:#94a3b8; --text-muted:#64748b;
-  --accent:#34d399; --accent-glow:rgba(52,211,153,.12); --recovery:#60a5fa; --recovery-glow:rgba(96,165,250,.1);
-  --performance:#4ade80; --performance-glow:rgba(74,222,128,.1); --sleep:#a78bfa; --sleep-glow:rgba(167,139,250,.1);
-  --warning:#fbbf24; --danger:#f87171; --hrv:#22d3ee;
-  --card-shadow:0 2px 10px rgba(0,0,0,.35); --card-shadow-hover:0 10px 30px rgba(0,0,0,.5);
-  --border-subtle:#243044; --bg-subtle:#151e2c;
-}
-
-*{margin:0;padding:0;box-sizing:border-box}
-html{min-width:320px;background:var(--bg)}
-body{min-width:320px;background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSystemFont,'SF Pro Display','Segoe UI',Roboto,sans-serif;line-height:1.6;-webkit-font-smoothing:antialiased;transition:background .3s,color .3s}
-button,input{font:inherit}
-button{-webkit-tap-highlight-color:transparent;touch-action:manipulation}
-.container{width:100%;max-width:720px;margin:0 auto;padding:12px 12px calc(112px + env(safe-area-inset-bottom))}
-.visually-hidden{position:absolute!important;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
-
-/* ── Shared app navigation ── */
-.app-header{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:0 0 12px}
-.app-brand{display:flex;align-items:center;gap:8px;color:var(--text);font-size:14px;font-weight:800;letter-spacing:.2px}
-.app-brand-mark{display:grid;place-items:center;width:32px;height:32px;border-radius:11px;background:var(--accent);color:#fff;font-size:17px;font-weight:900}
-.app-nav{position:fixed;z-index:50;left:50%;bottom:calc(10px + env(safe-area-inset-bottom));transform:translateX(-50%);width:min(calc(100% - 24px),520px);display:grid;grid-template-columns:repeat(4,1fr);gap:4px;padding:6px;border:1px solid var(--border-subtle);border-radius:22px;background:color-mix(in srgb,var(--bg-card) 92%,transparent);box-shadow:0 12px 40px rgba(0,0,0,.22);-webkit-backdrop-filter:blur(18px);backdrop-filter:blur(18px)}
-.app-nav-item{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;min-width:0;min-height:54px;padding:6px 5px;border-radius:16px;color:var(--text-muted);text-decoration:none;transition:color .2s,background .2s;-webkit-tap-highlight-color:transparent;touch-action:manipulation}
-.app-nav-item[aria-current="page"]{background:var(--accent-glow);color:var(--accent)}
-.app-nav-icon{width:21px;height:21px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
-.app-nav-label{font-size:10px;font-weight:750;line-height:1;letter-spacing:.2px}
-.theme-bar{display:inline-flex;gap:3px;padding:3px;border:1px solid var(--border-subtle);border-radius:14px;background:var(--bg-card);box-shadow:var(--card-shadow)}
-.theme-btn{min-height:40px;border:1px solid transparent;padding:6px 10px;border-radius:10px;font-size:11px;font-weight:650;cursor:pointer;background:transparent;color:var(--text-muted);transition:color .2s,background .2s,border-color .2s;letter-spacing:.2px}
-.theme-btn.active{background:var(--accent);color:#fff}
-
-/* ── Buttons ── */
-.btn{min-height:44px;padding:9px 16px;border-radius:12px;border:1px solid var(--border-subtle);background:transparent;color:var(--text-secondary);font-size:13px;font-weight:700;cursor:pointer;transition:color .2s,background .2s,border-color .2s,opacity .2s;letter-spacing:.3px;white-space:nowrap}
-.btn.primary{background:var(--accent);border-color:var(--accent);color:#fff}
-.btn:disabled{opacity:.4;cursor:not-allowed}
-.spinner{display:inline-block;width:14px;height:14px;border:2px solid rgba(255,255,255,.3);border-top-color:#fff;border-radius:50%;animation:spin .6s linear infinite;vertical-align:middle;margin-right:6px}
-@keyframes spin{to{transform:rotate(360deg)}}
 
 /* ── Report toolbar ── */
 .report-toolbar{display:grid;gap:12px;margin-bottom:16px;padding:16px;background:var(--bg-card);border:1px solid var(--border-subtle);border-radius:18px;box-shadow:var(--card-shadow)}
@@ -72,9 +23,6 @@ button{-webkit-tap-highlight-color:transparent;touch-action:manipulation}
 .date-control input{width:100%;min-height:44px;padding:8px 11px;border-radius:12px;border:1px solid var(--border-subtle);background:var(--bg-subtle);color:var(--text);font-size:14px;outline:none;color-scheme:dark}
 [data-theme="fresh"] .date-control input,[data-theme="sport"] .date-control input{color-scheme:light}
 .date-control input:focus-visible,.btn:focus-visible,.theme-btn:focus-visible,.app-nav-item:focus-visible{outline:3px solid var(--accent-glow);outline-offset:2px;border-color:var(--accent)}
-.save-status{min-height:20px;font-size:12px;color:var(--text-muted)}
-.save-status.success{color:var(--performance)}
-.save-status.error{color:var(--danger)}
 
 /* ── Loading ── */
 .loading{text-align:center;padding:64px 20px;color:var(--text-muted);font-size:14px}
@@ -85,9 +33,6 @@ button{-webkit-tap-highlight-color:transparent;touch-action:manipulation}
 .plan-item{flex:1;text-align:center}
 .plan-val{display:block;font-family:-apple-system,'SF Pro Display','Helvetica Neue',sans-serif;font-size:15px;font-weight:700;color:var(--text)}
 .plan-lbl{display:block;font-size:10px;color:var(--text-muted);margin-top:2px;text-transform:uppercase;letter-spacing:.5px}
-.plan-execution-summary{display:grid;gap:10px;margin-bottom:16px;padding:16px;border-radius:16px;background:var(--bg-card);box-shadow:var(--card-shadow);border-left:3px solid var(--accent)}
-.plan-execution-summary h2{font-size:16px}.plan-execution-summary p{color:var(--text-secondary);font-size:13px}.plan-execution-meta{display:flex;flex-wrap:wrap;gap:7px}.plan-execution-meta span{padding:4px 8px;border-radius:999px;background:var(--bg-subtle);color:var(--text-secondary);font-size:11px;font-weight:700}
-.plan-execution-guidance{margin:0;color:var(--text-secondary);font-size:13px}.plan-execution-summary ul.plan-execution-guidance{margin:0;padding-left:18px}
 .today-conclusion{display:grid;gap:8px;margin:0 0 16px;padding:16px;border-radius:16px;background:var(--accent-glow);border:1px solid var(--border-subtle)}.today-conclusion h2{font-size:16px}.today-conclusion p{font-size:14px;color:var(--text-secondary);line-height:1.7}.report-evidence{margin-top:24px;border-radius:16px;background:var(--bg-card);box-shadow:var(--card-shadow)}.report-evidence summary{min-height:52px;display:flex;align-items:center;padding:0 16px;cursor:pointer;color:var(--text);font-size:14px;font-weight:750}.report-evidence-body{padding:0 12px 14px}.report-evidence .section-title{margin:18px 4px 10px}
 
 /* ── Hero Grid ── */
@@ -175,7 +120,6 @@ button{-webkit-tap-highlight-color:transparent;touch-action:manipulation}
   .theme-btn{min-height:36px;border-radius:20px;padding:5px 12px}
   .report-toolbar{grid-template-columns:minmax(0,1fr) auto;align-items:center;padding:20px 22px}
   .report-controls{grid-template-columns:150px auto}
-  .save-status{grid-column:1/-1}
   .plan-strip{grid-template-columns:repeat(4,1fr);padding:14px 18px}
   .hero-grid{gap:14px;margin-bottom:24px}
   .hero-card{padding:24px 18px}
@@ -192,8 +136,7 @@ button{-webkit-tap-highlight-color:transparent;touch-action:manipulation}
   .load-card{padding:28px}
   .load-stats{display:flex;gap:24px;justify-content:center;margin-top:18px}
   .plan-exec-card{padding:20px 24px}
-  .pe-row{display:flex;justify-content:space-between;gap:16px}
-  .ai-section{padding:28px}
+    .ai-section{padding:28px}
   .ai-conclusion{font-size:16px;padding:14px 18px}
 }
 
@@ -207,6 +150,22 @@ button{-webkit-tap-highlight-color:transparent;touch-action:manipulation}
 }
 
 @media(prefers-reduced-motion:reduce){*{scroll-behavior:auto!important;transition:none!important;animation-duration:.01ms!important;animation-iteration-count:1!important}}
+
+/* Share Modal */
+.share-overlay{position:fixed;inset:0;z-index:100;background:rgba(0,0,0,.6);display:flex;align-items:center;justify-content:center;padding:20px;-webkit-backdrop-filter:blur(4px);backdrop-filter:blur(4px);animation:fadeIn .2s}
+.share-overlay[hidden]{display:none}
+@keyframes fadeIn{from{opacity:0}to{opacity:1}}
+.share-modal{background:var(--bg-card);border-radius:20px;width:100%;max-width:375px;max-height:calc(100vh - 40px);overflow-y:auto;box-shadow:0 20px 60px rgba(0,0,0,.3);animation:slideUp .25s}
+@keyframes slideUp{from{transform:translateY(30px);opacity:0}to{transform:translateY(0);opacity:1}}
+.share-modal-header{display:flex;align-items:center;justify-content:space-between;padding:16px 20px 8px}
+.share-modal-header h2{font-size:16px;font-weight:700}
+.share-modal-close{width:32px;height:32px;border:none;border-radius:8px;background:var(--bg-subtle);color:var(--text-muted);font-size:18px;cursor:pointer;display:grid;place-items:center;transition:background .15s}
+.share-modal-close:hover{background:var(--divider)}
+.share-modal-body{text-align:center;padding:0;display:flex;flex-direction:column;align-items:center}
+.share-modal-body img{width:100%;border-radius:12px;box-shadow:0 2px 12px rgba(0,0,0,.1)}
+.share-modal-loading{padding:60px 20px;color:var(--text-muted);font-size:14px;text-align:center}
+.share-modal-actions{display:flex;gap:8px;padding:12px 20px 16px;justify-content:center}
+.share-modal-actions .btn{flex:1;max-width:180px}
 </style>
 </head>
 <body data-theme="dark">
@@ -251,9 +210,9 @@ button{-webkit-tap-highlight-color:transparent;touch-action:manipulation}
       <span class="visually-hidden">选择日报日期</span>
       <input type="date" id="viewDate" onchange="onDateChange()" title="查看指定日期">
     </label>
-    <button class="btn primary" id="saveImageBtn" type="button" onclick="saveReportImage()" disabled>保存图片</button>
+    <button class="btn primary" id="shareCardBtn" type="button" onclick="downloadDailyShareCard()" disabled>📷 分享卡</button>
   </div>
-  <p class="save-status" id="saveStatus" aria-live="polite"></p>
+
 </section>
 
 <!-- Loading -->
@@ -266,7 +225,6 @@ button{-webkit-tap-highlight-color:transparent;touch-action:manipulation}
 
   <div class="quality-banner" id="qualityBanner" hidden></div>
   <section class="today-conclusion" id="todayConclusion" hidden></section>
-  <section class="plan-execution-summary" id="planExecutionSummary" hidden></section>
 
   <div class="section-title">🏃 当日训练事实</div>
   <div id="trainingArea"></div>
@@ -297,10 +255,28 @@ button{-webkit-tap-highlight-color:transparent;touch-action:manipulation}
       <div class="load-stat"><div class="val" id="loadStatus">—</div><div class="lbl">状态</div></div>
     </div>
       </div>
-    </div>
+  </div>
   </details>
 
-    <div class="footer">Built with <span>neurun</span></div>
+
+<!-- Share Card Modal -->
+<div class="share-overlay" id="shareOverlay" hidden>
+  <div class="share-modal">
+    <div class="share-modal-header">
+      <h2 id="shareModalTitle">分享卡</h2>
+      <button class="share-modal-close" onclick="closeShareModal()" aria-label="关闭">✕</button>
+    </div>
+    <div class="share-modal-body" id="shareModalBody">
+      <div class="share-modal-loading"><span class="spinner"></span>生成分享卡中...</div>
+    </div>
+    <div class="share-modal-actions" id="shareModalActions" hidden>
+      <button class="btn" onclick="closeShareModal()">关闭</button>
+      <button class="btn primary" id="shareModalSaveBtn" onclick="saveShareCard()">💾 保存到本地</button>
+    </div>
+  </div>
+</div>
+
+<div class="footer">Built with <span>neurun</span></div>
   </main>
 
   <!-- Empty -->
@@ -341,9 +317,8 @@ function render(d){
   $('dashboard').style.display='block';
   $('reportContent').style.display=currentReport?'block':'none';
   $('emptyState').style.display=currentReport?'none':'block';
-  $('saveImageBtn').disabled=!currentReport;
-  $('saveStatus').textContent='';
-  $('saveStatus').className='save-status';
+  $('shareCardBtn').disabled=!currentReport;
+
   if(!d.has_data){
     $('reportDateLabel').textContent='所选日期尚未生成日报';
     return;
@@ -353,33 +328,10 @@ function render(d){
   if(quality==='complete'){qualityBanner.hidden=true}
   else{qualityBanner.hidden=false;qualityBanner.textContent=quality==='limited'?'这是一份数据不完整的受限报告，部分结论已省略。':'这份旧报告没有数据完整性快照，可信范围未知。'}
 
-  var execution=d.plan_execution_summary||{},executionArea=$('planExecutionSummary');
-  if(execution.headline){
-    var executionGoal=execution.goal||{},executionWeek=execution.week||{},executionPlanned=execution.planned||{},executionActual=execution.actual||{};
-    var meta=[];
-    if(executionGoal.name)meta.push('<span>'+esc(executionGoal.name)+(executionGoal.target_date?' · '+esc(executionGoal.target_date):'')+'</span>');
-    if(executionGoal.days_to_goal!=null)meta.push('<span>'+(executionGoal.days_to_goal>=0?'距目标 '+esc(executionGoal.days_to_goal)+' 天':'目标日已过')+'</span>');
-    if(execution.phase&&execution.phase.name)meta.push('<span>'+esc(execution.phase.name)+'</span>');
-    if(executionWeek.target_km!=null)meta.push('<span>本周已记录 '+esc(executionWeek.recorded_km||0)+' / '+esc(executionWeek.target_km)+' km</span>');
-    if(executionPlanned.title)meta.push('<span>计划：'+esc(executionPlanned.title)+'</span>');
-    if(executionActual.summary)meta.push('<span>实际：'+esc(executionActual.summary)+'</span>');
-    var comparison=execution.comparison||{},prescription=executionPlanned.training_prescription||{},prescriptionTargets=prescription.targets||{},feel=prescriptionTargets.feel||{};
-    if(comparison.target!=null)meta.push('<span>'+esc(comparison.primary_metric||'目标')+' '+esc(comparison.actual==null?'—':comparison.actual)+' / '+esc(comparison.target)+'</span>');
-    if(feel.label)meta.push('<span>强度：'+esc(feel.label)+'</span>');
-    var prescriptionHtml='';
-    if((prescription.blocks||[]).length){var criteria=prescription.completion_criteria||[],criteriaItems=Array.isArray(criteria)?criteria:[criteria.minimum_completed_repetitions?'最低完成 '+criteria.minimum_completed_repetitions+' 组':'',criteria.quality_rule||''].filter(Boolean),structure=comparison.planned_structure||prescription.blocks.map(function(block){return (({warmup:'热身',main:'主体',recovery:'恢复段',cooldown:'放松'})[block.role]||block.role)+'：'+(block.duration_minutes?block.duration_minutes+' 分钟 · ':'')+(block.instruction||'按处方完成')}).join('；');prescriptionHtml='<div class="plan-exec-card"><div class="pe-row"><span class="pe-label">课程结构</span><span class="pe-val">'+esc(structure)+'</span></div><div class="pe-row"><span class="pe-label">完成要求</span><span class="pe-val">'+criteriaItems.map(esc).join('；')+'</span></div></div>'}
-    var action=execution.sync_url?'<a class="btn primary" href="'+esc(execution.sync_url)+'">补齐同步数据</a>':'<a class="btn" href="'+esc(execution.training_url||'/training')+'">查看训练安排</a>';
-    var advice=execution.guidance?'<p class="plan-execution-guidance">调整建议：'+esc(execution.guidance)+'</p>':'';
-    var cautions=(execution.caution||[]).map(function(item){return '<li>'+esc(item)+'</li>'}).join('');
-    if(cautions)advice+='<ul class="plan-execution-guidance">'+cautions+'</ul>';
-    executionArea.innerHTML='<h2>🎯 计划执行与目标进展</h2><p>'+esc(execution.headline)+'</p><div class="plan-execution-meta">'+meta.join('')+'</div>'+prescriptionHtml+advice+action;
-    executionArea.hidden=false;
-  }else{executionArea.hidden=true;executionArea.replaceChildren()}
-
   var sl=d.last_night_sleep||{}, rc=d.recovery||{}, mo=d.this_morning||{};
   var ya=d.daily_activities||d.yesterday_activities||{}, ld=d.training_load||{}, ai=d.ai_insight||{};
 
-  var conclusion=$('todayConclusion'),conclusionText=ai.conclusion||execution.headline||'当日事实已整理，可结合训练安排决定下一步。';
+  var conclusion=$('todayConclusion'),conclusionText=ai.conclusion||'当日事实已整理，可结合训练安排决定下一步。';
   // ── 今日结论 = 结论 + 教练观察四块话语（不再单独占区块，避免重复强调） ──
   var aiObs=(ai.observations||[]).filter(function(o){return o.indexOf('训练结构识别')!==0});
   var conclusionHtml='<h2>今天对计划意味着什么</h2><p class="ai-conclusion">'+esc(conclusionText)+'</p>';
@@ -457,7 +409,6 @@ function render(d){
     });
   }
   $('trainingArea').innerHTML=t;
-
 
 // ── 训练深度分析（整体水平 / 强度分布 / 配速节奏 / 结构判定） ──
 function _paceText(sec){if(!sec)return '—';var m=Math.floor(sec/60),s=Math.round(sec%60);if(s===60){m++;s=0}return m+"'"+String(s).padStart(2,'0')+'\"';}
@@ -547,7 +498,7 @@ function deepAnalysisHtml(analyses){
 function reportPalette(){
   var theme=document.body.getAttribute('data-theme')||'dark';
   var palettes={
-    dark:{bg:'#0b1120',card:'#1a2333',subtle:'#151e2c',text:'#e2e8f0',secondary:'#94a3b8',muted:'#64748b',border:'#243044',accent:'#34d399',sleep:'#a78bfa',recovery:'#60a5fa',performance:'#4ade80',hrv:'#22d3ee'},
+    dark:{bg:"#141a14",card:"#1e261e",subtle:"#1a201a",text:"#e6e8e3",secondary:"#9aa89a",muted:"#5a6b5a",border:"#2a342a",accent:"#f0a030",sleep:"#9a8ad0",recovery:"#6ba8e0",performance:"#5cb878",hrv:"#50b8c8"},
     sport:{bg:'#f0f0f0',card:'#ffffff',subtle:'#f5f5f5',text:'#171717',secondary:'#525252',muted:'#858585',border:'#e3e3e3',accent:'#f15b2a',sleep:'#7c3aed',recovery:'#2563eb',performance:'#16a34a',hrv:'#0891b2'},
     fresh:{bg:'#e8efe9',card:'#ffffff',subtle:'#f0f4f0',text:'#1a2e23',secondary:'#5a7d6e',muted:'#789689',border:'#d7e1da',accent:'#2d9d6f',sleep:'#7c6fcf',recovery:'#3b82b6',performance:'#22a86e',hrv:'#3b9fc6'}
   };
@@ -588,153 +539,55 @@ function drawCanvasLines(ctx,lines,x,y,lineHeight,color){
   return y+lines.length*lineHeight;
 }
 
-function buildReportCanvas(report){
-  var width=720,scale=2,pad=36,gap=12,inner=width-pad*2;
-  var colors=reportPalette();
-  var font='-apple-system,BlinkMacSystemFont,"PingFang SC","Microsoft YaHei",sans-serif';
-  var measure=document.createElement('canvas').getContext('2d');
-  var ai=report.ai_insight||{},ya=report.daily_activities||report.yesterday_activities||{};
-  measure.font='500 22px '+font;
-  var insightLines=wrapCanvasText(measure,ai.conclusion||'',inner-40);
-  measure.font='400 18px '+font;
-  var observationLines=[];
-  (ai.observations||[]).forEach(function(item){
-    observationLines=observationLines.concat(wrapCanvasText(measure,'• '+item,inner-40));
-  });
-  var aiHeight=insightLines.length||observationLines.length?64+insightLines.length*32+observationLines.length*27:0;
-  var sessions=ya.sessions||[];
-  var trainingRows=ya.is_rest_day?1:Math.max(1,sessions.length);
-  var trainingHeight=48+trainingRows*86+Math.max(0,trainingRows-1)*10;
-  var totalHeight=105+132+18+108+18+(aiHeight?aiHeight+18:0)+trainingHeight+18+150+86;
-  var canvas=document.createElement('canvas');
-  canvas.width=width*scale;
-  canvas.height=totalHeight*scale;
-  var ctx=canvas.getContext('2d');
-  ctx.scale(scale,scale);
-  ctx.textBaseline='alphabetic';
-  ctx.fillStyle=colors.bg;
-  ctx.fillRect(0,0,width,totalHeight);
-
-  var y=38;
-  ctx.font='800 13px '+font;ctx.fillStyle=colors.accent;ctx.fillText('NEURUN DAILY',pad,y);
-  ctx.font='800 34px '+font;ctx.fillStyle=colors.text;ctx.fillText('当日训练',pad,y+42);
-  ctx.font='500 16px '+font;ctx.textAlign='right';ctx.fillStyle=colors.secondary;ctx.fillText(report.report_date||'最新日报',width-pad,y+37);ctx.textAlign='left';
-  y=105;
-
-  var sleep=report.last_night_sleep||{},recovery=report.recovery||{},morning=report.this_morning||{};
-  var hero=[
-    {label:'睡眠',value:(sleep.total_hours||'—')+'h',sub:sleep.quality||'—',color:colors.sleep},
-    {label:'恢复',value:(recovery.overall_score||'—')+'/100',sub:recovery.level||'—',color:colors.recovery},
-    {label:'训练准备',value:morning.training_readiness_score||'—',sub:morning.training_readiness_level||'—',color:colors.performance}
-  ];
-  var heroWidth=(inner-gap*2)/3;
-  hero.forEach(function(item,index){
-    var x=pad+index*(heroWidth+gap);
-    roundedRect(ctx,x,y,heroWidth,132,18,colors.card,colors.border);
-    ctx.textAlign='center';ctx.font='800 31px '+font;ctx.fillStyle=item.color;ctx.fillText(String(item.value),x+heroWidth/2,y+53);
-    ctx.font='700 15px '+font;ctx.fillStyle=colors.text;ctx.fillText(item.label,x+heroWidth/2,y+82);
-    ctx.font='500 13px '+font;ctx.fillStyle=colors.muted;ctx.fillText(String(item.sub),x+heroWidth/2,y+108);ctx.textAlign='left';
-  });
-  y+=150;
-
-  var metrics=[['HRV',morning.hrv_ms||'—','ms',colors.hrv],['静息心率',morning.resting_hr||'—','bpm',colors.performance],['身体电量',morning.body_battery_morning!=null?morning.body_battery_morning:'—','',colors.accent],['压力',morning.avg_stress||'—','',colors.sleep]];
-  var metricWidth=(inner-gap*3)/4;
-  metrics.forEach(function(item,index){
-    var x=pad+index*(metricWidth+gap);
-    roundedRect(ctx,x,y,metricWidth,108,16,colors.card,colors.border);
-    ctx.textAlign='center';ctx.font='800 26px '+font;ctx.fillStyle=item[3];ctx.fillText(String(item[1]),x+metricWidth/2,y+45);
-    ctx.font='700 12px '+font;ctx.fillStyle=colors.secondary;ctx.fillText(item[0]+(item[2]?' · '+item[2]:''),x+metricWidth/2,y+76);ctx.textAlign='left';
-  });
-  y+=126;
-
-  if(aiHeight){
-    roundedRect(ctx,pad,y,inner,aiHeight,18,colors.card,colors.border);
-    ctx.font='800 13px '+font;ctx.fillStyle=colors.accent;ctx.fillText('AI 教练洞察',pad+20,y+29);
-    ctx.font='500 22px '+font;
-    var textY=drawCanvasLines(ctx,insightLines,pad+20,y+62,32,colors.text);
-    ctx.font='400 18px '+font;
-    drawCanvasLines(ctx,observationLines,pad+20,textY+4,27,colors.secondary);
-    y+=aiHeight+18;
-  }
-
-  ctx.font='800 13px '+font;ctx.fillStyle=colors.muted;ctx.fillText('昨日训练',pad,y+20);
-  y+=36;
-  if(ya.is_rest_day){
-    roundedRect(ctx,pad,y,inner,86,18,colors.card,colors.border);
-    ctx.font='800 24px '+font;ctx.fillStyle=colors.text;ctx.fillText('休息日',pad+20,y+37);
-    ctx.font='500 15px '+font;ctx.fillStyle=colors.secondary;
-    var restText=ya.daily_steps?ya.daily_steps+' 步 · '+Number(ya.daily_distance_km||0).toFixed(1)+' km':'身体在恢复中';
-    ctx.fillText(restText,pad+20,y+64);
-    y+=86;
-  }else if(sessions.length){
-    sessions.forEach(function(session,index){
-      roundedRect(ctx,pad,y,inner,86,18,colors.card,colors.border);
-      ctx.font='800 18px '+font;ctx.fillStyle=colors.text;
-      var name=String(session.name||session.type||'训练');
-      ctx.fillText(name.length>27?name.slice(0,27)+'…':name,pad+20,y+34);
-      ctx.font='500 14px '+font;ctx.fillStyle=colors.secondary;
-      var details=[(session.duration_min||0)+' min'];
-      if(session.distance_km)details.push(session.distance_km+' km');
-      if(session.avg_hr)details.push('HR '+session.avg_hr);
-      details.push('负荷 '+(session.training_load||0));
-      ctx.fillText(details.join('  ·  '),pad+20,y+62);
-      y+=86+(index<sessions.length-1?10:0);
-    });
-  }else{
-    roundedRect(ctx,pad,y,inner,86,18,colors.card,colors.border);
-    ctx.font='600 17px '+font;ctx.fillStyle=colors.secondary;ctx.fillText('暂无训练记录',pad+20,y+50);
-    y+=86;
-  }
-  y+=18;
-
-  var load=report.training_load||{};
-  roundedRect(ctx,pad,y,inner,150,18,colors.card,colors.border);
-  ctx.font='800 13px '+font;ctx.fillStyle=colors.muted;ctx.fillText('训练负荷',pad+20,y+29);
-  ctx.font='800 42px '+font;ctx.fillStyle=colors.text;ctx.fillText(String(load.acwr||'—'),pad+20,y+78);
-  ctx.font='600 14px '+font;ctx.fillStyle=colors.secondary;ctx.fillText('ACWR · '+(load.acwr_status||'—'),pad+20,y+105);
-  ctx.textAlign='right';ctx.font='700 17px '+font;ctx.fillStyle=colors.text;ctx.fillText('急性 '+(load.acute_load||'—'),width-pad-20,y+61);ctx.fillText('慢性 '+(load.chronic_load||'—'),width-pad-20,y+94);ctx.textAlign='left';
-  y+=150;
-
-  ctx.textAlign='center';ctx.font='700 12px '+font;ctx.fillStyle=colors.muted;ctx.fillText('Generated locally by neurun · 训练数据仅在浏览器中处理',width/2,totalHeight-35);ctx.textAlign='left';
-  return canvas;
+function downloadDailyShareCard(){
+  var date = document.getElementById('viewDate').value || todayStr;
+  openShareModal('daily', date);
 }
 
-function canvasBlob(canvas){
-  return new Promise(function(resolve,reject){
-    canvas.toBlob(function(blob){blob?resolve(blob):reject(new Error('浏览器未能生成图片'))},'image/png');
-  });
+var currentShareUrl = null;
+function openShareModal(type, dateStr) {
+  var theme = localStorage.getItem('neurun-theme') || 'sport';
+  var url = '/api/reports/share-card/' + type + '?date=' + encodeURIComponent(dateStr) + '&theme=' + theme;
+  currentShareUrl = url;
+  var overlay = document.getElementById('shareOverlay');
+  var title = document.getElementById('shareModalTitle');
+  var body = document.getElementById('shareModalBody');
+  var actions = document.getElementById('shareModalActions');
+  title.textContent = type === 'daily' ? '日报分享卡' : '周复盘分享卡';
+  body.innerHTML = '<div class="share-modal-loading"><span class="spinner"></span>生成分享卡中...</div>';
+  actions.hidden = true;
+  overlay.hidden = false;
+  var img = new Image();
+  img.onload = function() {
+    body.innerHTML = '';
+    body.appendChild(img);
+    actions.hidden = false;
+  };
+  img.onerror = function() {
+    body.innerHTML = '<div class="share-modal-loading" style="color:var(--danger)">分享卡生成失败，请重试</div>';
+    actions.hidden = false;
+    document.getElementById('shareModalSaveBtn').style.display = 'none';
+  };
+  img.src = url;
+  img.alt = '分享卡';
 }
-
-function downloadImageBlob(blob,filename){
-  var url=URL.createObjectURL(blob),link=document.createElement('a');
-  link.href=url;link.download=filename;document.body.appendChild(link);link.click();link.remove();
-  setTimeout(function(){URL.revokeObjectURL(url)},1000);
+function closeShareModal() {
+  document.getElementById('shareOverlay').hidden = true;
+  currentShareUrl = null;
 }
-
-async function saveReportImage(){
-  if(!currentReport)return;
-  var btn=$('saveImageBtn'),status=$('saveStatus'),original=btn.textContent;
-  btn.disabled=true;btn.innerHTML='<span class="spinner"></span>生成中';status.textContent='正在本地生成高清日报图片…';status.className='save-status';
-  try{
-    var canvas=buildReportCanvas(currentReport),blob=await canvasBlob(canvas);
-    var reportDate=currentReport.report_date||new Date().toISOString().slice(0,10);
-    var filename='neurun-daily-'+reportDate+'.png';
-    var file=new File([blob],filename,{type:'image/png'});
-    var shareData={files:[file],title:'neurun 训练日报',text:reportDate+' 训练日报'};
-    if(navigator.share&&navigator.canShare&&navigator.canShare({files:[file]})){
-      await navigator.share(shareData);
-      status.textContent='已打开系统分享，可选择保存到相册';status.className='save-status success';
-    }else{
-      downloadImageBlob(blob,filename);
-      status.textContent='图片已下载';status.className='save-status success';
-    }
-  }catch(error){
-    if(error&&error.name==='AbortError'){status.textContent='已取消保存'}
-    else{status.textContent='保存失败：'+(error.message||'请稍后重试');status.className='save-status error'}
-  }finally{
-    btn.disabled=!currentReport;btn.textContent=original;
-  }
+function saveShareCard() {
+  if (!currentShareUrl) return;
+  var a = document.createElement('a');
+  a.href = currentShareUrl;
+  a.download = '';
+  a.style.display = 'none';
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
 }
+document.getElementById('shareOverlay').addEventListener('click', function(e) {
+  if (e.target === this) closeShareModal();
+});
 
 // ── Load ──
 async function loadDashboard(){

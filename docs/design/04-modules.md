@@ -287,14 +287,22 @@ tags: [5k, speed, spring-season]
 
 - `local_files.py`：统一私有目录、文件权限和同目录原子替换，向上返回带路径及 `chown` 建议的错误；
 - `InvitationStore`：读取管理员维护的 JSON，校验和核销单次邀请码；
-- `UserManager`：创建昵称、规范化邮箱、`scrypt` 密码哈希与随机 `rd_` API Key，提供邮箱密码校验；
+- `UserManager`：创建昵称、规范化邮箱、`scrypt` 密码哈希与随机 `rd_` API Key，提供邮箱密码校验与登录后修改密码；
 - `web.py`：注册 `/login`、`/register` 及对应 JSON API，并在数据源绑定前执行应用会话门禁。
 
 账号记录包含 `nickname`、`email`、`password_hash`。其中 `email` 是 neurun 应用登录邮箱，
 Platform Account 的账号字段单独存储，两者不得互相覆盖。
 第一版 Login Email 只做格式和唯一性校验，创建后不可修改；昵称长度为 2–32 个字符，允许重复并可由用户后续编辑。
 第一版不提供账号自助删除；退出登录只撤销当前 Session，不删除 neurun Account 或任何数据。
-第一版不提供 Recovery Code、密码找回/修改、账号换绑、旧账号迁移和多设备会话管理。
+第一版不提供 Recovery Code、密码找回（忘记密码）、账号换绑、旧账号迁移和多设备会话管理；已提供登录后自助修改密码。
+
+修改密码由 `UserManager.change_password(api_key, current_password, new_password)` 实现：校验当前密码
+（错误或账号无密码哈希返回 `None`，不泄露账号是否存在），通过后重新生成带随机盐的 `scrypt` 哈希并原子写回。
+Web 路由为 `POST /api/password`（需登录 Cookie 门禁），请求体为 `current_password` / `new_password`；
+新密码长度与注册一致（8–128 字符），不允许与当前密码相同。修改密码不撤销现有会话：会话基于 API Key
+Cookie，第一版无多设备会话表，因此当前及其他已登录会话保持有效，只影响后续登录校验。
+管理员本地重置密码仍通过 `UserManager.update(api_key, password_hash=hash_password(...))` 执行，
+见 [操作手册 — ECS 用户数据本地还原](../operations/ecs-user-data-restore.md)。
 
 密码格式为 `scrypt$n$r$p$salt$digest`，每次注册生成 16 字节随机盐，比较使用
 `hmac.compare_digest`。服务端不保存注册密码明文，也不把密码或邀请码写入日志。
@@ -347,6 +355,10 @@ Web 数据同步与日报生成是两个独立动作：
   CLI 日报、MCP 报告统一使用），并对外提供 `build_capacity_athlete_context()`：按 `omitted_sections`
   门禁调用训练域只读 `capacity_profile(D)` 并投影 `athlete_context`，供日报正文与 AI 洞察引用；
   Web 的 `training_service()` 委托该工厂构建，避免三入口维护两套加载口径；
+- `pace_zones.py`：基于 PB 清洗与 VDOT 校验、Karvonen 心率区间、近期训练反馈校准与环境疲劳补偿
+  计算 Z1–Z5 配速/心率区间；结果缓存写入 `fitness-assessment.md` front matter 的 `pace_zones` 字段，
+  「我的」页配速区间卡片与训练 `pace_calibration_profile()`（`pace_targets` 回填依据）共用该缓存，
+  `refresh_pace_zones_if_stale()` 按 7 天新鲜度惰性刷新，同步完成后由 Web 强制刷新；
 - 未配置在线模型或调用失败时，日报仍可使用 `memory.py` 的本地规则洞察完成生成；
 - `sync.html`、`dashboard.html`、`reports.html` 和 `profile.html` 共用同一导航合同：320–640px
   使用固定底部三项导航（图标、文字、`aria-current="page"`），容器按 `safe-area-inset-bottom`

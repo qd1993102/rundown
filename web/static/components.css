@@ -1,0 +1,268 @@
+/* ═══════════════════════════════════════════
+   neurun Components — 共享组件样式
+   ═══════════════════════════════════════════ */
+
+/* ── App Navigation ── */
+.app-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 0 0 12px;
+}
+.app-brand {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--text);
+  font-size: 14px;
+  font-weight: 800;
+  letter-spacing: .2px;
+}
+.app-brand-mark {
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 11px;
+  background: var(--accent);
+  color: #fff;
+  font-size: 17px;
+  font-weight: 900;
+}
+.app-nav {
+  position: fixed;
+  z-index: 50;
+  left: 50%;
+  bottom: calc(10px + env(safe-area-inset-bottom));
+  transform: translateX(-50%);
+  width: min(calc(100% - 24px), 520px);
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 4px;
+  padding: 6px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 22px;
+  background: color-mix(in srgb, var(--bg-card) 92%, transparent);
+  box-shadow: 0 12px 40px rgba(0, 0, 0, .22);
+  -webkit-backdrop-filter: blur(18px);
+  backdrop-filter: blur(18px);
+}
+.app-nav-item {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  min-width: 0;
+  min-height: 54px;
+  padding: 6px 5px;
+  border-radius: 16px;
+  color: var(--text-muted);
+  text-decoration: none;
+  transition: color .2s, background .2s;
+  -webkit-tap-highlight-color: transparent;
+  touch-action: manipulation;
+}
+.app-nav-item[aria-current="page"] {
+  background: var(--accent-glow);
+  color: var(--accent);
+}
+.app-nav-icon {
+  width: 21px;
+  height: 21px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.app-nav-label {
+  font-size: 10px;
+  font-weight: 750;
+  line-height: 1;
+  letter-spacing: .2px;
+}
+
+/* ── Theme Bar ── */
+.theme-bar {
+  display: inline-flex;
+  gap: 3px;
+  padding: 3px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 14px;
+  background: var(--bg-card);
+  box-shadow: var(--card-shadow);
+}
+.theme-btn {
+  min-height: 40px;
+  border: 1px solid transparent;
+  padding: 6px 10px;
+  border-radius: 10px;
+  font-size: 11px;
+  font-weight: 650;
+  cursor: pointer;
+  background: transparent;
+  color: var(--text-muted);
+  transition: color .2s, background .2s, border-color .2s;
+  letter-spacing: .2px;
+}
+.theme-btn.active {
+  background: var(--accent);
+  color: #fff;
+}
+
+/* ── Buttons (统一) ── */
+.btn {
+  min-height: 44px;
+  padding: 9px 16px;
+  border-radius: 12px;
+  border: 1px solid var(--border-subtle);
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 13px;
+  font-weight: 650;
+  cursor: pointer;
+  transition: color .2s, background .2s, border-color .2s, opacity .2s;
+  letter-spacing: .3px;
+  white-space: nowrap;
+  text-decoration: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  -webkit-tap-highlight-color: transparent;
+  touch-action: manipulation;
+}
+.btn:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.btn:active {
+  transform: scale(.97);
+  transition: transform 80ms ease-out;
+}
+.btn.primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+.btn.primary:hover {
+  opacity: .85;
+}
+.btn:disabled {
+  opacity: .4;
+  cursor: not-allowed;
+}
+.btn.danger {
+  border-color: var(--danger);
+  color: var(--danger);
+}
+.btn.danger:hover {
+  background: var(--danger);
+  color: #fff;
+}
+
+/* ── Spinner ── */
+.spinner {
+  display: inline-block;
+  width: 16px;
+  height: 16px;
+  border: 2px solid rgba(255, 255, 255, .3);
+  border-top-color: #fff;
+  border-radius: 50%;
+  animation: spin .6s linear infinite;
+  vertical-align: middle;
+  margin-right: 6px;
+}
+.spinner-sm {
+  display: inline-block;
+  width: 12px;
+  height: 12px;
+  border: 2px solid rgba(255, 255, 255, .3);
+  border-top-color: #fff;
+  border-radius: 50%;
+  animation: spin .6s linear infinite;
+  vertical-align: middle;
+  margin-right: 4px;
+}
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+/* ── Card ── */
+.card {
+  background: var(--bg-card);
+  border-radius: 16px;
+  padding: 20px;
+  box-shadow: var(--card-shadow);
+  border: 1px solid var(--border-subtle);
+}
+.card:hover {
+  box-shadow: var(--card-shadow-hover);
+}
+
+/* ── Heart Rate Zone Strip (签名元素) ── */
+.hr-zone-strip {
+  display: flex;
+  height: 6px;
+  border-radius: 3px;
+  overflow: hidden;
+  background: var(--bg-subtle);
+  gap: 0;
+}
+.hr-zone-strip[data-empty] {
+  background: var(--border-subtle);
+  opacity: .5;
+}
+.hr-zone-segment {
+  height: 100%;
+  transition: flex-grow .4s ease;
+}
+.hr-zone-segment.zone-1 { background: #94a3b8; }
+.hr-zone-segment.zone-2 { background: #60a5fa; }
+.hr-zone-segment.zone-3 { background: #34d399; }
+.hr-zone-segment.zone-4 { background: #fbbf24; }
+.hr-zone-segment.zone-5 { background: #ef4444; }
+.hr-zone-label {
+  display: flex;
+  justify-content: space-between;
+  font-size: 11px;
+  color: var(--text-muted);
+  margin-top: 4px;
+}
+.hr-zone-empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 6px;
+  border-radius: 3px;
+  background: var(--border-subtle);
+  color: var(--text-muted);
+  font-size: 10px;
+  letter-spacing: .3px;
+}
+
+/* ── Section 标题 (左侧色条替代 emoji) ── */
+.section-heading {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--text);
+  margin: 24px 0 12px;
+}
+.section-heading::before {
+  content: '';
+  display: block;
+  width: 4px;
+  height: 20px;
+  border-radius: 2px;
+  flex-shrink: 0;
+}
+.section-heading.sleep::before { background: var(--sleep); }
+.section-heading.recovery::before { background: var(--recovery); }
+.section-heading.performance::before { background: var(--performance); }
+.section-heading.hrv::before { background: var(--hrv); }
+.section-heading.warning::before { background: var(--warning); }
+.section-heading.danger::before { background: var(--danger); }

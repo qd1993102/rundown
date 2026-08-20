@@ -388,6 +388,19 @@ def _detail_overview(summary: dict, analysis: dict) -> str:
         if max_cadence:
             cadence_text += f"，最大 {max_cadence:.0f}"
         rows.append(("平均步频", cadence_text))
+    avg_stride = structure.get("avg_stride")
+    if avg_stride:
+        stride_text = f"{avg_stride:.0f} cm"
+        avg_vo = structure.get("avg_vo")
+        if avg_vo:
+            stride_text += f"，垂直振幅 {avg_vo:.1f} cm"
+        avg_vr = structure.get("avg_vertical_ratio")
+        if avg_vr:
+            stride_text += f"，振幅比 {avg_vr:.1f}%"
+        avg_gct = structure.get("avg_gct")
+        if avg_gct:
+            stride_text += f"，触地 {avg_gct:.0f} ms"
+        rows.append(("步幅/效率", stride_text))
     calories = volume.get("calories")
     effect_text = _effect_text(effect)
     if calories is not None:
@@ -631,12 +644,12 @@ CSS = r"""
 }
 
 [data-theme="dark"] {
-  --bg:#0b1120; --bg-card:#1a2333; --text:#e2e8f0; --text-secondary:#94a3b8; --text-muted:#64748b;
-  --accent:#34d399; --accent-glow:rgba(52,211,153,.12); --recovery:#60a5fa; --recovery-glow:rgba(96,165,250,.1);
-  --performance:#4ade80; --performance-glow:rgba(74,222,128,.1); --sleep:#a78bfa; --sleep-glow:rgba(167,139,250,.1);
-  --warning:#fbbf24; --danger:#f87171; --hrv:#22d3ee;
+  --bg:#141a14; --bg-card:#1e261e; --text:#e6e8e3; --text-secondary:#9aa89a; --text-muted:#5a6b5a;
+  --accent:#f0a030; --accent-glow:rgba(240,160,48,.12); --recovery:#6ba8e0; --recovery-glow:rgba(107,168,224,.1);
+  --performance:#5cb878; --performance-glow:rgba(92,184,120,.1); --sleep:#9a8ad0; --sleep-glow:rgba(154,138,208,.1);
+  --warning:#e8c040; --danger:#e86050; --hrv:#50b8c8;
   --card-shadow:0 2px 10px rgba(0,0,0,.35); --card-shadow-hover:0 10px 30px rgba(0,0,0,.5);
-  --border-subtle:#243044; --bg-subtle:#151e2c;
+  --border-subtle:#2a342a; --bg-subtle:#1a201a;
 }
 
 *{margin:0;padding:0;box-sizing:border-box}
@@ -654,7 +667,7 @@ body{background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSy
 .quality-banner{margin-bottom:18px;padding:14px 16px;border:1px solid var(--border-subtle);border-radius:14px;background:var(--bg-subtle);font-size:13px;line-height:1.6;color:var(--text-secondary);overflow-wrap:anywhere}
 .quality-banner.limited{border-color:var(--warning);color:var(--warning)}
 .quality-banner.provisional{border-color:var(--accent)}
-.header-brand{font-size:13px;font-weight:800;letter-spacing:1.5px;background:linear-gradient(135deg,var(--accent),#ef4444);-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text;text-transform:uppercase}
+.header-brand{font-size:13px;font-weight:800;letter-spacing:1.5px;color:var(--accent);text-transform:uppercase}
 .header-date{font-family:-apple-system,'SF Pro Display','Helvetica Neue',sans-serif;font-size:42px;font-weight:800;color:var(--text);letter-spacing:-1.5px;line-height:1.1}
 .header-date span{font-weight:500;font-size:18px;color:var(--text-muted);margin-left:12px}
 .header-gen{font-size:11px;color:var(--text-muted);text-align:right;padding-top:8px}
@@ -855,7 +868,7 @@ def render_daily_html(memory: Memory, output_path: str | None = None) -> str:
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>NEURUN · {target_date} · Daily Report</title>
+<title>neurun · {target_date} · Daily Report</title>
 <style>{CSS}</style>
 </head>
 <body data-theme="sport">
@@ -870,7 +883,7 @@ def render_daily_html(memory: Memory, output_path: str | None = None) -> str:
 
   <header class="header">
     <div>
-      <div class="header-brand">NEURUN</div>
+      <div class="header-brand">neurun</div>
       <div class="header-date">{target_date} <span>{wd}</span></div>
     </div>
     <div class="header-gen">生成于 {gen_time[:16] if gen_time else '—'}</div>
@@ -901,7 +914,7 @@ def render_daily_html(memory: Memory, output_path: str | None = None) -> str:
   </details>
 
   <footer class="footer">
-    <span>NEURUN</span> · {target_date}
+    <span>neurun</span> · {target_date}
   </footer>
 
 </div>
@@ -1005,7 +1018,7 @@ def render_image(
 
         # 用充裕高度截图，靠 auto-crop 去除底部留白
         tall_height = min(int(width * 8), 12000)
-        bg_color = {'fresh': 'e8efe9', 'sport': 'f0f0f0', 'dark': '0b1120'}.get(theme, 'f0f0f0')
+        bg_color = {'fresh': 'e8efe9', 'sport': 'f0f0f0', 'dark': '141a14'}.get(theme, 'f0f0f0')
         result = subprocess.run(
             [
                 chrome,

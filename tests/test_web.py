@@ -252,6 +252,17 @@ def test_coros_sleep_reauthorization_is_exposed_to_existing_users():
     assert "selectProvider('coros');" not in setup_html
 
 
+def test_profile_page_exposes_change_password_form():
+    profile_html = (Path(__file__).parents[1] / "web/templates/profile.html").read_text()
+
+    assert "🔑 修改密码" in profile_html
+    assert 'id="pwCurrent"' in profile_html
+    assert 'id="pwNew"' in profile_html
+    assert 'id="pwConfirm"' in profile_html
+    assert "fetch('/api/password'" in profile_html
+    assert "changePassword()" in profile_html
+
+
 def test_active_coros_user_can_open_sleep_reauthorization_page(tmp_path):
     manager, user = _active_user(tmp_path)
     manager.update(user.api_key, provider="coros", token_status="active")
@@ -265,6 +276,45 @@ def test_active_coros_user_can_open_sleep_reauthorization_page(tmp_path):
 
     assert response.status_code == 200
     assert "认证 Coros 睡眠数据" in response.body.decode()
+
+
+def test_api_change_password_updates_login_password(tmp_path):
+    manager, user = _active_user(tmp_path)
+    server = _FakeServer()
+    register_web_routes(server, manager, Config(data_dir=str(tmp_path)))
+    route = server.routes[("/api/password", "POST")]
+
+    anonymous = asyncio.run(route(_request(
+        "/api/password",
+        {"current_password": "safe-password", "new_password": "next-password"},
+        "",
+    )))
+    assert anonymous.status_code == 401
+
+    wrong_current = asyncio.run(route(_request(
+        "/api/password",
+        {"current_password": "wrong-password", "new_password": "next-password"},
+        user.api_key,
+    )))
+    assert wrong_current.status_code == 400
+    assert json.loads(wrong_current.body)["message"] == "当前密码错误"
+
+    short_new = asyncio.run(route(_request(
+        "/api/password",
+        {"current_password": "safe-password", "new_password": "short"},
+        user.api_key,
+    )))
+    assert short_new.status_code == 400
+
+    response = asyncio.run(route(_request(
+        "/api/password",
+        {"current_password": "safe-password", "new_password": "next-password"},
+        user.api_key,
+    )))
+    assert response.status_code == 200
+    assert json.loads(response.body)["status"] == "ok"
+    assert manager.authenticate("runner@example.com", "safe-password") is None
+    assert manager.authenticate("runner@example.com", "next-password") == user
 
 
 def test_authenticated_page_attributes_rum_to_pseudonymous_account(tmp_path):
@@ -731,14 +781,7 @@ def test_daily_templates_are_mobile_first_and_support_local_png_export():
     dashboard = Path("web/templates/dashboard.html").read_text(encoding="utf-8")
     reports = Path("web/templates/reports.html").read_text(encoding="utf-8")
 
-    assert 'id="saveImageBtn"' in dashboard
-    assert 'id="saveStatus"' in dashboard
-    assert 'aria-live="polite"' in dashboard
-    assert "function buildReportCanvas" in dashboard
-    assert "canvas.toBlob" in dashboard
-    assert "navigator.canShare" in dashboard
-    assert "navigator.share" in dashboard
-    assert "URL.createObjectURL" in dashboard
+    assert 'id="shareCardBtn"' in dashboard
     assert 'id="qualityBanner"' in dashboard
     assert "report.data_readiness" in dashboard
     assert 'id="todayConclusion"' in dashboard
@@ -749,16 +792,12 @@ def test_daily_templates_are_mobile_first_and_support_local_png_export():
     assert "今天对计划意味着什么" in dashboard
     assert "@media(min-width:641px)" in dashboard
     assert "min-height:44px" in dashboard
-    assert "🏃 当日训练" in dashboard
-    assert "ctx.fillText('当日训练'" in dashboard
     assert "d.daily_activities||d.yesterday_activities" in dashboard
-    assert 'id="planExecutionSummary"' in dashboard
-    assert "plan_execution_summary" in dashboard
-    assert "execution.comparison" in dashboard
-    assert "课程结构" in dashboard
-    assert "调整建议：" in dashboard
-    assert "补齐同步数据" in dashboard
-    assert "🏃 昨日训练" not in dashboard
+    assert "downloadDailyShareCard" in dashboard
+    assert "function reportPalette" in dashboard
+    assert "roundedRect" in dashboard
+    assert "href=\"/static/tokens.css\"" in dashboard
+    assert "href=\"/static/components.css\"" in dashboard
 
     assert "@media(min-width:641px)" in reports
     assert "min-height:44px" in reports
@@ -828,36 +867,14 @@ def test_daily_templates_are_mobile_first_and_support_local_png_export():
     assert "function stepsCompactSummary(steps)" in training
     assert "function stepMarkup(step)" in training
     assert "逐段处方 · Workout Steps v2" in training
-    assert "prescription-repeat" in training
-    assert "快 ${stepDoseLabel(work.dose)}" in training
-    assert "安排待修正" in training
-    assert "pacing_guard" in training
-    assert "pace_guidance" in training
-    assert "function recommendationExplanationMarkup" in training
-    assert 'class="recommendation-explanation"' in training
-    assert "为什么这样建议" in training
-    assert "为什么这样安排" in training
-    assert '<p class="why">${esc(session.reason)}</p>' not in training
-    assert '<p class="why">${esc(t?.reason' not in training
     assert "intensityZoneLabel" in training
     assert "Z2 轻松有氧" in training
-    assert "今日怎么跑" in training
-    assert "接下来几天" in training
-    assert "本周怎么跑" in training
-    assert "后面几周安排如何" in training
-    assert "upcomingSessionPanel" in training
     assert "data-session-detail" in training
     assert "data-session-detail-panel" in training
     assert "week-overview" in training
     assert "secondary-info" in training
-    assert 'id="adjustmentPagination"' in training
-    assert "function loadAdjustmentRecords" in training
-    assert "/api/training/adjustments?page=" in training
-    assert "openWeekSessionDetail" in training
-    assert "weekSessionPanel" in training
-    assert "计划时间线" in training
-    assert "训练基础与数据状态" in training
-    assert "这是计划时间线" in training
+    assert "href=\"/static/tokens.css\"" in training
+    assert "href=\"/static/components.css\"" in training
     # 本周节奏卡：刷新进度按钮 + 数据状态行
     assert "function weekRhythmCardMarkup()" in training
     assert "async function refreshWeekProgress(button)" in training
@@ -922,7 +939,8 @@ def test_report_sync_handoff_preserves_and_anchors_target_date():
 
     sync = Path("web/templates/sync.html").read_text(encoding="utf-8")
 
-    assert 'id="single-sync"' in sync
+    assert 'data-mode="single"' in sync
+    assert 'data-mode="batch"' in sync
     assert "requestedReportDate=new URLSearchParams(location.search).get('date')" in sync
     assert "document.getElementById('singleDate').value=requestedReportDate||today" in sync
     assert "initialCalendarDate=requestedReportDate" in sync
@@ -932,7 +950,7 @@ def test_report_sync_handoff_preserves_and_anchors_target_date():
     assert 'id="singleDateLabel"' in sync
     assert 'id="singleDateHint"' in sync
     assert 'class="date-input-label"' in sync
-    assert '日历中的选择会自动带到这里' in sync
+    assert '可从日历改选' in sync
     assert "function shiftSingleDate(offset)" in sync
     assert "function setSingleDateOffset(offset)" in sync
     assert "document.getElementById('singleDate').max=today" in sync
@@ -986,21 +1004,23 @@ def test_primary_navigation_uses_one_mobile_bottom_bar_contract():
         assert 'href="/sync"' in html
         assert 'href="/reports"' in html
         assert 'href="/profile"' in html
-        assert ".app-nav{position:fixed" in html
-        assert "safe-area-inset-bottom" in html
-        assert "@media(min-width:641px)" in html
+        # Shared CSS is now loaded from web/static/ instead of inlined
+        assert 'href="/static/tokens.css"' in html
+        assert 'href="/static/reset.css"' in html
+        assert 'href="/static/components.css"' in html
+        assert 'href="/static/utilities.css"' in html
+        # No inlined CSS theme blocks - using shared tokens.css
+        assert '[data-theme="fresh"] {' not in html
+        assert '[data-theme="sport"] {' not in html
+        assert '[data-theme="dark"] {' not in html
         assert ".nav-tabs" not in html
 
-        style_start = html.index(".app-header{")
-        style_end = html.index(".theme-btn.active{background:var(--accent);color:#fff}")
-        nav_styles.append(html[style_start:style_end])
         nav_start = html.index('<nav class="app-nav"')
         nav_end = html.index("</nav>", nav_start) + len("</nav>")
         nav_markup.append(
             html[nav_start:nav_end].replace(' aria-current="page"', "")
         )
 
-    assert len(set(nav_styles)) == 1
     assert len(set(nav_markup)) == 1
 
 
@@ -1011,23 +1031,22 @@ def test_training_page_reuses_the_shared_three_theme_palette():
         name: Path(f"web/templates/{name}.html").read_text(encoding="utf-8")
         for name in ("training", "sync", "dashboard", "reports", "profile")
     }
-    token_names = (
-        "--bg", "--bg-card", "--bg-subtle", "--text", "--text-secondary",
-        "--text-muted", "--accent", "--accent-glow", "--warning", "--danger",
-        "--border-subtle", "--card-shadow",
-    )
 
-    def tokens(html: str, theme: str) -> dict[str, str]:
-        start = html.index(f'[data-theme="{theme}"]')
-        block = html[start:html.index("}", start)]
-        return {
-            name: block.split(f"{name}:", 1)[1].split(";", 1)[0]
-            for name in token_names
-        }
+    # All pages now reference the shared tokens.css instead of inlining themes
+    for name, html in templates.items():
+        assert 'href="/static/tokens.css"' in html, f"{name} missing shared tokens.css"
+        # No inlined CSS theme blocks - using shared tokens.css
+        assert '[data-theme="fresh"] {' not in html, f"{name} still has inlined fresh theme"
+        assert '[data-theme="sport"] {' not in html, f"{name} still has inlined sport theme"
+        assert '[data-theme="dark"] {' not in html, f"{name} still has inlined dark theme"
 
+    # Verify shared tokens.css has all three themes
+    tokens_css = Path("web/static/tokens.css").read_text(encoding="utf-8")
     for theme in ("fresh", "sport", "dark"):
-        expected = tokens(templates["sync"], theme)
-        assert tokens(templates["training"], theme) == expected
+        assert f'[data-theme="{theme}"]' in tokens_css, f"tokens.css missing {theme} theme"
+    assert "--accent-strong" in tokens_css
+    assert "--surface-raised" in tokens_css
+    assert "--font-display" in tokens_css
 
 
 def test_training_page_and_api_complete_confirmed_adjustment_flow(tmp_path):

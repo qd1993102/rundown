@@ -279,6 +279,7 @@ class TestAIInsight:
         }
         analysis = {
             "session_summary": session_summary,
+            "primary_type": "running",
             "structure_classification": {
                 "structure_type": "interval",
                 "label": "间歇结构",
@@ -297,23 +298,24 @@ class TestAIInsight:
             },
         )
         observations = result["observations"]
-        # 运动概要含训练效果解释（估算必带依据），且"间歇结构（4 组快慢交替"在前
+        # 运动概要含课型结构，训练效果解释归入强度分布（估算必带依据）
         overview = next(o for o in observations if o.startswith("运动概要"))
         assert "间歇结构（4 组快慢交替" in overview
-        assert "训练效果 有氧 4" in overview
-        assert "高强度刺激" in overview and "估算，依据心率" in overview
+        intensity_item = next(o for o in observations if o.startswith("强度分布"))
+        assert "训练效果 有氧 4" in intensity_item
+        assert "高强度刺激" in intensity_item and "估算，依据心率" in intensity_item
         # 四块各自成段、按序出现：运动概要 → 强度分布 → 恢复分析 → 近 7 天负荷与恢复
-        overview_idx = next(i for i, o in enumerate(observations) if "12.0km" in o)
+        overview_idx = next(i for i, o in enumerate(observations) if "12.0 km" in o)
         intensity_idx = next(i for i, o in enumerate(observations) if "步频" in o)
         recovery_idx = next(i for i, o in enumerate(observations) if o.startswith("恢复分析"))
         week_idx = next(i for i, o in enumerate(observations) if o.startswith("近 7 天负荷与恢复"))
         assert overview_idx < intensity_idx < recovery_idx < week_idx
         joined = "\n".join(observations)
-        # 运动概要：距离 + 课型结构 + 平均配速
-        assert joined.startswith("运动概要：12.0km")
-        assert "12.0km" in joined and "间歇结构" in joined and "3 组快慢交替" not in joined
+        # 运动概要：距离 + 用时 + 课型结构
+        assert joined.startswith("运动概要：当日跑步 12.0 km")
+        assert "12.0 km" in joined and "间歇结构" in joined and "3 组快慢交替" not in joined
         assert "间歇结构（4 组快慢交替" in joined
-        assert "平均配速" in joined
+        assert "累计用时 50 min" in joined
         # 强度分布：配速带/心率带 + 步频/步幅（avg_stride 为 cm，转米展示）
         assert "配速以" in joined and "心率以 130–145 bpm 为主" in joined
         assert "平均步频 184 spm、步幅 1.10 m" in joined
@@ -338,7 +340,11 @@ class TestAIInsight:
             },
             "pace_profile": {"avg_pace_sec_per_km": 300.0, "p50": 310.0},
         }
-        analysis = {"session_summary": session_summary, "structure_classification": {}}
+        analysis = {
+            "session_summary": session_summary,
+            "primary_type": "running",
+            "structure_classification": {},
+        }
         result = self._base_insight(session_analyses=[analysis])
         joined = "\n".join(result["observations"])
         assert "心率缺失" in joined
@@ -351,6 +357,7 @@ class TestAIInsight:
         }
         analysis = {
             "session_summary": session_summary,
+            "primary_type": "running",
             "structure_classification": {"structure_type": "unknown", "label": "未知"},
         }
         result = self._base_insight(session_analyses=[analysis])

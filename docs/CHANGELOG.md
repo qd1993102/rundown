@@ -1,5 +1,58 @@
 # Changelog
 
+## 2026-08-20
+
+### Added
+
+- **改动描述**: 新增登录用户自助修改密码：`UserManager.change_password()` 校验当前密码后重新生成随机盐 scrypt 哈希；Web 新增 `POST /api/password`（登录门禁，新密码 8–128 字符且不能与当前密码相同）；「我的」页新增「修改密码」卡片（当前密码 / 新密码 / 确认新密码）。修改后立即生效，当前会话保持有效；忘记密码自助找回不在本次范围。
+- **影响范围**: `src/users.py`（`change_password`）、`src/web.py`（`/api/password` 路由与 `_password_error` 校验）、`web/templates/profile.html`（修改密码卡片）、`tests/test_registration.py` 与 `tests/test_web.py`（新增测试）
+- **关联文档**: [产品方案 — 应用账号](product/account.md)、[设计 — 模块设计 §4.6](design/04-modules.md)
+
+- **改动描述**: 新增个人训练配速区间计算与展示：`src/pace_zones.py` 基于 PB 清洗与 VDOT 校验、Karvonen 心率区间、近期训练反馈校准和环境疲劳补偿计算 Z1–Z5 配速/心率区间，结果缓存写入 `fitness-assessment.md` front matter 的 `pace_zones` 字段；「我的」页新增「训练配速区间」卡片，数据源同步完成后自动刷新缓存，训练 `pace_calibration_profile()`（`pace_targets` 回填依据）复用同一缓存。配套新增 `prompts/skills/pace-zones/` skill 与本地 CLI 计算入口。
+- **影响范围**: `src/pace_zones.py`（新增）、`src/training.py`（`pace_calibration_profile` / `refresh_pace_zones_after_sync`）、`src/web.py`（同步后强制刷新）、`web/templates/profile.html`（配速区间卡片）、`prompts/skills/pace-zones/`（新增 skill）、`tests/test_pace_zones.py`（新增）
+- **关联文档**: [prompts/skills/pace-zones/SKILL.md](../prompts/skills/pace-zones/SKILL.md)、[设计 — 模块设计](design/04-modules.md)
+
+- **改动描述**: 新增确定性跑步分析引擎 `src/running_analysis/`，包含 10 个纯确定性分析模块：S1 数据清洗（GPS 漂移/HR 跳变/步频步幅异常检测）、S4 有氧漂移分析（稳态筛选、漂移率、四级分级）、S5 跑步经济性评估（经济性指数、步态标签、历史基线对比）、S6 疲劳代偿模式识别（A/B/C 三种代偿模式、衰减起点定位）、S7 环境补偿（Naismith 规则坡度补偿、地形分类）、S8 心肺-肌肉解耦检测（滚动窗口相关系数）、S9 HRV 基线对比与状态判定（7 天基线、加权恢复指数 0-100）、S10 状态-表现一致性校验（四象限判定）、S11 急慢性负荷比本地计算（7/28 天 ACWR）、S13 伤病风险综合评估（5 因子加权打分）。已接入日报组装流程，分析结果作为结构化 fact 输入 AI Coach Skill。
+- **影响范围**: `src/running_analysis/`（新增，2556 行，10 个模块）、`src/memory.py`（日报生成流程中调用分析模块）、`src/coach.py`（daily_facts 中注入 running_analysis 字段）、`tests/test_running_analysis.py`（新增，73 个测试）
+- **关联文档**: [设计方案 — 确定性跑步分析引擎](design/deterministic-running-analysis.md)
+
+- **改动描述**: CLI 新增 `serve` 子命令（SAE/VPS Web 应用服务入口，含 MCP Server SSE，等价于以 `MCP_HOST` / `MCP_PORT` / `MCP_TRANSPORT` 直接启动 Web）；MCP 新增 `generate_share_card` 工具，可按 daily/weekly 与 fresh/sport/dark 主题生成适合分享的日报/周复盘 PNG 卡片。
+- **影响范围**: `src/main.py`（`serve` 子命令与 `COMMAND_HANDLERS`）、`src/mcp_server.py`（`generate_share_card` 工具）、README（Commands 章节）
+- **关联文档**: [设计 — 模块设计](design/04-modules.md)
+
+- **改动描述**: 新增 ECS 用户数据本地还原操作手册，覆盖从邮箱定位 api_key、打包下载、本地导入、密码重置到启动服务的完整流程，用于排查用户数据异常、日报/训练为空、同步失败等问题。
+- **影响范围**: `docs/operations/ecs-user-data-restore.md`（新增）
+- **关联文档**: [操作手册 — ECS 用户数据本地还原](operations/ecs-user-data-restore.md)
+
+### Changed
+
+- **改动描述**: 质量课识别增加体积门禁：`prepare_daily_analysis()` 中距离 < 3km 且时长 < 15min 的跑步活动不再被识别为质量课（tempo/interval/fartlek），避免短距离慢跑因配速落入强度带被误判为质量课；误判场例如 1km 配速 4:32/km 被标记为节奏跑。
+- **影响范围**: `src/training_day_summary.py`（prepare_daily_analysis 新增 volume gate）、`tests/test_training_day_summary.py`（新增两个测试）
+- **关联文档**: [训练日摘要设计](design/summary-extraction.md)
+
+- **改动描述**: 日报分享卡和周复盘分享卡只展示跑步活动数据，不再包含骑车等非跑步运动；日报分享卡 hero 区域只保留距离（时长和配速移至 stats 区域），移除 stats 下方的训练效果（有氧/无氧）与配速节奏（均速/最快）独立区块；周复盘分享卡 hero 区域只保留跑量，stats 区域改为展示「最长单次 / 平均配速 / 跑步天数」；分享卡 PNG 高度改为按内容自适应（Playwright 截图前等待字体加载，Chrome 路径等待 fonts.ready 后测量内容高度并预留安全余量再截图），日报/周报各自裁切，避免固定高度留白或字体未就绪导致底部内容截断。
+- **影响范围**: `src/share_card.py`（新增 `_is_running_activity` 过滤函数、日报 hero 移除配速、周报使用 running-only 口径）、`src/training.py`（`summarize()` 新增 `running_duration_minutes` 字段）、`docs/product/share-card.md`（产品文档同步口径说明）
+- **关联文档**: [产品方案 — 分享卡](product/share-card.md)
+
+- **改动描述**: 全站前端设计系统审计与实现：提取共享 CSS 文件（`web/static/tokens.css`、`reset.css`、`components.css`、`utilities.css`），六页 HTML 模板从内联 token 迁移为共享引用；Dark 主题重配色（暖色暗底 `#141a14` + 琥珀 accent `#f0a030` 替代 AI 默认蓝黑 `#0b1120` + 荧光绿 `#34d399`）；新增 `--surface-raised`、`--accent-strong`、`--font-display`、`--font-body`、间距/圆角 token；统一按钮样式（`border-radius: 12px`、`font-weight: 650`、`:active` 缩放反馈）；数值区域添加 `font-feature-settings: "tnum"` 等宽数字；品牌名统一为 "neurun"（output `*.html` 和 share_card）；新增心率区间色带环签名组件、section 标题左侧色条、tab 切换过渡、数据揭示序列、脉冲指示器、进度条平滑过渡、`prefers-reduced-motion` 尊重。
+- **影响范围**: `web/static/`（新增 4 文件）、`web/templates/`（6 文件重构）、`src/web.py`（新增 static 文件路由）、`src/render.py`（dark 主题配色 + brand 名）、`src/share_card.py`（dark 主题配色 + brand 名）、`output/*.html`（9 文件 dark 主题 + brand 名）
+- **关联文档**: [设计方案 — 前端设计系统](design/frontend-design-system.md)
+
+- **改动描述**: 同步页信息结构重构：执行区（高频操作）置顶，统一单日/批量模式切换（一个按钮发起），日历上移，数据源状态折叠为可展开卡片；profile.html 修复 `data-theme` 硬编码为从 localStorage 读取；training.html 标题统一为 `neurun — 训练方案`。
+- **影响范围**: `web/templates/sync.html`、`web/templates/profile.html`、`web/templates/training.html`
+- **关联文档**: [前端设计系统](design/frontend-design-system.md)
+
+### Fixed
+
+- **改动描述**: 修复分享卡多项缺陷：周报分享 modal 背景透明（CSS 变量名不一致）、内容超长被固定高度截断、overflow 全局替换破坏圆角、周报 AI 洞察恒为空、临时文件泄漏、心率区间颜色全为绿色、60'00"/km 边界配速显示为 "—"、强度条百分比溢出、前端下载失败无提示；分享卡截图改为等待字体加载后再测量内容高度（Playwright 等待 `document.fonts.ready`，Chrome 测量后预留 +20px 安全余量），避免底部内容被裁切。
+- **影响范围**: `src/share_card.py`、`src/image.py`（字体加载与截图高度）、`src/web.py`、`src/mcp_server.py`、`web/templates/dashboard.html`、`web/templates/reports.html`
+- **关联文档**: [Bug 记录：分享卡多项缺陷](bugfixes/2026-08-18-share-card-bugs.md)
+
+- **改动描述**: 修复部分日报 Web 页面空白：`build_memory_file` 用 `yaml.dump()` 生成 `!!python/tuple` 标签，读取端 `yaml.safe_load()` 禁止解析导致 front matter 整体回退为空；改为 `yaml.safe_dump()` + 递归 sanitize（tuple→list），读取端增加 safe 失败回退并兼容残留旧文件，受影响历史日报已重写恢复。
+- **影响范围**: `src/memory.py`（`build_memory_file` / `parse_front_matter` → `_parse_yaml_safe`）、受影响日报记忆文件
+- **关联文档**: [Bug 记录：YAML !!python/tuple 序列化导致日报 Web 页面空白](bugfixes/2026-08-20-yaml-tuple-serialize.md)
+
+
 ## 2026-08-17
 
 ### Changed

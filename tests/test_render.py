@@ -231,7 +231,7 @@ class TestFullRender:
         )
         with tempfile.NamedTemporaryFile(suffix=".html", delete=False) as f:
             html = render_daily_html(mem, f.name)
-            assert "NEURUN" in html
+            assert "neurun" in html
             assert "2026-06-25" in html
             assert "sport" in html  # default theme
             assert "setTheme" in html  # theme switcher JS

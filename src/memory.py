@@ -24,6 +24,7 @@ from .local_files import atomic_write_private
 from .training_analysis import (
     ACTIVITY_SYNC_METRIC_TYPE,
     ActivityDayState,
+    _first_number,
     natural_week_bounds,
 )
 from .training_day_summary import TrainingDaySummaryBuilder
@@ -110,12 +111,25 @@ def parse_front_matter(text: str) -> tuple[dict[str, Any], str]:
     match = _FRONT_MATTER_RE.match(text)
     if not match:
         return {}, text
-    try:
-        fm = yaml.safe_load(match.group(1)) or {}
-    except yaml.YAMLError:
-        fm = {}
+    fm_raw = match.group(1)
+    fm = _parse_yaml_safe(fm_raw)
     body = text[match.end():]
     return fm, body
+
+
+def _parse_yaml_safe(yaml_text: str) -> dict[str, Any]:
+    """安全解析 YAML，兼容残留的 !!python/tuple 标签。
+
+    优先使用 safe_load；若失败则回退到 unsafe_load 并转换 tuple->list。
+    """
+    try:
+        return yaml.safe_load(yaml_text) or {}
+    except yaml.YAMLError:
+        try:
+            fm = yaml.load(yaml_text, Loader=yaml.Loader) or {}
+            return _sanitize_for_yaml(fm)
+        except yaml.YAMLError:
+            return {}
 
 
 def get_daily_activities(front_matter: dict[str, Any]) -> dict[str, Any]:
@@ -129,14 +143,29 @@ def get_daily_activities(front_matter: dict[str, Any]) -> dict[str, Any]:
 
 
 def build_memory_file(front_matter: dict[str, Any], body: str) -> str:
-    """构建带 YAML Front Matter 的 Markdown 内容。"""
-    fm_yaml = yaml.dump(
-        front_matter,
+    """构建带 YAML Front Matter 的 Markdown 内容。
+
+    使用 safe_dump 并将所有 tuple 转为 list，避免产生 !!python/tuple 标签，
+    确保 safe_load 可正常解析。
+    """
+    fm_yaml = yaml.safe_dump(
+        _sanitize_for_yaml(front_matter),
         allow_unicode=True,
         default_flow_style=False,
         sort_keys=False,
     ).strip()
     return f"---\n{fm_yaml}\n---\n\n{body}".strip() + "\n"
+
+
+def _sanitize_for_yaml(obj: Any) -> Any:
+    """递归将 tuple 转为 list，确保 safe_dump 不会产生 !!python/tuple 标签。"""
+    if isinstance(obj, tuple):
+        return [_sanitize_for_yaml(item) for item in obj]
+    if isinstance(obj, dict):
+        return {k: _sanitize_for_yaml(v) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [_sanitize_for_yaml(item) for item in obj]
+    return obj
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -570,6 +599,11 @@ class MemoryWriter:
             "training_day_summary": training_day_summary,
             # 训练域只读能力画像背景（草稿同口径），供正文与 AI 洞察引用。
             "athlete_context": athlete_context,
+            # ── 确定性跑步分析（S9/S10/S11/S13） ──
+            "running_analysis_daily": MemoryWriter._build_running_analysis_daily(
+                session_analyses, training_load, recovery, today_health,
+                seven_day_metrics, seven_day_activities, twenty_eight_day_activities,
+            ),
         }
 
         # 10. AI 教练洞察
@@ -587,6 +621,7 @@ class MemoryWriter:
                 profile=profile, goals=goals,
                 session_analyses=session_analyses,
                 omitted_sections=sorted(omitted_sections),
+                running_analysis_daily=fm.get("running_analysis_daily"),
             )
             fm["ai_insight"] = ai_insight
 
@@ -979,6 +1014,150 @@ class MemoryWriter:
         return segment_sequence, quantity_reliable
 
     @staticmethod
+    def _build_running_analysis_daily(
+        session_analyses: list[dict[str, Any]],
+        training_load: dict[str, Any],
+        recovery: dict[str, Any],
+        today_health: dict[str, Any] | None,
+        seven_day_metrics: list[dict[str, Any]],
+        seven_day_activities: list[dict[str, Any]],
+        twenty_eight_day_activities: list[dict[str, Any]],
+    ) -> dict[str, Any]:
+        """构建日报级别的确定性分析结果（S9/S10/S11/S13）。"""
+        try:
+            from .running_analysis import (
+                analyze_hrv_baseline,
+                check_recovery_performance_consistency,
+                calculate_acwr,
+                assess_injury_risk,
+            )
+        except Exception:
+            return {"status": "unavailable", "reason": "import_error"}
+
+        result: dict[str, Any] = {"status": "ok"}
+
+        # ── S9: HRV 基线 ──
+        try:
+            health = today_health or {}
+            recent_health = seven_day_metrics or []
+            hrv_result = analyze_hrv_baseline(
+                {
+                    "hrv_last_night_avg": health.get("hrv_last_night_avg"),
+                    "hrv_weekly_avg": health.get("hrv_weekly_avg"),
+                    "resting_heart_rate": health.get("resting_heart_rate"),
+                    "sleep_duration_hours": health.get("sleep_duration_hours"),
+                    "body_battery_high": health.get("body_battery_high"),
+                    "training_readiness_score": health.get("training_readiness_score"),
+                },
+                historical=[
+                    {
+                        "hrv_last_night_avg": m.get("hrv_last_night_avg"),
+                        "resting_heart_rate": m.get("resting_heart_rate"),
+                        "sleep_duration_hours": m.get("sleep_duration_hours"),
+                    }
+                    for m in recent_health
+                ],
+            )
+            from dataclasses import asdict
+            result["hrv_baseline"] = asdict(hrv_result)
+        except Exception as exc:
+            result["hrv_baseline"] = {"status": "error", "reason": str(exc)}
+
+        # ── S10: 状态-表现一致性 ──
+        try:
+            # 从 per-session 分析中提取漂移和经济性
+            drift = None
+            economy = None
+            for sa in (session_analyses or []):
+                ra = sa.get("running_analysis")
+                if ra:
+                    if ra.get("aerobic_drift", {}).get("status") == "ok":
+                        from .running_analysis import AerobicDriftResult
+                        d = ra["aerobic_drift"]
+                        drift = AerobicDriftResult(**{k: v for k, v in d.items() if k != "status" or True})
+                    if ra.get("economy", {}).get("status") == "ok":
+                        from .running_analysis import EconomyResult
+                        e = ra["economy"]
+                        economy = EconomyResult(**{k: v for k, v in e.items() if k != "status" or True})
+                    if drift or economy:
+                        break
+
+            if hrv_result.status == "ok":
+                consistency = check_recovery_performance_consistency(
+                    hrv=hrv_result, drift=drift, economy=economy,
+                )
+                result["consistency"] = asdict(consistency)
+            else:
+                result["consistency"] = {"status": "insufficient_data",
+                                          "note": "HRV 数据不可用"}
+        except Exception as exc:
+            result["consistency"] = {"status": "error", "reason": str(exc)}
+
+        # ── S11: ACWR ──
+        try:
+            # 合并 7/28 天活动负荷
+            daily_loads = []
+            for act in (twenty_eight_day_activities or []):
+                load = act.get("training_load") or act.get("activity_training_load")
+                if load is not None:
+                    daily_loads.append({"training_load": float(load)})
+            if daily_loads:
+                acwr_result = calculate_acwr(daily_loads)
+                result["acwr"] = asdict(acwr_result)
+            else:
+                result["acwr"] = {"status": "insufficient_data",
+                                   "note": "无有效训练负荷数据"}
+        except Exception as exc:
+            result["acwr"] = {"status": "error", "reason": str(exc)}
+
+        # ── S13: 伤病风险 ──
+        try:
+            # 收集近期疲劳代偿模式
+            fatigue_patterns = []
+            for sa in (session_analyses or []):
+                ra = sa.get("running_analysis")
+                if ra and ra.get("fatigue_compensation", {}).get("status") == "ok":
+                    fp = ra["fatigue_compensation"]
+                    fatigue_patterns.append(fp.get("pattern"))
+
+            from .running_analysis import FatigueCompensationResult
+            today_fatigue = None
+            for sa in (session_analyses or []):
+                ra = sa.get("running_analysis")
+                if ra and ra.get("fatigue_compensation", {}).get("status") == "ok":
+                    fp = ra["fatigue_compensation"]
+                    today_fatigue = FatigueCompensationResult(
+                        status=fp.get("status", "ok"),
+                        pattern=fp.get("pattern"),
+                        stride_change_pct=fp.get("stride_change_pct"),
+                        cadence_cv_change=fp.get("cadence_cv_change"),
+                    )
+                    break
+
+            acwr_data = result.get("acwr", {})
+            if acwr_data.get("status") == "ok":
+                from .running_analysis import AcwrResult
+                acwr_obj = AcwrResult(
+                    status=acwr_data["status"],
+                    acwr=acwr_data.get("acwr"),
+                    risk_level=acwr_data.get("risk_level"),
+                )
+            else:
+                acwr_obj = None
+
+            injury = assess_injury_risk(
+                acwr=acwr_obj,
+                hrv=hrv_result if hrv_result.status == "ok" else None,
+                fatigue=today_fatigue,
+                recent_fatigue_patterns=fatigue_patterns,
+            )
+            result["injury_risk"] = asdict(injury)
+        except Exception as exc:
+            result["injury_risk"] = {"status": "error", "reason": str(exc)}
+
+        return result
+
+    @staticmethod
     def _analyze_training_sessions(
         db: Any,
         user_id: int,
@@ -1093,6 +1272,66 @@ class MemoryWriter:
                     except Exception as exc:
                         logger.warning(
                             "训练结构判定失败 activity_id=%s error_type=%s",
+                            activity_id, type(exc).__name__,
+                        )
+                    # ── 确定性跑步分析（S1/S4/S5/S6/S7/S8） ──
+                    try:
+                        from .running_analysis import (
+                            clean_segment_sequence,
+                            analyze_aerobic_drift,
+                            assess_running_economy,
+                            identify_fatigue_compensation,
+                            compensate_environment,
+                            analyze_cardiac_muscle_decoupling,
+                        )
+                        from dataclasses import asdict
+                        segs, _ = MemoryWriter._segment_sequence_fallback(
+                            session_summary, splits,
+                        )
+                        cleaning = clean_segment_sequence(segs)
+                        drift = analyze_aerobic_drift(cleaning.segments,
+                                                       summary=session_summary)
+                        economy = assess_running_economy(cleaning.segments,
+                                                          summary=session_summary,
+                                                          baseline=baseline)
+                        fatigue = identify_fatigue_compensation(cleaning.segments,
+                                                                  summary=session_summary,
+                                                                  baseline=baseline)
+                        env = compensate_environment(
+                            avg_pace_sec_per_km=(
+                                (session_summary.get("pace_profile") or {}).get("avg_pace_sec_per_km")
+                                or _first_number(activity, "avg_pace_sec_per_km")
+                            ),
+                            avg_hr=(
+                                (session_summary.get("structure") or {}).get("avg_hr")
+                                or activity.get("avg_heart_rate")
+                            ),
+                            total_ascent_m=(
+                                (session_summary.get("elevation_profile") or {}).get("ascent_m")
+                                or activity.get("elevation_gain")
+                            ),
+                            distance_m=(
+                                (session_summary.get("volume") or {}).get("distance_m")
+                                or activity.get("distance_meters")
+                            ),
+                            gain_per_km=(
+                                (session_summary.get("elevation_profile") or {}).get("gain_per_km")
+                            ),
+                        )
+                        decoupling = analyze_cardiac_muscle_decoupling(
+                            cleaning.segments, summary=session_summary, baseline=baseline,
+                        )
+                        result["running_analysis"] = {
+                            "cleaning": asdict(cleaning),
+                            "aerobic_drift": asdict(drift),
+                            "economy": asdict(economy),
+                            "fatigue_compensation": asdict(fatigue),
+                            "environment": asdict(env),
+                            "decoupling": asdict(decoupling),
+                        }
+                    except Exception as exc:
+                        logger.warning(
+                            "跑步分析失败 activity_id=%s error_type=%s",
                             activity_id, type(exc).__name__,
                         )
                 activity["training_analysis"] = result
@@ -1706,6 +1945,7 @@ class MemoryWriter:
         goals: list[dict[str, Any]] | None = None,
         session_analyses: list[dict[str, Any]] | None = None,
         omitted_sections: list[str] | None = None,
+        running_analysis_daily: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         """基于数据规则生成 AI 教练自然语言洞察。
 
@@ -1814,103 +2054,239 @@ class MemoryWriter:
             else:
                 observations.append("当日为完全休息日，身体得到了恢复")
         else:
-            # 教练观察：运动概要 + 强度分布解释与分析（自然语言成段，同一事实只出现一次）
+            # ── 当天跑步训练分析（只关注跑步，合并多 session 为一次洞察）──
+            runs = []
             for analysis in session_analyses or []:
-                session_summary = analysis.get("session_summary") or {}
-                volume = session_summary.get("volume") or {}
-                classification = analysis.get("structure_classification") or {}
-                intensity = session_summary.get("intensity") or {}
-                structure = session_summary.get("structure") or {}
-                pace_profile = session_summary.get("pace_profile") or {}
-                distance_km = (volume.get("distance_m") or 0) / 1000
-                duration_s = volume.get("duration_sec") or volume.get("duration_s") or 0
-                pace = pace_profile.get("avg_pace_sec_per_km") or (volume.get("pace_sec_per_km") or 0) or 0
+                # 只纳入有跑步主类型判定的 session
+                pt = analysis.get("primary_type", "unknown")
+                if pt == "unknown":
+                    continue
+                runs.append(analysis)
+            if runs:
+                # 1) 运动概要：汇总当日所有跑步
+                total_run_km = 0.0
+                total_run_s = 0
+                run_labels: list[str] = []
+                for analysis in runs:
+                    session_summary = analysis.get("session_summary") or {}
+                    volume = session_summary.get("volume") or {}
+                    classification = analysis.get("structure_classification") or {}
+                    pace_profile = session_summary.get("pace_profile") or {}
+                    d_km = (volume.get("distance_m") or 0) / 1000
+                    d_s = volume.get("duration_sec") or volume.get("duration_s") or 0
+                    total_run_km += d_km
+                    total_run_s += d_s
+                    # 课型标签
+                    structure_type = classification.get("structure_type")
+                    if structure_type and structure_type != "unknown":
+                        label = str(classification.get("label") or structure_type)
+                        alternations = int(classification.get("alternations") or 0)
+                        if alternations:
+                            label += f"（{alternations} 组快慢交替）"
+                        run_labels.append(label)
+                    elif d_km > 0:
+                        pace = pace_profile.get("avg_pace_sec_per_km") or (volume.get("pace_sec_per_km") or 0)
+                        if pace:
+                            run_labels.append(f"{d_km:.1f}km {MemoryWriter._format_pace(pace)}/km")
+                        else:
+                            run_labels.append(f"{d_km:.1f}km")
+                overview_summary = f"当日跑步 {total_run_km:.1f} km"
+                if total_run_s:
+                    overview_summary += f"，累计用时 {int(total_run_s // 60)} min"
+                if run_labels:
+                    overview_summary += "（" + "、".join(run_labels) + "）"
+                overview_summary += "。"
+                observations.append("运动概要：" + overview_summary)
 
-                # 1) 运动概要：距离/用时 + 课型结构 + 平均配速
-                overview_parts: list[str] = []
-                if distance_km > 0:
-                    duration_text = f"用时 {int(duration_s // 60)}min" if duration_s else ""
-                    overview_parts.append(f"{distance_km:.1f}km" + (f"，{duration_text}" if duration_text else ""))
-                structure_type = classification.get("structure_type")
-                if structure_type and structure_type != "unknown":
-                    label = str(classification.get("label") or structure_type)
-                    alternations = int(classification.get("alternations") or 0)
-                    text = label
-                    if alternations:
-                        text += f"（{alternations} 组快慢交替"
-                        groups = classification.get("work_recovery_groups") or []
-                        if groups:
-                            group_paces = []
-                            for group in groups:
-                                work_pace = group.get("work_pace_sec_per_km")
-                                recovery_pace = group.get("recovery_pace_sec_per_km")
-                                work_hr = group.get("work_avg_hr")
-                                recovery_hr = group.get("recovery_avg_hr")
-                                work_text = MemoryWriter._format_pace(work_pace) if work_pace else "?"
-                                recovery_text = MemoryWriter._format_pace(recovery_pace) if recovery_pace else "?"
-                                if work_hr:
-                                    work_text += f"(hr{work_hr:.0f})"
-                                if recovery_hr:
-                                    recovery_text += f"(hr{recovery_hr:.0f})"
-                                group_paces.append(f"第{len(group_paces) + 1}组 {work_text}→{recovery_text}")
-                            text += "：" + "、".join(group_paces)
-                        text += "）"
-                    overview_parts.append(text)
-                if pace:
-                    overview_parts.append(f"平均配速 {MemoryWriter._format_pace(pace)}/km")
-                effect_text = MemoryWriter._effect_explanation(
-                    session_summary.get("effect") or {},
-                )
-                if effect_text:
-                    overview_parts.append(f"训练效果 {effect_text}")
-                if overview_parts:
-                    observations.append("运动概要：" + "；".join(overview_parts) + "。")
+                # 2) 逐 session 的强度/动力学/分析（只输出跑步 session）
+                for idx, analysis in enumerate(runs):
+                    session_summary = analysis.get("session_summary") or {}
+                    volume = session_summary.get("volume") or {}
+                    classification = analysis.get("structure_classification") or {}
+                    intensity = session_summary.get("intensity") or {}
+                    structure = session_summary.get("structure") or {}
+                    pace_profile = session_summary.get("pace_profile") or {}
+                    pace = pace_profile.get("avg_pace_sec_per_km") or (volume.get("pace_sec_per_km") or 0) or 0
+                    d_km = (volume.get("distance_m") or 0) / 1000
+                    d_s = volume.get("duration_sec") or volume.get("duration_s") or 0
+                    prefix = f"第{idx + 1}次跑步 " if len(runs) > 1 else ""
 
-                # 2) 强度分布解释与分析：配速/心率带 + 步频/步幅
-                intensity_parts: list[str] = []
-                pace_bands = intensity.get("pace_bands_pct") or {}
-                hr_bands = intensity.get("hr_bands_pct") or {}
-
-                def _pace_band_text(band_key: str) -> str:
-                    if band_key.startswith("-inf"):
-                        return f"<{MemoryWriter._format_pace(float(band_key[len('-inf-'):]))}"
-                    if band_key.endswith("inf"):
-                        return f">{MemoryWriter._format_pace(float(band_key[:-4]))}"
-                    low, high = band_key.split("-", 1)
-                    return (
-                        f"{MemoryWriter._format_pace(float(low))}–"
-                        f"{MemoryWriter._format_pace(float(high))}"
+                    # 强度分布
+                    intensity_parts: list[str] = []
+                    pace_bands = intensity.get("pace_bands_pct") or {}
+                    hr_bands = intensity.get("hr_bands_pct") or {}
+                    if pace_bands:
+                        top_pace_key = max(pace_bands, key=pace_bands.get)
+                        if top_pace_key.startswith("-inf"):
+                            top_pace_text = f"<{MemoryWriter._format_pace(float(top_pace_key[len('-inf-'):]))}"
+                        elif top_pace_key.endswith("inf"):
+                            top_pace_text = f">{MemoryWriter._format_pace(float(top_pace_key[:-4]))}"
+                        else:
+                            low, high = top_pace_key.split("-", 1)
+                            top_pace_text = (
+                                f"{MemoryWriter._format_pace(float(low))}–"
+                                f"{MemoryWriter._format_pace(float(high))}"
+                            )
+                        if top_pace_text:
+                            text = f"配速以 {top_pace_text}/km 为主（{pace_bands[top_pace_key]:.0f}%）"
+                            if intensity.get("basis") == "pace":
+                                text += "（依据配速，心率缺失）"
+                            intensity_parts.append(text)
+                    elif pace_profile.get("p50"):
+                        p50_text = MemoryWriter._format_pace(pace_profile.get("p50"))
+                        if p50_text:
+                            intensity_parts.append(f"配速中位数约 {p50_text}/km")
+                    if hr_bands:
+                        top_hr_key = max(hr_bands, key=hr_bands.get)
+                        top_hr_text = MemoryWriter._band_range_text(top_hr_key)
+                        if top_hr_text:
+                            intensity_parts.append(f"心率以 {top_hr_text} bpm 为主（{hr_bands[top_hr_key]:.0f}%）")
+                    cadence = structure.get("avg_cadence")
+                    stride = structure.get("avg_stride")
+                    if cadence:
+                        cadence_text = f"平均步频 {cadence:.0f} spm"
+                        if stride:
+                            cadence_text += f"、步幅 {stride / 100:.2f} m"
+                        intensity_parts.append(cadence_text)
+                    elif stride:
+                        intensity_parts.append(f"平均步幅 {stride / 100:.2f} m")
+                    effect_text = MemoryWriter._effect_explanation(
+                        session_summary.get("effect") or {},
                     )
+                    if effect_text:
+                        intensity_parts.append(f"训练效果 {effect_text}")
+                    if intensity_parts:
+                        observations.append(prefix + "强度分布：" + ";".join(intensity_parts) + "。")
 
-                if pace_bands:
-                    top_pace_key = max(pace_bands, key=pace_bands.get)
-                    top_pace_text = _pace_band_text(top_pace_key)
-                    if top_pace_text:
-                        text = f"配速以 {top_pace_text}/km 为主（{pace_bands[top_pace_key]:.0f}%）"
-                        if intensity.get("basis") == "pace":
-                            text += "（依据配速，心率缺失）"
-                        intensity_parts.append(text)
-                elif pace_profile.get("p50"):
-                    p50_text = MemoryWriter._format_pace(pace_profile.get("p50"))
-                    if p50_text:
-                        intensity_parts.append(f"配速中位数约 {p50_text}/km")
-                if hr_bands:
-                    top_hr_key = max(hr_bands, key=hr_bands.get)
-                    top_hr_text = MemoryWriter._band_range_text(top_hr_key)
-                    if top_hr_text:
-                        intensity_parts.append(f"心率以 {top_hr_text} bpm 为主（{hr_bands[top_hr_key]:.0f}%）")
-                cadence = structure.get("avg_cadence")
-                stride = structure.get("avg_stride")
-                if cadence:
-                    cadence_text = f"平均步频 {cadence:.0f} spm"
-                    if stride:
-                        # summary_extraction 中 avg_stride 单位为 cm（如 126.5），转米展示
-                        cadence_text += f"、步幅 {stride / 100:.2f} m"
-                    intensity_parts.append(cadence_text)
-                elif stride:
-                    intensity_parts.append(f"平均步幅 {stride / 100:.2f} m")
-                if intensity_parts:
-                    observations.append("强度分布：" + ";".join(intensity_parts) + "。")
+                    # 跑步动力学
+                    kinematics_parts: list[str] = []
+                    cadence_cv = structure.get("cadence_cv_pct")
+                    cadence_half = structure.get("cadence_half_diff")
+                    stride_cv = structure.get("stride_cv_pct")
+                    stride_half = structure.get("stride_half_diff")
+                    gct_cv = structure.get("gct_cv_pct")
+                    gct_half = structure.get("gct_half_diff")
+                    vo_cv = structure.get("vo_cv_pct")
+                    avg_vr = structure.get("avg_vertical_ratio")
+                    hr_cv = structure.get("hr_cv_pct")
+                    hr_half = structure.get("hr_half_diff")
+                    if avg_vr is not None:
+                        kinematics_parts.append(f"垂直振幅比 {avg_vr:.1f}%")
+                    if cadence_cv is not None:
+                        kinematics_parts.append(f"步频 CV {cadence_cv:.1f}%")
+                    if cadence_half is not None:
+                        direction = "后半程升高" if cadence_half > 0 else "后半程降低" if cadence_half < 0 else "稳定"
+                        kinematics_parts.append(f"步频前后半程差 {cadence_half:+.1f} spm（{direction}）")
+                    if stride_cv is not None:
+                        kinematics_parts.append(f"步幅 CV {stride_cv:.1f}%")
+                    if stride_half is not None:
+                        direction = "后半程缩" if stride_half < 0 else "后半程增" if stride_half > 0 else "稳定"
+                        kinematics_parts.append(f"步幅前后半程差 {stride_half:+.1f} cm（{direction}）")
+                    if gct_cv is not None:
+                        kinematics_parts.append(f"触地时间 CV {gct_cv:.1f}%")
+                    if vo_cv is not None:
+                        kinematics_parts.append(f"垂直振幅 CV {vo_cv:.1f}%")
+                    if hr_cv is not None:
+                        kinematics_parts.append(f"心率 CV {hr_cv:.1f}%")
+                    if hr_half is not None:
+                        direction = "心率漂移" if hr_half > 2 else "稳定"
+                        kinematics_parts.append(f"心率前后半程差 {hr_half:+.1f} bpm（{direction}）")
+                    stable_indicators = 0
+                    total_indicators = 0
+                    for cv_val, half_val in [(cadence_cv, cadence_half), (stride_cv, stride_half), (gct_cv, gct_half)]:
+                        if cv_val is not None:
+                            total_indicators += 1
+                            if cv_val < 5:
+                                stable_indicators += 1
+                        if half_val is not None:
+                            total_indicators += 1
+                            if abs(half_val) < (3 if cv_val is not None and cv_val < 5 else 5):
+                                stable_indicators += 1
+                    if total_indicators >= 3:
+                        ratio = stable_indicators / total_indicators
+                        if ratio >= 0.8:
+                            kinematics_parts.append("技术稳定性：优秀")
+                        elif ratio >= 0.5:
+                            kinematics_parts.append("技术稳定性：一般")
+                        else:
+                            kinematics_parts.append("技术稳定性：需关注，后半程出现明显代偿")
+                    if kinematics_parts:
+                        observations.append(prefix + "跑步动力学：" + "；".join(kinematics_parts) + "。")
+
+                    # 跑步分析（S4-S8）
+                    ra = analysis.get("running_analysis")
+                    if ra:
+                        ra_parts: list[str] = []
+                        drift = ra.get("aerobic_drift")
+                        if drift and drift.get("status") == "ok" and drift.get("grade"):
+                            grade = drift["grade"]
+                            rate = drift.get("drift_rate_pct")
+                            grade_labels = {"excellent": "优秀", "normal": "正常", "elevated": "偏高", "high": "高"}
+                            label = grade_labels.get(grade, grade)
+                            if rate is not None:
+                                ra_parts.append(f"有氧漂移 {rate:.1f}%/h（{label}）")
+                            else:
+                                ra_parts.append(f"有氧漂移评级：{label}")
+                        economy = ra.get("economy")
+                        if economy and economy.get("status") == "ok":
+                            gait = economy.get("gait_label")
+                            trend = economy.get("trend_pct")
+                            has_baseline = bool(economy.get("baseline_available"))
+                            gait_verdict = {
+                                "均衡高效型": "经济性良好",
+                                "高步频省力型": "经济性较好",
+                                "大步幅低步频型": "步频偏低、冲击风险偏高",
+                                "低效型": "经济性偏低",
+                            }
+                            # 有历史基线时，同配速趋势比绝对指数更有意义
+                            if has_baseline and trend is not None:
+                                direction = "提升" if trend > 0 else "下降"
+                                trend_days = int(economy.get("trend_days") or 30)
+                                ra_parts.append(
+                                    f"经济性较近{trend_days}天{direction} {abs(trend):.0f}%"
+                                )
+                            # 步态标签给出定性结论
+                            if gait and gait != "unknown":
+                                verdict = gait_verdict.get(gait)
+                                if verdict:
+                                    ra_parts.append(f"步态：{gait}（{verdict}）")
+                                else:
+                                    ra_parts.append(f"步态：{gait}")
+                            # 既无基线也无步态结论时才回退到绝对指数
+                            if not (has_baseline and trend is not None) and (not gait or gait == "unknown"):
+                                ei = economy.get("economy_index")
+                                if ei is not None:
+                                    ra_parts.append(f"经济性指数 {ei:.1f}（同配速下越高越好）")
+                        fatigue = ra.get("fatigue_compensation")
+                        if fatigue and fatigue.get("status") == "ok":
+                            pattern = fatigue.get("pattern_label") or fatigue.get("pattern")
+                            if pattern and pattern != "no_significant_fatigue":
+                                ra_parts.append(f"疲劳模式：{pattern}")
+                                suggestion = fatigue.get("training_suggestion")
+                                if suggestion:
+                                    recommendations.append(suggestion)
+                        decoupling = ra.get("decoupling")
+                        if decoupling and decoupling.get("status") == "ok":
+                            d_type = decoupling.get("decoupling_label") or decoupling.get("decoupling_type")
+                            if d_type and d_type not in ("none", None):
+                                ra_parts.append(f"解耦类型：{d_type}")
+                                attribution = decoupling.get("attribution")
+                                if attribution:
+                                    ra_parts.append(attribution)
+                        env = ra.get("environment")
+                        if env and env.get("status") == "ok":
+                            terrain = env.get("terrain_class")
+                            if terrain and terrain != "flat":
+                                terrain_labels = {"rolling": "起伏", "hilly": "多坡", "mountain": "山地", "steep_mountain": "陡山"}
+                                ra_parts.append(f"地形：{terrain_labels.get(terrain, terrain)}")
+                                normalized = env.get("normalized_pace_sec_per_km")
+                                if normalized:
+                                    ra_parts.append(f"等效平地配速 {MemoryWriter._format_pace(normalized)}/km")
+                        if ra_parts:
+                            observations.append(prefix + "跑步分析：" + "；".join(ra_parts) + "。")
+            else:
+                # 当天有运动但都不是跑步
+                observations.append("当日运动为非跑步类型，未纳入跑步教练分析。")
 
         # 室内占比分析
         indoor = any("室内" in s.get("name", "") for s in sessions)
@@ -1981,6 +2357,55 @@ class MemoryWriter:
             observations.append(f"运动员水平: {fitness_level}")
         if goal_context:
             observations.append(f"训练目标: {goal_context}")
+
+        # ── 日报级确定性分析（S9/S10/S11/S13）──
+        ra_daily = running_analysis_daily or {}
+        if ra_daily.get("status") == "ok":
+            # S9: HRV 基线
+            hrv_base = ra_daily.get("hrv_baseline") or {}
+            if hrv_base.get("status") == "ok":
+                ri = hrv_base.get("recovery_index")
+                rl = hrv_base.get("recovery_label")
+                if ri is not None and rl:
+                    observations.append(f"HRV恢复指数 {ri:.0f}/100（{rl}）")
+                training_risk = hrv_base.get("training_risk")
+                if training_risk and training_risk != "none":
+                    warnings.append(f"HRV提示训练风险：{training_risk}")
+            # S10: ACWR
+            acwr_daily = ra_daily.get("acwr") or {}
+            if acwr_daily.get("status") == "ok":
+                acwr_val = acwr_daily.get("acwr")
+                risk_level = acwr_daily.get("risk_level")
+                if acwr_val is not None and risk_level:
+                    observations.append(f"ACWR {acwr_val:.2f}（{risk_level}）")
+                suggestion = acwr_daily.get("suggestion")
+                if suggestion:
+                    recommendations.append(suggestion)
+            # S11: 恢复-表现一致性
+            consistency = ra_daily.get("consistency") or {}
+            if consistency.get("status") == "ok":
+                pattern = consistency.get("pattern_label") or consistency.get("pattern")
+                if pattern and pattern != "normal":
+                    observations.append(f"恢复-表现一致性：{pattern}")
+                    explanation = consistency.get("explanation")
+                    if explanation:
+                        observations.append(explanation)
+                    ts = consistency.get("training_suggestion")
+                    if ts:
+                        recommendations.append(ts)
+            # S13: 伤病风险
+            injury = ra_daily.get("injury_risk") or {}
+            if injury.get("status") == "ok":
+                risk_score = injury.get("risk_score")
+                risk_level = injury.get("risk_level")
+                if risk_score is not None and risk_level:
+                    observations.append(f"伤病风险 {risk_score:.0f}/100（{risk_level}）")
+                    primary = injury.get("primary_risk_source")
+                    if primary:
+                        observations.append(f"主要风险源：{primary}")
+                    action = injury.get("action")
+                    if action:
+                        recommendations.append(action)
 
         # ── 核心结论（结合画像；缺失维度不参与判断）──
         recovery_ok = not recovery_omitted and rec_level in ("excellent", "good")
@@ -2304,7 +2729,7 @@ class MemoryWriter:
 
     @staticmethod
     def _effect_explanation(effect: dict[str, Any]) -> str:
-        """训练效果简短解释（运动概要用）：TE 值 + 强度含义；估算必带依据。"""
+        """训练效果简短解释（强度分布用）：TE 值 + 强度含义；估算必带依据。"""
         if not effect:
             return ""
         te = effect.get("aerobic_training_effect")

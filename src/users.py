@@ -173,6 +173,24 @@ class UserManager:
             return None
         return record if verify_password(password, record.password_hash) else None
 
+    def change_password(
+        self,
+        api_key: str,
+        current_password: str,
+        new_password: str,
+    ) -> UserRecord | None:
+        """校验当前密码后更新为新密码哈希；当前密码错误或账号不存在返回 None。"""
+        with self._lock:
+            record = self.get(api_key)
+            if record is None or not record.password_hash:
+                return None
+            if not verify_password(current_password, record.password_hash):
+                return None
+            record.password_hash = hash_password(new_password)
+            self._save(record)
+            self._cache[api_key] = record
+            return record
+
     def find_by_email(self, email: str) -> UserRecord | None:
         """按规范化邮箱查找应用账号。"""
         target = normalize_email(email)

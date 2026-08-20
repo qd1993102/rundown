@@ -181,6 +181,90 @@ def test_prepare_daily_analysis_excludes_easy_and_low_confidence_sessions():
     assert prepared["daily_analysis"]["quality_session_count"] == 0
 
 
+
+
+def test_prepare_daily_analysis_excludes_short_quality_session():
+    """1km run even with tempo pace should not be classified as quality session."""
+    summary = TrainingDaySummaryBuilder.build(
+        target=date(2026, 8, 14),
+        activities=[{
+            "activity_id": "short-tempo-1k",
+            "activity_date": "2026-08-14",
+            "activity_type": "running",
+            "activity_name": "短跑",
+            "distance_meters": 1000,
+            "duration_seconds": 272,
+            "avg_heart_rate": 155,
+            "training_analysis": {
+                "primary_type": "tempo",
+                "confidence": 0.85,
+            },
+        }],
+        states={"2026-08-14": "synced"},
+    )
+
+    prepared = TrainingDaySummaryBuilder.prepare_daily_analysis(summary)
+
+    assert prepared["daily_analysis"]["quality_sessions"] == []
+    assert prepared["daily_analysis"]["quality_session_count"] == 0
+    gaps = prepared["daily_analysis"]["quality_candidate_gaps"]
+    assert any(g["reason"] == "insufficient_volume" for g in gaps)
+
+
+def test_prepare_daily_analysis_allows_sufficient_volume_quality_session():
+    """5km run with tempo pace should still be classified as quality session."""
+    summary = TrainingDaySummaryBuilder.build(
+        target=date(2026, 8, 14),
+        activities=[{
+            "activity_id": "5k-tempo",
+            "activity_date": "2026-08-14",
+            "activity_type": "running",
+            "activity_name": "节奏跑",
+            "distance_meters": 5000,
+            "duration_seconds": 1500,
+            "avg_heart_rate": 166,
+            "training_analysis": {
+                "primary_type": "tempo",
+                "confidence": 0.85,
+            },
+        }],
+        states={"2026-08-14": "synced"},
+    )
+
+    prepared = TrainingDaySummaryBuilder.prepare_daily_analysis(summary)
+
+    assert len(prepared["daily_analysis"]["quality_sessions"]) == 1
+    assert prepared["daily_analysis"]["quality_session_count"] == 1
+    assert prepared["daily_analysis"]["quality_sessions"][0]["activity_id"] == "5k-tempo"
+
+
+
+def test_prepare_daily_analysis_keeps_interval_regardless_of_volume():
+    """Interval sessions should be quality regardless of short volume."""
+    summary = TrainingDaySummaryBuilder.build(
+        target=date(2026, 8, 14),
+        activities=[{
+            "activity_id": "short-interval",
+            "activity_date": "2026-08-14",
+            "activity_type": "running",
+            "activity_name": "快速间歇",
+            "distance_meters": 1600,
+            "duration_seconds": 430,
+            "avg_heart_rate": 170,
+            "training_analysis": {
+                "primary_type": "interval",
+                "confidence": 0.91,
+            },
+        }],
+        states={"2026-08-14": "synced"},
+    )
+
+    prepared = TrainingDaySummaryBuilder.prepare_daily_analysis(summary)
+
+    assert len(prepared["daily_analysis"]["quality_sessions"]) == 1
+    assert prepared["daily_analysis"]["quality_session_count"] == 1
+    assert prepared["daily_analysis"]["quality_sessions"][0]["activity_id"] == "short-interval"
+
 def test_aggregate_is_compact_for_draft_history_and_keeps_daily_for_week_review():
     summaries = [
         TrainingDaySummaryBuilder.build(

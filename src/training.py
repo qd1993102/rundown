@@ -27,6 +27,13 @@ from .training_pace import (
     DailyPaceAdjustmentEngine,
     PaceCalibrationProfileBuilder,
 )
+from .pace_zones import (
+    compute_all_zones,
+    to_legacy_profile,
+    load_cached_pace_zones,
+    refresh_pace_zones_if_stale,
+    save_pace_zones_to_profile,
+)
 from .training_planning import (
     PlanningFactPackBuilder,
     ProfessionalSchemePlanner,
@@ -91,6 +98,59 @@ def _identifier(value: Any, *, field: str) -> str:
 def _facts_fingerprint(value: Any) -> str:
     payload = json.dumps(value, ensure_ascii=False, sort_keys=True, default=str)
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:24]
+
+def _dedupe_similar(items: list[str], threshold: float = 0.50) -> list[str]:
+    """Remove near-duplicate strings by character bigram Jaccard similarity.
+
+    Two strings are considered duplicates when their bigram overlap
+    exceeds *threshold*.  The first occurrence is kept.
+    """
+    if not items:
+        return []
+    result: list[str] = []
+    seen: list[set[str]] = []
+    for item in items:
+        bigrams = _bigrams(str(item))
+        if not bigrams:
+            result.append(item)
+            seen.append(bigrams)
+            continue
+        is_dup = False
+        for prev in seen:
+            if not prev:
+                continue
+            intersection = len(bigrams & prev)
+            union = len(bigrams | prev)
+            if union > 0 and intersection / union >= threshold:
+                is_dup = True
+                break
+        if not is_dup:
+            result.append(item)
+            seen.append(bigrams)
+    return result
+
+def _bigrams(text: str) -> set[str]:
+    t = text.strip()
+    return {t[i:i+2] for i in range(len(t) - 1)}
+def _dedupe_review_items(review: dict[str, object]) -> dict[str, object]:
+    """Dedupe review.items by (reason or suggestion or code) key."""
+    items = review.get("items")
+    if not isinstance(items, list) or len(items) < 2:
+        return review
+    def _key(item: object) -> str:
+        if isinstance(item, dict):
+            return str(item.get("reason") or item.get("suggestion") or item.get("code") or "")
+        return str(item)
+    seen: set[str] = set()
+    deduped: list[object] = []
+    for item in items:
+        k = _key(item)
+        if k not in seen:
+            seen.add(k)
+            deduped.append(item)
+    review["items"] = deduped
+    return review
+
 
 
 # 重规划注入当前方案时只保留结构字段，剔除旧结论/依据（data_basis、feasibility、
@@ -1001,6 +1061,48 @@ class ActivityMatcher:
         return matched
 
 
+
+def _cached_to_legacy_profile(cached: dict[str, Any]) -> dict[str, Any]:
+    """将缓存的 pace_zones dict 转换为 PaceCalibrationProfile 兼容格式。"""
+    import hashlib, json as _json
+    from datetime import date as _date
+    zones = {}
+    for z in ["z1", "z2", "z3", "z4", "z5"]:
+        zd = cached.get(z) or {}
+        pmin = zd.get("pace_min_sec")
+        pmax = zd.get("pace_max_sec")
+        available = pmin is not None and pmax is not None
+        mid = round((pmin + pmax) / 2) if available else None
+        zones[z] = {
+            "status": "available" if available else "unavailable",
+            "source": str(zd.get("source", "cached")),
+            "min_sec_per_km": pmin,
+            "max_sec_per_km": pmax,
+            "display_range": str(zd.get("pace", "")),
+            "applies_to": "work_interval" if z == "z5" else "continuous_main",
+            "basis_refs": [cached.get("based_on", "cached")],
+            "sample_count": 0,
+            "confidence": "medium" if available else "low",
+            "recent_median_sec_per_km": mid,
+            "baseline_median_sec_per_km": mid,
+        }
+    vs = _json.dumps({"zones": zones, "updated": cached.get("updated")}, sort_keys=True, ensure_ascii=False)
+    return {
+        "type": "pace_calibration_profile",
+        "version": hashlib.sha256(vs.encode("utf-8")).hexdigest()[:12],
+        "policy_version": "pace-zones-v1",
+        "as_of": str(_date.today()),
+        "facts_cutoff": str(cached.get("updated", "")),
+        "zones": zones,
+        "data_quality": {
+            "status": "sufficient",
+            "available_zone_count": 5,
+            "excluded_reasons": {},
+            "weather_normalized": False,
+        },
+    }
+
+
 class TrainingService:
     """训练首页、方案、反馈和提案的统一业务入口。"""
 
@@ -1263,6 +1365,53 @@ class TrainingService:
                                     "source": "classify_training_structure",
                                 }],
                             })
+                    # 确定性跑步分析（S1/S4/S5/S6/S7/S8），供周报/草稿 SKILL 引用
+                    try:
+                        from .running_analysis import (
+                            clean_segment_sequence,
+                            analyze_aerobic_drift,
+                            assess_running_economy,
+                            identify_fatigue_compensation,
+                            compensate_environment,
+                            analyze_cardiac_muscle_decoupling,
+                        )
+                        from dataclasses import asdict
+                        segs = item["session_summary"].get("segment_sequence") or []
+                        if segs:
+                            cleaning = clean_segment_sequence(segs)
+                            drift = analyze_aerobic_drift(cleaning.segments,
+                                                           summary=item["session_summary"])
+                            economy = assess_running_economy(cleaning.segments,
+                                                              summary=item["session_summary"],
+                                                              baseline=baseline)
+                            fatigue = identify_fatigue_compensation(cleaning.segments,
+                                                                      summary=item["session_summary"],
+                                                                      baseline=baseline)
+                            pace = ((item["session_summary"].get("pace_profile") or {}).get("avg_pace_sec_per_km"))
+                            hr = ((item["session_summary"].get("structure") or {}).get("avg_hr"))
+                            ascent = ((item["session_summary"].get("elevation_profile") or {}).get("ascent_m"))
+                            dist = ((item["session_summary"].get("volume") or {}).get("distance_m"))
+                            gain = ((item["session_summary"].get("elevation_profile") or {}).get("gain_per_km"))
+                            env = compensate_environment(
+                                avg_pace_sec_per_km=pace,
+                                avg_hr=hr,
+                                total_ascent_m=ascent,
+                                distance_m=dist,
+                                gain_per_km=gain,
+                            )
+                            decoupling = analyze_cardiac_muscle_decoupling(
+                                cleaning.segments, summary=item["session_summary"], baseline=baseline,
+                            )
+                            item["running_analysis"] = {
+                                "cleaning": asdict(cleaning),
+                                "aerobic_drift": asdict(drift),
+                                "economy": asdict(economy),
+                                "fatigue_compensation": asdict(fatigue),
+                                "environment": asdict(env),
+                                "decoupling": asdict(decoupling),
+                            }
+                    except Exception:
+                        pass
             compacted.append(item)
         if structure_features:
             day = {
@@ -1542,10 +1691,10 @@ class TrainingService:
     def pace_calibration_profile(
         self, *, target: date | None = None, weather_context: str = "",
     ) -> dict[str, Any]:
-        """读取截至目标日的同类训练事实并生成只读配速校准档案。
+        """使用 pace-zones skill 计算个人配速与心率区间。
 
-        校准融入：天气归一化（高温季节/用户补充信息折算配速）、
-        PB 交叉验证（样本不足兜底、Z4 上限封顶、能力差距标记）。
+        优先读取 fitness-assessment.md 中的 pace_zones 缓存；
+        缓存过期（>7天）或不存在时自动重算并写入。
         """
         target = target or date.today()
         activities: list[dict[str, Any]] = []
@@ -1554,9 +1703,9 @@ class TrainingService:
                 activities, _ = self.activity_loader(target - timedelta(days=42), target)
             except Exception:
                 activities = []
+
         setup = self._setup_context(target=target)
         personal_bests: dict[str, Any] | None = None
-        target_time: Any = None
         try:
             from .memory import MemoryStore
             memory = MemoryStore(self.repository.root)
@@ -1565,18 +1714,86 @@ class TrainingService:
                 personal_bests = (
                     profile_mem.front_matter.get("personal_bests") or {}
                 )
-            active = self.goals.list_active()
-            if active:
-                target_time = (active[0] or {}).get("target_time")
         except Exception:
             pass
-        return self.pace_profile_builder.build(
-            activities,
-            target=target,
-            athlete_profile=setup.get("athlete_profile") or {},
-            personal_bests=personal_bests,
-            target_time=target_time,
-            weather_context=weather_context,
+
+        athlete_profile = setup.get("athlete_profile") or {}
+        personal_info = athlete_profile.get("personal_info") or {}
+        hr_rest = int(personal_info.get("resting_heart_rate") or 0)
+        hr_max = int(personal_info.get("max_heart_rate") or 0)
+        age = int(personal_info.get("age") or 0) or None
+
+        # 提取天气信息
+        weather = setup.get("weather") or {}
+        temp_c = weather.get("temperature_c") if isinstance(weather, dict) else None
+        humidity = weather.get("humidity_pct") if isinstance(weather, dict) else None
+
+        # 优先读缓存
+        cached = load_cached_pace_zones(self.repository.root)
+        if cached:
+            from datetime import datetime
+            try:
+                updated = datetime.fromisoformat(cached.get("updated", ""))
+                if (datetime.now() - updated).days < 7:
+                    # 缓存有效，转换为兼容格式
+                    return _cached_to_legacy_profile(cached)
+            except (ValueError, TypeError):
+                pass
+
+        # 缓存过期或不存在，重新计算
+        result = compute_all_zones(
+            personal_bests=personal_bests or {},
+            hr_rest=hr_rest,
+            hr_max=hr_max,
+            age=age,
+            activities=activities,
+            temp_c=temp_c,
+            humidity=humidity,
+            today=target,
+        )
+
+        # 写入缓存
+        try:
+            save_pace_zones_to_profile(
+                self.repository.root, result, hr_rest, hr_max, age,
+            )
+        except Exception:
+            pass
+
+        return to_legacy_profile(result)
+
+    def refresh_pace_zones_after_sync(self) -> dict[str, Any] | None:
+        """同步完成后强制刷新 pace_zones 缓存。"""
+        activities: list[dict[str, Any]] = []
+        if self.activity_loader:
+            try:
+                activities, _ = self.activity_loader(date.today() - timedelta(days=42), date.today())
+            except Exception:
+                pass
+        setup = self._setup_context()
+        personal_bests: dict[str, Any] | None = None
+        try:
+            from .memory import MemoryStore
+            memory = MemoryStore(self.repository.root)
+            profile_mem = memory.get("fitness-assessment")
+            if profile_mem is not None:
+                personal_bests = profile_mem.front_matter.get("personal_bests") or {}
+        except Exception:
+            pass
+        athlete_profile = setup.get("athlete_profile") or {}
+        personal_info = athlete_profile.get("personal_info") or {}
+        hr_rest = int(personal_info.get("resting_heart_rate") or 0)
+        hr_max = int(personal_info.get("max_heart_rate") or 0)
+        age = int(personal_info.get("age") or 0) or None
+
+        return refresh_pace_zones_if_stale(
+            self.repository.root,
+            personal_bests=personal_bests or {},
+            hr_rest=hr_rest,
+            hr_max=hr_max,
+            age=age,
+            activities=activities,
+            force=True,
         )
 
     def _athlete_profile_with_pace_reference(
@@ -1802,7 +2019,7 @@ class TrainingService:
             "recommendation_status": planning.get("recommendation_status"),
             "decision_status": planning.get("decision_status"),
             "adjustments": planning.get("adjustments", []),
-            "review": copy.deepcopy(planning.get("review") or {"status": "not_provided", "items": [], "safety_hold": None}),
+            "review": _dedupe_review_items(copy.deepcopy(planning.get("review") or {"status": "not_provided", "items": [], "safety_hold": None})),
             "entry_review": copy.deepcopy(planning.get("entry_review") or {}),
             "entry_phase_recommendation": entry_phase,
             "fallback_reason": planning.get("fallback_reason"),
@@ -1826,7 +2043,7 @@ class TrainingService:
                 "purpose": str(planning["periodization"][0].get("purpose") or "建立稳定训练节奏"),
             },
             "weekly_mileage_target": round(weekly_km, 1),
-            "data_basis": data_basis,
+            "data_basis": _dedupe_similar(data_basis),
             "weekly_pattern": weekly_pattern,
             "recommended_start_date": str(recommended_start),
             "near_term_schedule": near_term_schedule,
@@ -2691,6 +2908,7 @@ class TrainingService:
             active_dates: set[date] = set()
             running_dates: set[date] = set()
             running_count = 0
+            running_duration_seconds = 0.0
             total_distance_km = 0.0
             running_distance_km = 0.0
             total_duration_minutes = 0.0
@@ -2731,6 +2949,7 @@ class TrainingService:
                     running_count += 1
                     running_dates.add(item_date)
                     running_distance_km += distance_km
+                    running_duration_seconds += number(item.get("duration_seconds"))
                     if longest_running is None or distance_km > float(
                         longest_running.get("distance_km") or 0
                     ):
@@ -2782,6 +3001,11 @@ class TrainingService:
                     key=lambda item: (-float(item["distance_km"]), str(item["label"])),
                 )
 
+
+            running_pace_sec_per_km = None
+            if running_distance_km > 0 and running_duration_seconds > 0:
+                running_pace_sec_per_km = round(running_duration_seconds / running_distance_km)
+
             return {
                 "activity_count": len(valid),
                 "active_days": len(active_dates),
@@ -2790,6 +3014,7 @@ class TrainingService:
                 "consecutive_running_days": consecutive_running_days,
                 "total_distance_km": round(total_distance_km, 1),
                 "running_distance_km": round(running_distance_km, 1),
+                "running_duration_minutes": round(running_duration_seconds / 60) if running_duration_seconds > 0 else 0,
                 "total_duration_minutes": round(total_duration_minutes),
                 "longest_activity": longest_activity,
                 "longest_running_activity": longest_running,
@@ -2799,6 +3024,7 @@ class TrainingService:
                 "training_breakdown": normalized_breakdown(
                     training_breakdown, with_duration=False,
                 ),
+                "running_pace_sec_per_km": running_pace_sec_per_km,
                 "latest_activity_date": str(max(active_dates)) if active_dates else None,
             }
 
@@ -2961,8 +3187,18 @@ class TrainingService:
         duration = int(actual.get("total_duration_minutes") or 0)
         longest = actual.get("longest_running_activity") or {}
         longest_km = float(longest.get("distance_km") or 0)
+        running_pace = actual.get('running_pace_sec_per_km')
+        pace_text = ""
+        if running_pace:
+            minutes = int(running_pace // 60)
+            seconds = int(round(running_pace % 60))
+            if seconds == 60:
+                minutes += 1
+                seconds = 0
+            pace_text = f"，平均配速 {minutes}'{seconds:02d}\"/km"
+
         overview_headline = (
-            f"本周跑步 {running_km:g} km，分布在 {running_days} 个跑步日；"
+            f"本周跑步 {running_km:g} km，分布在 {running_days} 个跑步日{pace_text}；"
             f"最长单次 {longest_km:g} km。"
             if running_km else
             f"本周记录 {activity_count} 次运动，暂未记录到跑步。"
@@ -4002,7 +4238,7 @@ class TrainingService:
                 "recommendation_status": planning.get("recommendation_status"),
                 "decision_status": planning.get("decision_status"),
                 "adjustments": planning.get("adjustments", []),
-                "review": copy.deepcopy(planning.get("review") or {"status": "not_provided", "items": [], "safety_hold": None}),
+                "review": _dedupe_review_items(copy.deepcopy(planning.get("review") or {"status": "not_provided", "items": [], "safety_hold": None})),
                 "entry_review": copy.deepcopy(planning.get("entry_review") or {}),
                 "entry_phase_recommendation": entry_phase,
                 "fallback_reason": planning.get("fallback_reason"),
@@ -4024,11 +4260,11 @@ class TrainingService:
                     ),
                 },
                 "weekly_mileage_target": round(weekly_target, 1),
-                "data_basis": [
+                "data_basis": _dedupe_similar([
                     f"方案级重规划原因：{reason}",
                     *planning["feasibility"].get("evidence", []),
                     *planning.get("assumptions", []),
-                ],
+                ]),
                 "weekly_pattern": self._planning_week_pattern(
                     first_week.get("workouts") or [],
                     existing_constraints.get("available_days") or [],

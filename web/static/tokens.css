@@ -1,0 +1,112 @@
+/* ═══════════════════════════════════════════
+   neurun Design Tokens — 三主题 CSS 变量
+   data-theme: fresh | sport | dark
+   ═══════════════════════════════════════════ */
+
+[data-theme="fresh"] {
+  --bg: #e8efe9;
+  --bg-card: #fff;
+  --text: #1a2e23;
+  --text-secondary: #5a7d6e;
+  --text-muted: #8aa89a;
+  --accent: #2d9d6f;
+  --accent-strong: #1f7a52;
+  --accent-glow: rgba(45, 157, 111, .1);
+  --recovery: #3b82b6;
+  --recovery-glow: rgba(59, 130, 246, .08);
+  --performance: #22a86e;
+  --performance-glow: rgba(34, 168, 110, .08);
+  --sleep: #7c6fcf;
+  --sleep-glow: rgba(124, 111, 207, .08);
+  --warning: #d4a017;
+  --danger: #dc5b51;
+  --hrv: #3b9fc6;
+  --card-shadow: 0 2px 8px rgba(0, 0, 0, .06);
+  --card-shadow-hover: 0 8px 30px rgba(0, 0, 0, .1);
+  --border-subtle: #dde5df;
+  --bg-subtle: #f0f4f0;
+  --surface-raised: #f6f9f6;
+  --space-xs: 4px;
+  --space-sm: 8px;
+  --space-md: 16px;
+  --space-lg: 24px;
+  --space-xl: 32px;
+  --radius-sm: 10px;
+  --radius-md: 12px;
+  --radius-lg: 16px;
+  --radius-xl: 22px;
+  --font-display: 'Inter', -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'Segoe UI', Roboto, sans-serif;
+  --font-body: -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'Segoe UI', Roboto, sans-serif;
+}
+
+[data-theme="sport"] {
+  --bg: #f0f0f0;
+  --bg-card: #fff;
+  --text: #171717;
+  --text-secondary: #525252;
+  --text-muted: #a3a3a3;
+  --accent: #f15b2a;
+  --accent-strong: #d1431e;
+  --accent-glow: rgba(241, 91, 42, .08);
+  --recovery: #2563eb;
+  --recovery-glow: rgba(37, 99, 235, .08);
+  --performance: #16a34a;
+  --performance-glow: rgba(22, 163, 74, .08);
+  --sleep: #7c3aed;
+  --sleep-glow: rgba(124, 58, 237, .08);
+  --warning: #eab308;
+  --danger: #ef4444;
+  --hrv: #0891b2;
+  --card-shadow: 0 2px 10px rgba(0, 0, 0, .07);
+  --card-shadow-hover: 0 10px 35px rgba(0, 0, 0, .1);
+  --border-subtle: #ebebeb;
+  --bg-subtle: #f5f5f5;
+  --surface-raised: #fafafa;
+  --space-xs: 4px;
+  --space-sm: 8px;
+  --space-md: 16px;
+  --space-lg: 24px;
+  --space-xl: 32px;
+  --radius-sm: 10px;
+  --radius-md: 12px;
+  --radius-lg: 16px;
+  --radius-xl: 22px;
+  --font-display: 'Inter', -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'Segoe UI', Roboto, sans-serif;
+  --font-body: -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'Segoe UI', Roboto, sans-serif;
+}
+
+[data-theme="dark"] {
+  --bg: #141a14;
+  --bg-card: #1e261e;
+  --text: #e6e8e3;
+  --text-secondary: #9aa89a;
+  --text-muted: #5a6b5a;
+  --accent: #f0a030;
+  --accent-strong: #d08820;
+  --accent-glow: rgba(240, 160, 48, .12);
+  --recovery: #6ba8e0;
+  --recovery-glow: rgba(107, 168, 224, .1);
+  --performance: #5cb878;
+  --performance-glow: rgba(92, 184, 120, .1);
+  --sleep: #9a8ad0;
+  --sleep-glow: rgba(154, 138, 208, .1);
+  --warning: #e8c040;
+  --danger: #e86050;
+  --hrv: #50b8c8;
+  --card-shadow: 0 2px 10px rgba(0, 0, 0, .35);
+  --card-shadow-hover: 0 10px 30px rgba(0, 0, 0, .5);
+  --border-subtle: #2a342a;
+  --bg-subtle: #1a201a;
+  --surface-raised: #243024;
+  --space-xs: 4px;
+  --space-sm: 8px;
+  --space-md: 16px;
+  --space-lg: 24px;
+  --space-xl: 32px;
+  --radius-sm: 10px;
+  --radius-md: 12px;
+  --radius-lg: 16px;
+  --radius-xl: 22px;
+  --font-display: 'Inter', -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'Segoe UI', Roboto, sans-serif;
+  --font-body: -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'Segoe UI', Roboto, sans-serif;
+}

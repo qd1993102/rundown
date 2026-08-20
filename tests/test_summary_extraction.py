@@ -133,12 +133,24 @@ def test_coros_real_units_laps_and_frequency_normalize_to_shared_contract():
     assert "frequencyList" not in result
 
 
-def test_even_split_half_difference_uses_actual_halves():
+def test_structure_facts_without_kinematics_data():
+    """无心率/步频/步幅/GCT/VO 时，动力学画像字段合理为 None。"""
     facts = build_session_summary({"summaryDTO": {"distance": 2000}, "splitSummaries": [
         {"distance": 1000, "duration": 100}, {"distance": 1000, "duration": 200},
     ]})
     assert facts.structure is not None
-    assert facts.structure.half_diff_s == 100
+    assert facts.structure.n_splits == 2
+    assert facts.structure.cadence_cv_pct is None
+    assert facts.structure.cadence_half_diff is None
+    assert facts.structure.stride_cv_pct is None
+    assert facts.structure.stride_half_diff is None
+    assert facts.structure.gct_cv_pct is None
+    assert facts.structure.gct_half_diff is None
+    assert facts.structure.vo_cv_pct is None
+    assert facts.structure.vo_half_diff is None
+    assert facts.structure.avg_vertical_ratio is None
+    assert facts.structure.hr_cv_pct is None
+    assert facts.structure.hr_half_diff is None
 
 
 # ── session-summary-v2：训练深度分析 ──────────────────────────────

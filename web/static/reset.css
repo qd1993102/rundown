@@ -1,0 +1,90 @@
+/* ═══════════════════════════════════════════
+   neurun Reset — 全局重置 + 基础排版
+   ═══════════════════════════════════════════ */
+
+*,
+*::before,
+*::after {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+html {
+  min-width: 320px;
+  background: var(--bg);
+}
+
+body {
+  min-width: 320px;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font-body);
+  line-height: 1.6;
+  -webkit-font-smoothing: antialiased;
+  transition: background .3s, color .3s;
+}
+
+button,
+input,
+textarea,
+select {
+  font: inherit;
+}
+
+button {
+  -webkit-tap-highlight-color: transparent;
+  touch-action: manipulation;
+}
+
+a {
+  color: inherit;
+  text-decoration: none;
+}
+
+img {
+  max-width: 100%;
+  height: auto;
+}
+
+.visually-hidden {
+  position: absolute !important;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.container {
+  width: 100%;
+  max-width: 720px;
+  margin: 0 auto;
+  padding: 12px 12px calc(112px + env(safe-area-inset-bottom));
+}
+
+/* 等宽数字：所有数值使用 tabular figures */
+[data-display="number"],
+.metric,
+.stat,
+.hero-value,
+.hero-sub,
+.load-cell-value,
+.data-cell,
+.report-stat,
+.plan-card-value,
+.week-day-count,
+.week-day-km {
+  font-feature-settings: "tnum";
+}
+
+/* Display 字体用于大数字 */
+h1,
+.hero-value,
+.section-heading,
+.empty h2 {
+  font-family: var(--font-display);
+}

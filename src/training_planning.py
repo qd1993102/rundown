@@ -1740,6 +1740,14 @@ class ProfessionalSchemePlanner:
                     session["session_summary"] = copy.deepcopy(
                         raw_session["session_summary"]
                     )
+                if isinstance(raw_session.get("running_analysis"), dict):
+                    session["running_analysis"] = copy.deepcopy(
+                        raw_session["running_analysis"]
+                    )
+                if isinstance(raw_session.get("structure_classification"), dict):
+                    session["structure_classification"] = copy.deepcopy(
+                        raw_session["structure_classification"]
+                    )
                 if session:
                     sessions.append(session)
             if sessions:
@@ -1777,7 +1785,8 @@ class ProfessionalSchemePlanner:
                 for key in (
                     "activity_id", "name", "session_role", "distance_km",
                     "duration_minutes", "training_load", "metrics", "analysis",
-                    "session_summary",
+                    "session_summary", "running_analysis",
+                    "structure_classification",
                 ) if key in session
             }
             for session in summary.get("sessions") or []

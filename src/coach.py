@@ -71,6 +71,7 @@ def _daily_fact_pack(fm: dict[str, Any], target_date: date) -> dict[str, Any]:
         "athlete_context": fm.get("athlete_context", {}),
         "plan_context": fm.get("plan_context", {}),
         "plan_execution_summary": fm.get("plan_execution_summary", {}),
+        "running_analysis": fm.get("running_analysis_daily", {}),
     }
 
 

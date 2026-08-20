@@ -67,7 +67,7 @@ def build_session_summary(detail: dict) -> SessionSummaryFacts:
 class SessionSummaryFacts:
     granularity: str                  # "L0"|"L1"|"L2" —— 驱动下游置信度
     volume: VolumeFacts               # 时长/距离/负荷/热量
-    structure: StructureFacts | None  # 组数/正负分段/CV/效率均值(L1)
+    structure: StructureFacts | None  # 跑步动力学画像：均值/CV/前后半程差(L1)
     intensity: IntensityFacts | None  # 配速/心率带占比 + basis(L2精确/L1分段加权近似)
     terrain: TerrainFacts | None      # 爬升/每公里(L1)，坡度剖面(L2)
     data_quality: dict[str, str]      # 缺失清单 + 代理声明
@@ -274,6 +274,28 @@ class PaceProfileFacts:                 # 配速画像（分段粒度）
     evidence: tuple[dict, ...] = ()
 
 @dataclass(frozen=True)
+class StructureFacts:                   # 跑步动力学画像（均值/CV/前后半程差）
+    """各维度均值、变异系数（CV%）、前后半程差。配速维度由 PaceProfileFacts 独立管理。"""
+    n_splits: int
+    avg_cadence: float | None = None
+    max_cadence: float | None = None
+    cadence_cv_pct: float | None = None
+    cadence_half_diff: float | None = None
+    avg_stride: float | None = None
+    stride_cv_pct: float | None = None
+    stride_half_diff: float | None = None
+    avg_gct: float | None = None
+    gct_cv_pct: float | None = None
+    gct_half_diff: float | None = None
+    avg_vo: float | None = None
+    vo_cv_pct: float | None = None
+    vo_half_diff: float | None = None
+    avg_vertical_ratio: float | None = None      # VO/步幅×100
+    hr_cv_pct: float | None = None
+    hr_half_diff: float | None = None
+    evidence: tuple[dict, ...] = ()
+
+@dataclass(frozen=True)
 class StructureProfileFacts:            # 复合训练结构
     split_types: tuple[str, ...] = ()       # warmup/recovery/main/interval...
     work_blocks: int = 0
@@ -283,7 +305,7 @@ class StructureProfileFacts:            # 复合训练结构
 ```
 
 `SessionSummaryFacts` 新增字段：`effect`、`elevation_profile`、`pace_profile`、
-`structure_profile`（structure 保持 v1 字段不动）。
+`structure_profile` 及 `structure`（跑步动力学画像：各维度均值、CV、前后半程差、垂直振幅比）。
 
 ### 9.3 数据流：原始 TE 入库、估算在分析层、三流程同源
 

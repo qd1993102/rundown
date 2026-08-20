@@ -100,6 +100,8 @@ Web 服务不再通过“绑定运动平台”隐式创建用户。首次访问�
 
 应用账号邮箱只用于 neurun 登录，和运动平台账号相互独立。密码使用随机盐 `scrypt`
 哈希保存，不写入日志或用户 JSON 明文字段。登录成功后继续使用 HttpOnly Cookie 维持会话。
+登录用户可在“我的”页面自助修改密码：需验证当前密码，新密码长度为 8–128 字符；
+修改后立即生效，当前登录状态保持有效。
 
 管理员通过 JSON 文件维护邀请码。默认路径为
 `<NEURUN_DATA_DIR>/invite-codes.json`，也可用 `NEURUN_INVITE_CODES_FILE` 覆盖：
@@ -194,7 +196,8 @@ sudo systemctl restart neurun.service
 - `GET|HEAD /healthz`：无鉴权的 Web 进程存活与 release SHA 检查，不读取用户数据或访问外部平台；
 - `POST /api/invitations/validate`：验证邀请码，不预占名额；
 - `POST /api/register`：提交 `invite_code`、`nickname`、`email`、`password`；
-- `POST /api/login`：提交应用账号 `email`、`password`。
+- `POST /api/login`：提交应用账号 `email`、`password`；
+- `POST /api/password`：登录用户修改密码，提交 `current_password`、`new_password`。
 
 ECS 通过 CLB 暴露 Web 服务时，进程必须使用 `MCP_HOST=0.0.0.0` 和
 `MCP_PORT=8080` 监听私网网卡，CLB 后端端口设为 `8080`，健康检查方法设为
@@ -567,6 +570,24 @@ neurun mcp --port 9876             # 自定义端口
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|
 | `--port N` | int | 8765 | MCP Server 监听端口 |
+
+---
+
+### `neurun serve`
+
+启动 Web 应用服务（含 MCP Server SSE），SAE/VPS 部署入口，等价于以 MCP 传输方式直接启动 Web。
+
+```bash
+neurun serve                       # 默认监听 0.0.0.0:8080（MCP SSE）
+```
+
+| 环境变量 | 默认值 | 说明 |
+|----------|--------|------|
+| `MCP_HOST` | `0.0.0.0` | 监听地址 |
+| `MCP_PORT` | `8080` | 监听端口 |
+| `MCP_TRANSPORT` | `sse` | MCP 传输方式 |
+
+> `serve` 自动进入 `NEURUN_SERVE_MODE=true`（跳过全局 Garmin 凭证校验）。
 
 ---
 

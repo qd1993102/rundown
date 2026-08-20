@@ -2,57 +2,12 @@
 <html lang="zh">
 <head>
 <meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<link rel="stylesheet" href="/static/tokens.css">
+<link rel="stylesheet" href="/static/reset.css">
+<link rel="stylesheet" href="/static/components.css">
+<link rel="stylesheet" href="/static/utilities.css">
 <title>neurun — 同步</title>
 <style>
-[data-theme="fresh"] {
-  --bg:#e8efe9; --bg-card:#fff; --text:#1a2e23; --text-secondary:#5a7d6e; --text-muted:#8aa89a;
-  --accent:#2d9d6f; --accent-glow:rgba(45,157,111,.1); --recovery:#3b82b6; --recovery-glow:rgba(59,130,246,.08);
-  --performance:#22a86e; --performance-glow:rgba(34,168,110,.08); --sleep:#7c6fcf; --sleep-glow:rgba(124,111,207,.08);
-  --warning:#d4a017; --danger:#dc5b51; --hrv:#3b9fc6;
-  --card-shadow:0 2px 8px rgba(0,0,0,.06); --card-shadow-hover:0 8px 30px rgba(0,0,0,.1);
-  --border-subtle:#dde5df; --bg-subtle:#f0f4f0;
-}
-[data-theme="sport"] {
-  --bg:#f0f0f0; --bg-card:#fff; --text:#171717; --text-secondary:#525252; --text-muted:#a3a3a3;
-  --accent:#f15b2a; --accent-glow:rgba(241,91,42,.08); --recovery:#2563eb; --recovery-glow:rgba(37,99,235,.08);
-  --performance:#16a34a; --performance-glow:rgba(22,163,74,.08); --sleep:#7c3aed; --sleep-glow:rgba(124,58,237,.08);
-  --warning:#eab308; --danger:#ef4444; --hrv:#0891b2;
-  --card-shadow:0 2px 10px rgba(0,0,0,.07); --card-shadow-hover:0 10px 35px rgba(0,0,0,.1);
-  --border-subtle:#ebebeb; --bg-subtle:#f5f5f5;
-}
-[data-theme="dark"] {
-  --bg:#0b1120; --bg-card:#1a2333; --text:#e2e8f0; --text-secondary:#94a3b8; --text-muted:#64748b;
-  --accent:#34d399; --accent-glow:rgba(52,211,153,.12); --recovery:#60a5fa; --recovery-glow:rgba(96,165,250,.1);
-  --performance:#4ade80; --performance-glow:rgba(74,222,128,.1); --sleep:#a78bfa; --sleep-glow:rgba(167,139,250,.1);
-  --warning:#fbbf24; --danger:#f87171; --hrv:#22d3ee;
-  --card-shadow:0 2px 10px rgba(0,0,0,.35); --card-shadow-hover:0 10px 30px rgba(0,0,0,.5);
-  --border-subtle:#243044; --bg-subtle:#151e2c;
-}
-*{margin:0;padding:0;box-sizing:border-box}
-html{min-width:320px;background:var(--bg)}
-body{min-width:320px;background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSystemFont,'SF Pro Display','Segoe UI',Roboto,sans-serif;line-height:1.6;-webkit-font-smoothing:antialiased;transition:background .3s,color .3s}
-button,input{font:inherit}
-.container{width:100%;max-width:560px;margin:0 auto;padding:12px 12px calc(112px + env(safe-area-inset-bottom))}
-
-/* Shared app navigation */
-.app-header{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:0 0 12px}
-.app-brand{display:flex;align-items:center;gap:8px;color:var(--text);font-size:14px;font-weight:800;letter-spacing:.2px}
-.app-brand-mark{display:grid;place-items:center;width:32px;height:32px;border-radius:11px;background:var(--accent);color:#fff;font-size:17px;font-weight:900}
-.app-nav{position:fixed;z-index:50;left:50%;bottom:calc(10px + env(safe-area-inset-bottom));transform:translateX(-50%);width:min(calc(100% - 24px),520px);display:grid;grid-template-columns:repeat(4,1fr);gap:4px;padding:6px;border:1px solid var(--border-subtle);border-radius:22px;background:color-mix(in srgb,var(--bg-card) 92%,transparent);box-shadow:0 12px 40px rgba(0,0,0,.22);-webkit-backdrop-filter:blur(18px);backdrop-filter:blur(18px)}
-.app-nav-item{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;min-width:0;min-height:54px;padding:6px 5px;border-radius:16px;color:var(--text-muted);text-decoration:none;transition:color .2s,background .2s;-webkit-tap-highlight-color:transparent;touch-action:manipulation}
-.app-nav-item[aria-current="page"]{background:var(--accent-glow);color:var(--accent)}
-.app-nav-icon{width:21px;height:21px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
-.app-nav-label{font-size:10px;font-weight:750;line-height:1;letter-spacing:.2px}
-.theme-bar{display:inline-flex;gap:3px;padding:3px;border:1px solid var(--border-subtle);border-radius:14px;background:var(--bg-card);box-shadow:var(--card-shadow)}
-.theme-btn{min-height:40px;border:1px solid transparent;padding:6px 10px;border-radius:10px;font-size:11px;font-weight:650;cursor:pointer;background:transparent;color:var(--text-muted);transition:color .2s,background .2s,border-color .2s;letter-spacing:.2px}
-.theme-btn.active{background:var(--accent);color:#fff}
-.btn{padding:8px 18px;border-radius:20px;border:1px solid var(--border-subtle);background:transparent;color:var(--text-secondary);font-size:13px;font-weight:600;cursor:pointer;transition:all .2s}
-.btn:hover{border-color:var(--accent);color:var(--accent)}
-.btn.primary{background:var(--accent);border-color:var(--accent);color:#fff;font-size:15px;padding:10px 28px}
-.btn.primary:hover{opacity:.85}
-.btn:disabled{opacity:.4;cursor:not-allowed}
-.spinner{display:inline-block;width:16px;height:16px;border:2px solid rgba(255,255,255,.3);border-top-color:#fff;border-radius:50%;animation:spin .6s linear infinite;vertical-align:middle;margin-right:6px}
-@keyframes spin{to{transform:rotate(360deg)}}
 
 /* Card */
 .card{background:var(--bg-card);border-radius:16px;padding:32px;box-shadow:var(--card-shadow);margin-bottom:16px}
@@ -166,6 +121,22 @@ button,input{font:inherit}
   .calendar-day-detail{font-size:7px}
   .date-selection-help{flex-basis:100%;text-align:left}
 }
+
+/* Sync mode toggle */
+.sync-mode-toggle{display:flex;gap:4px;padding:3px;border:1px solid var(--border-subtle);border-radius:12px;background:var(--bg-subtle);margin-bottom:16px}
+.sync-mode-btn{flex:1;min-height:40px;border:0;border-radius:9px;background:transparent;color:var(--text-muted);font-size:13px;font-weight:650;cursor:pointer;transition:all .2s}
+.sync-mode-btn.active{background:var(--bg-card);color:var(--text);box-shadow:0 1px 4px rgba(0,0,0,.08)}
+.collapsible-card{border:1px solid var(--border-subtle);border-radius:16px;background:var(--bg-card);box-shadow:var(--card-shadow);margin-bottom:16px}
+.collapsible-card summary{display:flex;align-items:center;gap:10px;min-height:48px;padding:12px 20px;cursor:pointer;list-style:none}
+.collapsible-card summary::-webkit-details-marker{display:none}
+.collapsible-card .toggle-expand{display:inline;flex-shrink:0;color:var(--accent);font-size:11px;font-weight:700;margin-left:auto}
+.collapsible-card .toggle-collapse{display:none;flex-shrink:0;color:var(--accent);font-size:11px;font-weight:700;margin-left:auto}
+.collapsible-card[open] .toggle-expand{display:none}
+.collapsible-card[open] .toggle-collapse{display:inline}
+.collapsible-card .card-content{padding:0 20px 16px}
+.collapsible-card .summary-left{flex:1;min-width:0;display:grid;gap:2px}
+.collapsible-card .summary-left h2{font-size:15px;font-weight:800;line-height:1.3}
+.collapsible-card .summary-left p{font-size:12px;line-height:1.3}
 </style>
 </head>
 <body data-theme="dark">
@@ -197,8 +168,64 @@ button,input{font:inherit}
     <button class="theme-btn" data-theme="sport" onclick="setTheme('sport')">运动</button>
     <button class="theme-btn" data-theme="fresh" onclick="setTheme('fresh')">清新</button>
   </div>
-</header>
-
+</header><!-- Sync Execution -->
+<section class="card" id="syncExecution">
+  <h2>同步数据</h2>
+  <div class="card-subtitle">选择日期范围，拉取运动与健康数据，不生成日报。</div>
+  <div class="sync-mode-toggle" role="group" aria-label="同步模式">
+    <button class="sync-mode-btn active" type="button" data-mode="single" onclick="setSyncMode('single')">单日</button>
+    <button class="sync-mode-btn" type="button" data-mode="batch" onclick="setSyncMode('batch')">日期范围</button>
+  </div>
+  <div id="singleModePanel">
+    <div class="single-date-picker" aria-label="选择单日同步日期">
+      <div class="selected-date" aria-live="polite"><span>本次同步目标</span><strong id="singleDateLabel">—</strong><small id="singleDateHint">可从日历改选</small></div>
+      <div class="date-picker-actions">
+        <button class="date-step" id="singleDatePrev" type="button" aria-label="前一天" onclick="shiftSingleDate(-1)">‹</button>
+        <label class="date-input-label" for="singleDate"><span>修改日期</span><input type="date" id="singleDate" aria-label="选择同步日期"></label>
+        <button class="date-step" id="singleDateNext" type="button" aria-label="后一天" onclick="shiftSingleDate(1)">›</button>
+      </div>
+    </div>
+    <div class="date-shortcuts" role="group" aria-label="同步日期快捷选择"><button type="button" onclick="setSingleDateOffset(-1)">昨天</button><button type="button" onclick="setSingleDateOffset(0)">今天</button></div>
+  </div>
+  <div id="batchModePanel" hidden>
+    <div class="form-row">
+      <div class="form-group grow">
+        <label>开始日期</label>
+        <input type="date" id="batchFromDate">
+      </div>
+      <span class="range-arrow">→</span>
+      <div class="form-group grow">
+        <label>结束日期</label>
+        <input type="date" id="batchToDate">
+      </div>
+    </div>
+  </div>
+  <div class="check-row">
+    <label><input type="checkbox" id="forceSync"> 强制覆盖已有数据</label>
+  </div>
+  <div style="text-align:center">
+    <button class="btn primary sync-action" id="syncBtn" data-label="开始同步" onclick="doSync()">开始同步</button>
+  </div>
+</section>
+<div id="syncResult"></div>
+<section class="card task-card" id="syncTaskCard" aria-live="polite" hidden>
+  <div class="task-header">
+    <div>
+      <div class="task-title">同步任务</div>
+      <div class="task-range" id="syncTaskRange"></div>
+    </div>
+    <span class="task-badge queued" id="syncTaskBadge">已排队</span>
+  </div>
+  <div class="task-progress" id="syncTaskProgress" aria-label="同步阶段进度"></div>
+  <div class="task-stage" id="syncTaskStage">等待执行</div>
+  <div class="task-detail" id="syncTaskDetail">任务已接纳，可以关闭或刷新页面。</div>
+  <div class="task-item-progress" id="syncTaskItemProgress" hidden>
+    <div class="task-item-copy"><span id="syncTaskItemCount"></span><span id="syncTaskItemContext"></span></div>
+    <div class="task-item-track" role="progressbar" id="syncTaskItemTrack" aria-label="当前阶段已处理项" aria-valuemin="0"><div class="task-item-bar" id="syncTaskItemBar"></div></div>
+  </div>
+  <div class="task-meta" id="syncTaskMeta"></div>
+  <div class="task-actions"><a class="btn" id="syncTaskAction" href="#" hidden></a></div>
+</section>
 <!-- Sync Calendar -->
 <section class="card calendar-card" aria-labelledby="calendarMonthLabel">
   <div class="calendar-header">
@@ -225,86 +252,20 @@ button,input{font:inherit}
     <span class="calendar-legend-item"><i class="calendar-legend-dot"></i>未同步</span>
   </div>
 </section>
-
-<!-- Single-day Sync -->
-<div class="card" id="single-sync">
-  <h2>单日补同步</h2>
-  <div class="card-subtitle">从上方日历选择，或直接修改日期；只拉取并保存数据，不生成报告。</div>
-
-  <div class="single-date-picker" aria-label="选择单日同步日期">
-    <div class="selected-date" aria-live="polite"><span>本次同步目标</span><strong id="singleDateLabel">—</strong><small id="singleDateHint">可从上方日历改选</small></div>
-    <div class="date-picker-actions">
-      <button class="date-step" id="singleDatePrev" type="button" aria-label="前一天" onclick="shiftSingleDate(-1)">‹</button>
-      <label class="date-input-label" for="singleDate"><span>修改日期</span><input type="date" id="singleDate" aria-label="选择同步日期"></label>
-      <button class="date-step" id="singleDateNext" type="button" aria-label="后一天" onclick="shiftSingleDate(1)">›</button>
+<details class="collapsible-card" id="statusCard">
+  <summary>
+    <div class="summary-left">
+      <h2>数据源状态</h2>
+      <p class="muted" id="statusOneLiner">正在加载...</p>
     </div>
+    <span class="toggle-expand">展开</span>
+    <span class="toggle-collapse">收起</span>
+  </summary>
+  <div class="card-content">
+    <div class="status-row"><span class="status-dot" id="statusDot"></span><span id="statusText">加载中...</span></div>
+    <div class="status-row" style="font-size:12px;color:var(--text-muted)" id="statusDetail"></div>
   </div>
-  <div class="date-shortcuts" role="group" aria-label="同步日期快捷选择"><button type="button" onclick="setSingleDateOffset(-1)">昨天</button><button type="button" onclick="setSingleDateOffset(0)">今天</button><span class="date-selection-help">日历中的选择会自动带到这里</span></div>
-
-  <div class="check-row">
-    <label><input type="checkbox" id="singleForce"> 强制覆盖该日已有数据</label>
-  </div>
-
-  <div style="text-align:center">
-    <button class="btn primary sync-action" id="singleSyncBtn" data-label="📥 同步这一天" onclick="doSingleSync()">📥 同步这一天</button>
-  </div>
-</div>
-
-<!-- Batch Sync -->
-<div class="card">
-  <h2>📚 批量同步 <span class="mode-badge">BATCH</span></h2>
-  <div class="card-subtitle">按明确的开始和结束日期批量补齐数据，不生成日报。</div>
-
-  <div class="form-row">
-    <div class="form-group grow">
-      <label>开始日期</label>
-      <input type="date" id="batchFromDate">
-    </div>
-    <span class="range-arrow">→</span>
-    <div class="form-group grow">
-      <label>结束日期</label>
-      <input type="date" id="batchToDate">
-    </div>
-  </div>
-
-  <div class="check-row">
-    <label><input type="checkbox" id="batchForce"> 强制覆盖范围内已有数据</label>
-  </div>
-
-  <div style="text-align:center">
-    <button class="btn primary sync-action" id="batchSyncBtn" data-label="📦 同步日期范围" onclick="doBatchSync()">📦 同步日期范围</button>
-  </div>
-</div>
-
-<div id="syncResult"></div>
-
-<section class="card task-card" id="syncTaskCard" aria-live="polite" hidden>
-  <div class="task-header">
-    <div>
-      <div class="task-title">同步任务</div>
-      <div class="task-range" id="syncTaskRange"></div>
-    </div>
-    <span class="task-badge queued" id="syncTaskBadge">已排队</span>
-  </div>
-  <div class="task-progress" id="syncTaskProgress" aria-label="同步阶段进度"></div>
-  <div class="task-stage" id="syncTaskStage">等待执行</div>
-  <div class="task-detail" id="syncTaskDetail">任务已接纳，可以关闭或刷新页面。</div>
-  <div class="task-item-progress" id="syncTaskItemProgress" hidden>
-    <div class="task-item-copy"><span id="syncTaskItemCount"></span><span id="syncTaskItemContext"></span></div>
-    <div class="task-item-track" role="progressbar" id="syncTaskItemTrack" aria-label="当前阶段已处理项" aria-valuemin="0"><div class="task-item-bar" id="syncTaskItemBar"></div></div>
-  </div>
-  <div class="task-meta" id="syncTaskMeta"></div>
-  <div class="task-actions"><a class="btn" id="syncTaskAction" href="#" hidden></a></div>
-</section>
-
-<!-- Status Card -->
-<div class="card">
-  <h2>📊 连接状态</h2>
-  <div class="status-row"><span class="status-dot" id="statusDot"></span><span id="statusText">加载中...</span></div>
-  <div class="status-row" style="font-size:12px;color:var(--text-muted)" id="statusDetail"></div>
-</div>
-
-<div class="footer">Built with <span>neurun</span></div>
+</details><div class="footer">Built with <span>neurun</span></div>
 
 </div>
 
@@ -313,6 +274,14 @@ var savedTheme=localStorage.getItem('neurun-theme')||'dark';
 document.body.setAttribute('data-theme',savedTheme);
 document.querySelectorAll('.theme-btn').forEach(function(b){b.classList.toggle('active',b.dataset.theme===savedTheme)});
 function setTheme(t){document.body.setAttribute('data-theme',t);localStorage.setItem('neurun-theme',t);document.querySelectorAll('.theme-btn').forEach(function(b){b.classList.toggle('active',b.dataset.theme===t)})}
+function setSyncMode(mode){
+  document.querySelectorAll('.sync-mode-btn').forEach(function(b){b.classList.toggle('active',b.dataset.mode===mode)});
+  document.getElementById('singleModePanel').hidden=mode!=='single';
+  document.getElementById('batchModePanel').hidden=mode!=='batch';
+  var btn=document.getElementById('syncBtn');
+  if(mode==='single'){btn.textContent='开始同步';btn.dataset.label='开始同步'}
+  else{btn.textContent='同步日期范围';btn.dataset.label='同步日期范围'}
+}
 
 function localDateString(d){
   var y=d.getFullYear(),m=String(d.getMonth()+1).padStart(2,'0'),day=String(d.getDate()).padStart(2,'0');
@@ -397,7 +366,7 @@ document.getElementById('singleDate').addEventListener('change',function(){
 
 function anchorRequestedSyncDate(){
   if(!requestedReportDate)return;
-  var requestedCard=document.getElementById('single-sync');
+  var requestedCard=document.getElementById('syncExecution');
   requestedCard.classList.add('sync-target');
   requestedCard.scrollIntoView({behavior:'smooth',block:'start'});
 }
@@ -480,9 +449,9 @@ async function loadStatus(){
     var r=await fetch('/api/status');
     if(r.status===401){location.href='/setup';return}
     var d=await r.json();
-    var dot=document.getElementById('statusDot'),txt=document.getElementById('statusText'),dtl=document.getElementById('statusDetail');
-    if(d.token_status==='active'){dot.className='status-dot ok';txt.textContent='已连接';dtl.textContent=(d.last_sync?'上次同步: '+d.last_sync:'尚未同步')}
-    else{dot.className='status-dot';txt.textContent='未连接';dtl.textContent=''}
+    var dot=document.getElementById('statusDot'),txt=document.getElementById('statusText'),dtl=document.getElementById('statusDetail'),oneliner=document.getElementById('statusOneLiner');
+    if(d.token_status==='active'){dot.className='status-dot ok';txt.textContent='已连接';dtl.textContent=(d.last_sync?'上次同步: '+d.last_sync:'尚未同步');oneliner.textContent='已连接 · '+(d.last_sync||'尚未同步')}
+    else{dot.className='status-dot';txt.textContent='未连接';dtl.textContent='';oneliner.textContent='未连接，请检查绑定'}
   }catch(e){}
 }
 
@@ -624,28 +593,29 @@ async function submitSync(btn,body){
   }
 }
 
-function doSingleSync(){
-  var syncDate=document.getElementById('singleDate').value;
-  if(!syncDate){showSyncError('请选择单日同步日期');return}
-  submitSync(document.getElementById('singleSyncBtn'),{
-    mode:'single',date:syncDate,force:document.getElementById('singleForce').checked
-  });
-}
-
-function doBatchSync(){
-  var fromDate=document.getElementById('batchFromDate').value,toDate=document.getElementById('batchToDate').value;
-  if(!fromDate||!toDate){showSyncError('请选择批量同步的开始和结束日期');return}
-  if(fromDate>toDate){showSyncError('开始日期不能晚于结束日期');return}
-  submitSync(document.getElementById('batchSyncBtn'),{
-    mode:'batch',from_date:fromDate,to_date:toDate,force:document.getElementById('batchForce').checked
-  });
+function doSync(){
+  var mode=document.querySelector('.sync-mode-btn.active').dataset.mode||'single';
+  if(mode==='single'){
+    var syncDate=document.getElementById('singleDate').value;
+    if(!syncDate){showSyncError('请选择单日同步日期');return}
+    submitSync(document.getElementById('syncBtn'),{
+      mode:'single',date:syncDate,force:document.getElementById('forceSync').checked
+    });
+  }else{
+    var fromDate=document.getElementById('batchFromDate').value,toDate=document.getElementById('batchToDate').value;
+    if(!fromDate||!toDate){showSyncError('请选择批量同步的开始和结束日期');return}
+    if(fromDate>toDate){showSyncError('开始日期不能晚于结束日期');return}
+    submitSync(document.getElementById('syncBtn'),{
+      mode:'batch',from_date:fromDate,to_date:toDate,force:document.getElementById('forceSync').checked
+    });
+  }
 }
 
 loadSyncCalendar();
 updateSingleDateUI();
 loadStatus();
 if(requestedReportDate){
-  var requestedCard=document.getElementById('single-sync');
+  var requestedCard=document.getElementById('syncExecution');
   requestedCard.classList.add('sync-target');
 }
 try{

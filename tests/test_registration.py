@@ -130,6 +130,29 @@ def test_user_manager_registers_hashed_account_and_authenticates(tmp_path):
         manager.register_account("另一个昵称", "runner@example.com", "another-password")
 
 
+def test_user_manager_change_password_requires_valid_current_password(tmp_path):
+    manager = UserManager(str(tmp_path))
+    user = manager.register_account("跑者", "runner@example.com", "safe-password")
+
+    assert manager.change_password(
+        user.api_key, "wrong-password", "new-password"
+    ) is None
+    assert manager.authenticate("runner@example.com", "safe-password") == user
+
+    updated = manager.change_password(
+        user.api_key, "safe-password", "new-password"
+    )
+    assert updated == user
+    assert manager.authenticate("runner@example.com", "safe-password") is None
+    assert manager.authenticate("runner@example.com", "new-password") == user
+
+    stored = json.loads(
+        (tmp_path / "users" / f"{user.api_key}.json").read_text(encoding="utf-8")
+    )
+    assert verify_password("new-password", stored["password_hash"]) is True
+    assert verify_password("safe-password", stored["password_hash"]) is False
+
+
 def test_legacy_user_record_has_no_login_account():
     record = UserRecord.from_dict({
         "api_key": "rd_legacy",

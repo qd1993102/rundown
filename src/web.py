@@ -11,6 +11,7 @@ import hashlib
 import json
 import logging
 import os
+import tempfile
 import re
 import secrets
 from dataclasses import dataclass
@@ -37,6 +38,7 @@ from .invitations import InvitationError, InvitationStore
 from .local_files import LocalPersistenceError, atomic_write_private
 from .main import ProviderAuthenticationError, _do_daily_sync, _do_data_sync
 from .memory import MemoryStore, MemoryType, build_memory_file, get_daily_activities
+from .share_card import generate_daily_share_image, generate_weekly_share_image
 from .resource_lifecycle import close_runtime_resources
 from .report_readiness import (
     DailyReportReadinessError,
@@ -60,6 +62,7 @@ _COOKIE_NAME = "neurun_key"
 _COOKIE_MAX_AGE = 30 * 24 * 3600  # 固定 30 天
 _TEMPLATE_DIR = Path(__file__).parent.parent / "web" / "templates"
 _ASSET_DIR = Path(__file__).parent.parent / "web" / "assets"
+_STATIC_DIR = Path(__file__).parent.parent / "web" / "static"
 _CONTACT_QR_FILENAME = "contact-wechat.jpg"
 _CONTACT_WIDGET_MARKER = 'data-neurun-contact-widget=""'
 _EMAIL_PATTERN = re.compile(r"^[^\s@]+@[^\s@]+\.[^\s@]+$")
@@ -281,6 +284,15 @@ def _registration_error(nickname: str, email: str, password: str) -> str | None:
         return "昵称长度须为 2–32 个字符"
     if not _EMAIL_PATTERN.fullmatch(email.strip()):
         return "请输入有效的邮箱地址"
+    if len(password) < 8:
+        return "密码至少需要 8 个字符"
+    if len(password) > 128:
+        return "密码不能超过 128 个字符"
+    return None
+
+
+def _password_error(password: str) -> str | None:
+    """校验密码强度，返回面向用户的错误信息（与注册口径一致）。"""
     if len(password) < 8:
         return "密码至少需要 8 个字符"
     if len(password) > 128:
@@ -604,6 +616,19 @@ def register_web_routes(server, user_manager: UserManager, config: Config):
             },
             headers=headers,
         )
+
+
+    @server.custom_route("/static/{path:path}", methods=["GET"])
+    async def static_files(request: Request) -> Response:
+        """Serve static CSS/JS files from web/static/."""
+        path = request.path_params.get("path", "")
+        safe = os.path.normpath(path).lstrip("/")
+        if ".." in safe or safe.startswith("/"):
+            return Response(status_code=404)
+        file_path = _STATIC_DIR / safe
+        if not file_path.is_file():
+            return Response(status_code=404)
+        return FileResponse(str(file_path))
 
     @server.custom_route("/contact/qr", methods=["GET"])
     async def contact_qr(request: Request) -> Response:
@@ -1279,6 +1304,34 @@ def register_web_routes(server, user_manager: UserManager, config: Config):
         _set_session_cookie(response, request, user.api_key)
         return response
 
+    @server.custom_route("/api/password", methods=["POST"])
+    async def api_change_password(request: Request) -> Response:
+        """修改当前登录用户的应用登录密码。"""
+        api_key = _get_api_key(request)
+        user = user_manager.get(api_key) if api_key else None
+        if not user:
+            return JSONResponse({"status": "error", "message": "请先登录应用账号"}, status_code=401)
+        if not user.has_account:
+            return JSONResponse({"status": "error", "message": "该账号未设置登录密码"}, status_code=400)
+        try:
+            body = await request.json()
+            current_password = str(body.get("current_password", ""))
+            new_password = str(body.get("new_password", ""))
+        except Exception:
+            return JSONResponse({"status": "error", "message": "请求体必须是有效 JSON"}, status_code=400)
+
+        password_error = _password_error(new_password)
+        if password_error:
+            return JSONResponse({"status": "error", "message": password_error}, status_code=400)
+        if current_password == new_password:
+            return JSONResponse({"status": "error", "message": "新密码不能与当前密码相同"}, status_code=400)
+
+        updated = user_manager.change_password(api_key, current_password, new_password)
+        if updated is None:
+            return JSONResponse({"status": "error", "message": "当前密码错误"}, status_code=400)
+        logger.info("用户修改应用密码: key=%s", api_key)
+        return JSONResponse({"status": "ok", "message": "密码已修改"})
+
     @server.custom_route("/api/setup/capabilities", methods=["GET"])
     async def api_setup_capabilities(request: Request) -> Response:
         """返回绑定前可安全公开的服务端能力。"""
@@ -1697,6 +1750,15 @@ def register_web_routes(server, user_manager: UserManager, config: Config):
                 logger.warning(
                     "无法更新用户最后同步日期: error_type=%s",
                     type(exc).__name__,
+                )
+            # 同步后刷新 pace zones
+            try:
+                ts = training_service(api_key)
+                ts.refresh_pace_zones_after_sync()
+            except Exception as pz_exc:
+                logger.warning(
+                    "同步后 pace zones 刷新失败: error_type=%s",
+                    type(pz_exc).__name__,
                 )
             task_store.mark_succeeded(task_id, result=result)
 
@@ -2207,6 +2269,109 @@ def register_web_routes(server, user_manager: UserManager, config: Config):
             "report_finality": result["report_finality"],
             "data_as_of": result["data_as_of"],
         })
+
+    @server.custom_route("/api/reports/share-card/daily", methods=["GET"])
+    async def api_share_card_daily(request: Request) -> Response:
+        api_key = _get_api_key(request)
+        user = user_manager.get(api_key) if api_key else None
+        if not user or user.token_status != "active":
+            return JSONResponse({"status": "error", "message": "请先绑定数据源"}, status_code=401)
+
+        raw_date = request.query_params.get("date", "")
+        try:
+            target = date.fromisoformat(raw_date) if raw_date else date.today()
+        except ValueError:
+            return JSONResponse(
+                {"status": "error", "message": "date 格式无效，应为 YYYY-MM-DD"},
+                status_code=400,
+            )
+
+        theme = request.query_params.get("theme", "sport")
+        if theme not in {"fresh", "sport", "dark"}:
+            theme = "sport"
+
+        user_cfg = config.for_user(api_key)
+        user_manager.ensure_dirs(api_key)
+        memory_store = MemoryStore(user_cfg.memory_dir)
+        mem = memory_store.get(str(target))
+        if mem is None:
+            return JSONResponse(
+                {"status": "error", "message": f"{target} 日报不存在，请先生成"},
+                status_code=404,
+            )
+
+        fd, tmp_path = tempfile.mkstemp(suffix=".png")
+        os.close(fd)
+        try:
+            png_path = generate_daily_share_image(mem.front_matter, tmp_path, theme=theme)
+        except Exception as exc:
+            Path(tmp_path).unlink(missing_ok=True)
+            logger.error("分享卡生成失败: %s", exc)
+            return JSONResponse({"status": "error", "message": "图片生成失败"}, status_code=500)
+
+        if png_path is None:
+            Path(tmp_path).unlink(missing_ok=True)
+            return JSONResponse(
+                {"status": "error", "message": "当日无可分享的跑步活动"},
+                status_code=404,
+            )
+        return FileResponse(
+            png_path,
+            media_type="image/png",
+            headers={"Content-Disposition": f"attachment; filename=neurun-daily-{target}.png"},
+        )
+
+    @server.custom_route("/api/reports/share-card/weekly", methods=["GET"])
+    async def api_share_card_weekly(request: Request) -> Response:
+        api_key = _get_api_key(request)
+        user = user_manager.get(api_key) if api_key else None
+        if not user or user.token_status != "active":
+            return JSONResponse({"status": "error", "message": "请先绑定数据源"}, status_code=401)
+
+        raw_date = request.query_params.get("date", "")
+        try:
+            target = date.fromisoformat(raw_date) if raw_date else date.today()
+        except ValueError:
+            return JSONResponse(
+                {"status": "error", "message": "date 格式无效，应为 YYYY-MM-DD"},
+                status_code=400,
+            )
+
+        theme = request.query_params.get("theme", "sport")
+        if theme not in {"fresh", "sport", "dark"}:
+            theme = "sport"
+
+        try:
+            service = training_service(api_key)
+            review = service.review_week(target=target, include_ai=False)
+        except TrainingError as exc:
+            return training_error(exc)
+        except Exception as exc:
+            logger.error("周复盘数据获取失败: %s", exc)
+            return JSONResponse({"status": "error", "message": "周复盘数据获取失败"}, status_code=500)
+
+        fd, tmp_path = tempfile.mkstemp(suffix=".png")
+        os.close(fd)
+        try:
+            png_path = generate_weekly_share_image(review, tmp_path, theme=theme)
+        except Exception as exc:
+            Path(tmp_path).unlink(missing_ok=True)
+            logger.error("周复盘分享卡生成失败: %s", exc)
+            return JSONResponse({"status": "error", "message": "图片生成失败"}, status_code=500)
+
+        if png_path is None:
+            Path(tmp_path).unlink(missing_ok=True)
+            return JSONResponse(
+                {"status": "error", "message": "该周无跑步活动，不生成分享卡"},
+                status_code=404,
+            )
+
+        week_id = review.get("week_id", str(target))
+        return FileResponse(
+            png_path,
+            media_type="image/png",
+            headers={"Content-Disposition": f"attachment; filename=neurun-weekly-{week_id}.png"},
+        )
 
     @server.custom_route("/api/profile", methods=["GET"])
     async def api_profile_get(request: Request) -> Response:

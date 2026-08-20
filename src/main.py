@@ -1721,7 +1721,7 @@ def cmd_invite(args: argparse.Namespace) -> None:
         raise SystemExit(2) from exc
 
 
-def cmd_serve() -> None:
+def cmd_serve(args: argparse.Namespace | None = None) -> None:
     """SAE / VPS 入口：启动 Web 应用服务（含 MCP Server SSE）。
 
     环境变量驱动：
@@ -1881,6 +1881,9 @@ def build_parser() -> argparse.ArgumentParser:
     p_mcp.add_argument("--host", help="监听地址 (环境变量: MCP_HOST)")
     p_mcp.add_argument("--port", type=int, help="监听端口 (环境变量: MCP_PORT)")
 
+    # ── serve（Web 应用服务）──────────
+    sub.add_parser("serve", help="启动 Web 应用服务（含 MCP Server SSE）")
+
     # ── invite（服务器本地管理员命令）──────────
     p_invite = sub.add_parser("invite", help="管理 Web 注册邀请码")
     p_invite_sub = p_invite.add_subparsers(dest="invite_subcommand", help="子命令")
@@ -1921,6 +1924,7 @@ COMMAND_HANDLERS = {
     "status": cmd_status,
     "mcp": cmd_mcp,
     "invite": cmd_invite,
+    "serve": cmd_serve,
 }
 
 

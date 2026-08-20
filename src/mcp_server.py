@@ -573,6 +573,63 @@ def create_server(
         return f"✅ PNG 已生成: {png_path} (theme={theme})"
 
     @mcp.tool()
+    def generate_share_card(
+        card_type: str = "daily",
+        target_date: str = "",
+        theme: str = "sport",
+    ) -> str:
+        """生成适合分享的训练卡片 PNG 图片。
+        card_type: daily(日报分享卡) | weekly(周复盘分享卡)。
+        theme: sport(运动橙) | fresh(清新绿) | dark(暗黑)。
+        卡片不包含睡眠、HRV、恢复评分等隐私数据，适合发朋友圈、微信群、小红书等。
+        用户说"生成分享卡"、"分享卡片"、"打卡"时调用。"""
+        if target_date:
+            d = date.fromisoformat(target_date)
+        else:
+            d = date.today()
+
+        if card_type not in {"daily", "weekly"}:
+            return "card_type 必须是 daily 或 weekly"
+
+        if theme not in {"fresh", "sport", "dark"}:
+            theme = "sport"
+
+        from .share_card import generate_daily_share_image, generate_weekly_share_image
+
+        if card_type == "daily":
+            mem = memory_store.get(str(d))
+            if mem is None:
+                try:
+                    mem = generate_local_report(d, "complete")
+                except DailyReportReadinessError as exc:
+                    raise RuntimeError(json.dumps(exc.to_dict(), ensure_ascii=False)) from exc
+            out = f"output/share-daily-{d}.png"
+            ensure_private_dir(Path(out).parent)
+            png_path = generate_daily_share_image(mem.front_matter, out, theme=theme)
+            if png_path is None:
+                return f"{d} 无可分享的跑步活动，不生成分享卡"
+            restrict_private_file(png_path)
+            return f"✅ 日报分享卡已生成: {png_path} (theme={theme})"
+        else:
+            try:
+                from .training import TrainingService
+                from .config import Config
+                from .storage import Storage
+                config = Config()
+                storage = Storage(config=config)
+                service = TrainingService(storage=storage)
+                review = service.review_week(target=d, include_ai=False)
+            except Exception as exc:
+                return f"生成周复盘数据失败: {exc}"
+            out = f"output/share-weekly-{d}.png"
+            ensure_private_dir(Path(out).parent)
+            png_path = generate_weekly_share_image(review, out, theme=theme)
+            if png_path is None:
+                return f"该周无跑步活动，不生成分享卡"
+            restrict_private_file(png_path)
+            return f"✅ 周复盘分享卡已生成: {png_path} (theme={theme})"
+
+    @mcp.tool()
     def get_training_advice() -> str:
         """基于最新日报生成训练建议。"""
         mem = memory_store.get_latest("daily_report")

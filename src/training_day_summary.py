@@ -345,11 +345,36 @@ class TrainingDaySummaryBuilder:
         for session in result.get("sessions") or []:
             if not isinstance(session, dict) or not session.get("is_running"):
                 continue
+            # Quality session volume gate: too short/low distance cannot be a genuine
+            # quality session (tempo/interval/fartlek) even if pace suggests intensity.
+            session_distance = _number(session.get("distance_km")) or 0.0
+            session_duration = _number(session.get("duration_minutes")) or 0.0
+            # Short session with repeated work/recovery structure (e.g., 400m x N intervals)
+            # is still a genuine quality session even if total volume is low.
+            # Interval sessions are always genuine quality sessions regardless of volume.
+            # For other types, apply volume gate unless repeated structure is detected.
+            analysis = session.get("analysis") or {}
+            primary_type = str(analysis.get("primary_type") or "unknown")
+            if primary_type != "interval":
+                classification = session.get("structure_classification") or {}
+                has_repeated_structure = (
+                    (classification.get("alternations") or 0) >= 2
+                    or len(classification.get("work_recovery_groups") or []) >= 2
+                )
+                if session_distance < 3.0 and session_duration < 15.0 and not has_repeated_structure:
+                    quality_gaps.append({
+                        "activity_id": str(session.get("activity_id") or ""),
+                        "reason": "insufficient_volume",
+                        "distance_km": session_distance,
+                        "duration_minutes": session_duration,
+                    })
+                    continue
+
+            classification = session.get("structure_classification") or {}
             analyzed_sessions += 1
             analysis = session.get("analysis") or {}
             primary_type = str(analysis.get("primary_type") or "unknown")
             primary_confidence = _number(analysis.get("confidence")) or 0.0
-            classification = session.get("structure_classification") or {}
             structure_type = str(classification.get("structure_type") or "unknown")
             structure_confidence = _number(classification.get("confidence")) or 0.0
             quantity_reliable = bool(classification.get("quantity_reliable", True))
