@@ -1764,7 +1764,13 @@ def cmd_serve(args: argparse.Namespace | None = None) -> None:
 
 
 def _restore_all_users(user_manager) -> None:
-    """容器启动时从备份恢复所有用户的 SQLite。"""
+    """容器启动时按需从备份恢复用户 SQLite，避免每次启动全量回滚：
+
+    - data.db 不存在且备份存在 → 从备份恢复
+    - data.db 为空或损坏（PRAGMA quick_check 非 ok）且备份存在 → 从备份恢复
+    - 备份比 data.db 新 → 从备份恢复
+    其余情况跳过，保留上次同步之后的本地写入，启动耗时不再随用户数线性增长。
+    """
     from .storage import Storage
     from .config import Config
 
@@ -1774,17 +1780,55 @@ def _restore_all_users(user_manager) -> None:
     dummy_config = Config()
     for user in users:
         try:
-            backup_path = user_manager.get_backup_path(user.api_key)
-            user_db_path = user_manager.get_db_path(user.api_key)
+            backup_path = Path(user_manager.get_backup_path(user.api_key))
+            if not backup_path.exists():
+                logger.info("备份不存在，跳过恢复: %s", backup_path)
+                continue
+
+            user_db_path = Path(user_manager.get_db_path(user.api_key))
+            reason = _restore_reason(user_db_path, backup_path)
+            if reason is None:
+                continue
 
             # 临时 Storage 实例用于恢复
             class _TempCfg:
-                db_path = user_db_path
+                db_path = str(user_db_path)
             storage = Storage(_TempCfg())  # type: ignore[arg-type]
-            if storage.restore_from(backup_path):
-                logger.info("用户 %s: 已从备份恢复数据库", user.api_key)
+            if storage.restore_from(str(backup_path)):
+                logger.info("用户 %s: %s，已从备份恢复数据库", user.api_key, reason)
         except Exception as exc:
             logger.warning("用户 %s: 恢复失败 (%s)", user.api_key, exc)
+
+
+def _restore_reason(db_path: Path, backup_path: Path) -> str | None:
+    """判断是否需要用备份覆盖 data.db；无需恢复时返回 None。"""
+    if not db_path.exists():
+        return "data.db 不存在"
+    try:
+        if db_path.stat().st_size == 0:
+            return "data.db 为空"
+        if backup_path.stat().st_mtime > db_path.stat().st_mtime:
+            return "备份比 data.db 新"
+        if not _db_is_healthy(db_path):
+            return "data.db 损坏"
+    except OSError:
+        return "无法读取 data.db 状态"
+    return None
+
+
+def _db_is_healthy(db_path: Path) -> bool:
+    """只读连接 + PRAGMA quick_check 判断 SQLite 文件是否可正常读取。"""
+    import sqlite3
+
+    try:
+        conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+        try:
+            row = conn.execute("PRAGMA quick_check").fetchone()
+            return bool(row) and row[0] == "ok"
+        finally:
+            conn.close()
+    except Exception:
+        return False
 
 
 # ═══════════════════════════════════════════════════════════════

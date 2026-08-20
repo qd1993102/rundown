@@ -1,6 +1,7 @@
 """测试 CLI/Web 共用的同步与日报核心流程。"""
 
 from datetime import date
+from pathlib import Path
 from types import SimpleNamespace
 from unittest import mock
 
@@ -561,3 +562,88 @@ def test_invite_create_reports_written_file(tmp_path, monkeypatch, capsys):
     assert "已写入文件" in captured.err
     assert "invite-codes.json" in captured.err
     assert target.exists(), "邀请码应写入解析出的文件"
+
+
+def _write_sqlite_label(path, label):
+    import sqlite3
+
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    conn = sqlite3.connect(path)
+    try:
+        conn.execute("CREATE TABLE IF NOT EXISTS t (v TEXT)")
+        conn.execute("INSERT INTO t (v) VALUES (?)", (label,))
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def _read_sqlite_label(path):
+    import sqlite3
+
+    conn = sqlite3.connect(path)
+    try:
+        return conn.execute("SELECT v FROM t ORDER BY rowid DESC LIMIT 1").fetchone()[0]
+    finally:
+        conn.close()
+
+
+def test_restore_all_users_only_restores_when_needed(tmp_path):
+    """启动恢复只在 data.db 缺失/为空/损坏或备份更新时进行，不每次全量回滚。"""
+    import os
+
+    import src.main as main
+
+    data_dir = tmp_path / "data"
+    backup_dir = data_dir / "backup"
+    backup_dir.mkdir(parents=True)
+
+    healthy = "rd_healthy"      # data.db 健康且比备份新 → 不恢复
+    missing = "rd_missing"      # 无 data.db，有备份 → 恢复
+    corrupt = "rd_corrupt"      # data.db 损坏，有备份 → 恢复
+    empty = "rd_empty"          # data.db 为空文件，有备份 → 恢复
+    stale = "rd_stale"          # 备份比 data.db 新 → 恢复
+    no_backup = "rd_nobackup"   # 无备份 → 跳过
+
+    _write_sqlite_label(data_dir / healthy / "data.db", "live")
+    _write_sqlite_label(backup_dir / f"{healthy}.db", "backup")
+    os.utime(backup_dir / f"{healthy}.db", (1, 1))
+
+    _write_sqlite_label(backup_dir / f"{missing}.db", "backup-missing")
+
+    (data_dir / corrupt).mkdir(parents=True)
+    (data_dir / corrupt / "data.db").write_bytes(b"this is not a sqlite database")
+    _write_sqlite_label(backup_dir / f"{corrupt}.db", "backup-corrupt")
+
+    (data_dir / empty).mkdir(parents=True)
+    (data_dir / empty / "data.db").write_bytes(b"")
+    _write_sqlite_label(backup_dir / f"{empty}.db", "backup-empty")
+
+    _write_sqlite_label(data_dir / stale / "data.db", "stale-live")
+    _write_sqlite_label(backup_dir / f"{stale}.db", "backup-new")
+    os.utime(data_dir / stale / "data.db", (1, 1))
+
+    _write_sqlite_label(data_dir / no_backup / "data.db", "live-nobackup")
+
+    class FakeUserManager:
+        def list_all(self):
+            return [
+                SimpleNamespace(api_key=k) for k in (
+                    healthy, missing, corrupt, empty, stale, no_backup,
+                )
+            ]
+
+        def get_backup_path(self, api_key):
+            return str(backup_dir / f"{api_key}.db")
+
+        def get_db_path(self, api_key):
+            return str(data_dir / api_key / "data.db")
+
+    main._restore_all_users(FakeUserManager())
+
+    assert _read_sqlite_label(data_dir / healthy / "data.db") == "live"
+    assert _read_sqlite_label(data_dir / missing / "data.db") == "backup-missing"
+    assert _read_sqlite_label(data_dir / corrupt / "data.db") == "backup-corrupt"
+    assert _read_sqlite_label(data_dir / empty / "data.db") == "backup-empty"
+    assert _read_sqlite_label(data_dir / stale / "data.db") == "backup-new"
+    assert _read_sqlite_label(data_dir / no_backup / "data.db") == "live-nobackup"
