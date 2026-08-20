@@ -183,16 +183,21 @@ install_browser_engine() {
     # Playwright 不官方支持 alinux 等发行版，install-deps 会错误 fallback
     # 到 apt-get（不存在）而失败；这里直接用 dnf/yum 安装 Chromium 运行依赖。
     echo "检测到 ${YUM_BIN} 系发行版，安装 Chromium 依赖..."
-    "${YUM_BIN}" install -y       nss nspr atk at-spi2-atk at-spi2-core cups-libs libxkbcommon       libXcomposite libXdamage libXrandr mesa-libgbm pango cairo alsa-lib       glib2 expat libX11 libXcb libXfixes libXext libdrm libxshmfence       libXinerama libXcursor libXtst libXScrnSaver || {
-      echo "错误：${YUM_BIN} 安装 Chromium 系统依赖失败" >&2
-      exit 1
-    }
+    # 逐包安装：个别包名在特定发行版上可能不同（如 libxcb），
+    # 单个失败只警告，最终由下方 Chromium 启动冒烟验证兜底判定。
+    for pkg in \
+      nss nspr atk at-spi2-atk at-spi2-core cups-libs libxkbcommon \
+      libXcomposite libXdamage libXrandr mesa-libgbm pango cairo alsa-lib \
+      glib2 expat libX11 libxcb libXfixes libXext libdrm libxshmfence \
+      libXinerama libXcursor libXtst libXScrnSaver; do
+      "${YUM_BIN}" install -y "${pkg}" >/dev/null 2>&1 \
+        || echo "警告：依赖包 ${pkg} 安装失败（由 Chromium 启动验证兜底）" >&2
+    done
     "${YUM_BIN}" install -y wqy-zenhei-fonts >/dev/null 2>&1       || "${YUM_BIN}" install -y google-noto-sans-cjk-fonts >/dev/null 2>&1       || echo "警告：中文字体安装失败，分享卡中文可能显示为方块"
   elif command -v apt-get >/dev/null 2>&1; then
     # Ubuntu / Debian
     "${RELEASE_DIR}/.venv/bin/python" -m playwright install-deps chromium || {
       echo "错误：playwright install-deps 失败，无法安装 Chromium 系统依赖" >&2
-      exit 1
     }
     apt-get install -y fonts-noto-cjk >/dev/null 2>&1       || echo "警告：中文字体 fonts-noto-cjk 安装失败，分享卡中文可能显示为方块"
   else

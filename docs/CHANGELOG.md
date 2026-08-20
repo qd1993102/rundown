@@ -25,7 +25,7 @@
 - **关联文档**: [操作手册 — ECS 用户数据本地还原](operations/ecs-user-data-restore.md)
 
 ### Changed
-- **改动描述**: 修复 ECS 分享卡图片生成失败（续）：`deploy-ecs.sh` 对 Alibaba Cloud Linux 等 dnf/yum 系发行版不再使用 Playwright `install-deps`（该命令不识别 alinux 会错误 fallback 到 apt-get 而失败），改为直接 dnf/yum 安装 Chromium 运行依赖与中文字体，并增加 Chromium 启动冒烟验证，部署时即暴露缺失系统库。
+- **改动描述**: 修复 ECS 分享卡图片生成失败（续）：`deploy-ecs.sh` 对 Alibaba Cloud Linux 等 dnf/yum 系发行版不再使用 Playwright `install-deps`（该命令不识别 alinux 会错误 fallback 到 apt-get 而失败），改为直接 dnf/yum 安装 Chromium 运行依赖与中文字体，并增加 Chromium 启动冒烟验证，部署时即暴露缺失系统库；依赖包改为逐包安装（修正 Alibaba Cloud Linux 4 上 `libXcb` → `libxcb` 的包名差异，个别包名不一致不再卡死部署，由冒烟验证兜底）。
 - **影响范围**: `scripts/deploy-ecs.sh`、`README.md`
 - **关联文档**: [README 部署说明](../README.md)
 
