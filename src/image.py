@@ -146,6 +146,8 @@ def _measure_content_height_chrome(
     等待 document.fonts.ready 后再取值，并配合 --virtual-time-budget
     推进虚拟时间，避免字体未应用时测量偏小导致截图截断。
     """
+    import subprocess
+
     try:
         html = html_file.read_text(encoding="utf-8")
         script = (
@@ -180,6 +182,7 @@ def _measure_content_height_chrome(
         return None
     measured = int(m.group(1))
     return measured if measured > 0 else None
+
 
 
 def render_image(

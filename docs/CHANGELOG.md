@@ -30,7 +30,7 @@
 - **影响范围**: `src/training_day_summary.py`（prepare_daily_analysis 新增 volume gate）、`tests/test_training_day_summary.py`（新增两个测试）
 - **关联文档**: [训练日摘要设计](design/summary-extraction.md)
 
-- **改动描述**: 日报分享卡和周复盘分享卡只展示跑步活动数据，不再包含骑车等非跑步运动；日报分享卡 hero 区域只保留距离（时长和配速移至 stats 区域），移除 stats 下方的训练效果（有氧/无氧）与配速节奏（均速/最快）独立区块；周复盘分享卡 hero 区域只保留跑量，stats 区域改为展示「最长单次 / 平均配速 / 跑步天数」；分享卡 PNG 高度改为按内容自适应（Playwright 截图前等待字体加载，Chrome 路径等待 fonts.ready 后测量内容高度并预留安全余量再截图），日报/周报各自裁切，避免固定高度留白或字体未就绪导致底部内容截断。
+- **改动描述**: 日报分享卡和周复盘分享卡只展示跑步活动数据，不再包含骑车等非跑步运动；日报分享卡 hero 区域只保留距离（时长和配速移至 stats 区域），移除 stats 下方的训练效果（有氧/无氧）与配速节奏（均速/最快）独立区块；周复盘分享卡 hero 区域只保留跑量，stats 区域改为展示「最长单次 / 平均配速 / 跑步天数」；分享卡 PNG 高度改为按内容自适应（Playwright 截图前等待字体加载，Chrome 路径等待 fonts.ready 后测量内容高度并预留安全余量再截图），日报/周报各自裁切，避免固定高度留白或字体未就绪导致底部内容截断。修复 Chrome 测量函数缺少 `import subprocess` 导致测量失败、回退默认视口高度（600px）使日报/周报图片过小的问题。
 - **影响范围**: `src/share_card.py`（新增 `_is_running_activity` 过滤函数、日报 hero 移除配速、周报使用 running-only 口径）、`src/training.py`（`summarize()` 新增 `running_duration_minutes` 字段）、`docs/product/share-card.md`（产品文档同步口径说明）
 - **关联文档**: [产品方案 — 分享卡](product/share-card.md)
 
