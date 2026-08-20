@@ -177,22 +177,26 @@ install_browser_engine() {
   BROWSERS_DIR="${BROWSERS_DIR:-/opt/neurun-browsers}"
   install -d -m 0755 "${BROWSERS_DIR}"
 
-  if command -v apt-get >/dev/null 2>&1; then
+  YUM_BIN="$(command -v dnf || command -v yum || true)"
+  if [ -n "${YUM_BIN}" ]; then
+    # CentOS / RHEL / Alibaba Cloud Linux（dnf/yum 系）。
+    # Playwright 不官方支持 alinux 等发行版，install-deps 会错误 fallback
+    # 到 apt-get（不存在）而失败；这里直接用 dnf/yum 安装 Chromium 运行依赖。
+    echo "检测到 ${YUM_BIN} 系发行版，安装 Chromium 依赖..."
+    "${YUM_BIN}" install -y       nss nspr atk at-spi2-atk at-spi2-core cups-libs libxkbcommon       libXcomposite libXdamage libXrandr mesa-libgbm pango cairo alsa-lib       glib2 expat libX11 libXcb libXfixes libXext libdrm libxshmfence       libXinerama libXcursor libXtst libXScrnSaver || {
+      echo "错误：${YUM_BIN} 安装 Chromium 系统依赖失败" >&2
+      exit 1
+    }
+    "${YUM_BIN}" install -y wqy-zenhei-fonts >/dev/null 2>&1       || "${YUM_BIN}" install -y google-noto-sans-cjk-fonts >/dev/null 2>&1       || echo "警告：中文字体安装失败，分享卡中文可能显示为方块"
+  elif command -v apt-get >/dev/null 2>&1; then
     # Ubuntu / Debian
     "${RELEASE_DIR}/.venv/bin/python" -m playwright install-deps chromium || {
       echo "错误：playwright install-deps 失败，无法安装 Chromium 系统依赖" >&2
       exit 1
     }
     apt-get install -y fonts-noto-cjk >/dev/null 2>&1       || echo "警告：中文字体 fonts-noto-cjk 安装失败，分享卡中文可能显示为方块"
-  elif command -v yum >/dev/null 2>&1; then
-    # CentOS / RHEL / Alibaba Cloud Linux
-    "${RELEASE_DIR}/.venv/bin/python" -m playwright install-deps chromium || {
-      echo "错误：playwright install-deps 失败，无法安装 Chromium 系统依赖" >&2
-      exit 1
-    }
-    yum install -y wqy-zenhei-fonts >/dev/null 2>&1       || yum install -y google-noto-sans-cjk-fonts >/dev/null 2>&1       || echo "警告：中文字体安装失败，分享卡中文可能显示为方块"
   else
-    echo "警告：未知发行版，跳过系统依赖与中文字体安装；请手动执行 playwright install-deps" >&2
+    echo "警告：未知发行版，跳过系统依赖与中文字体安装；请手动安装 Chromium 运行依赖" >&2
   fi
 
   if PLAYWRIGHT_BROWSERS_PATH="${BROWSERS_DIR}"      "${RELEASE_DIR}/.venv/bin/python" -m playwright install chromium
@@ -202,6 +206,21 @@ install_browser_engine() {
     echo "官方 CDN 下载 Chromium 失败，回退 npmmirror 镜像..." >&2
     PLAYWRIGHT_DOWNLOAD_HOST=https://npmmirror.com/mirrors/playwright       PLAYWRIGHT_BROWSERS_PATH="${BROWSERS_DIR}"       "${RELEASE_DIR}/.venv/bin/python" -m playwright install chromium
   fi
+
+  # 冒烟验证：确认 Chromium 能启动，缺失的系统库在此暴露
+  echo "验证 Chromium 启动..."
+  if ! PLAYWRIGHT_BROWSERS_PATH="${BROWSERS_DIR}" \
+     "${RELEASE_DIR}/.venv/bin/python" -c \
+     "from playwright.sync_api import sync_playwright
+p = sync_playwright().start()
+b = p.chromium.launch()
+b.close()
+p.stop()"
+  then
+    echo "错误：Chromium 启动验证失败，请检查缺失的系统库：ldd \${BROWSERS_DIR}/chromium*/chrome-headless-shell* 2>/dev/null | grep 'not found'" >&2
+    exit 1
+  fi
+  echo "Chromium 启动验证通过"
 
   # 确保 neurun 运行用户可读可执行浏览器目录
   chmod -R a+rX "${BROWSERS_DIR}" 2>/dev/null || true
