@@ -685,10 +685,15 @@ docker compose exec neurun neurun invite create --output json
 才允许切换 `neurun-current` 并重启服务。Git 下载
 失败、暂存区不完整、Python 版本不合格或依赖安装失败时，脚本必须在修改当前软链接和
 调用 `systemctl restart` 之前退出，不删除、停止或覆盖旧应用。新版本重启后若未通过
-`/healthz` 检查，有旧 release 时必须恢复软链接并重启旧版本。每个 release 写入不可变 Commit
+`/healthz` 检查，有旧 release 时必须恢复软链接并重启旧版本。发布脚本在重启后轮询 `/healthz`
+等待就绪，默认最多 60 秒（环境变量 `HEALTH_CHECK_ATTEMPTS` 可调）；健康检查窗口必须大于
+实际启动耗时，否则服务已就绪也会被误判为失败并触发回滚。每个 release 写入不可变 Commit
 标记，systemd 通过 `NEURUN_RELEASE_SHA` 注入运行版本；`/healthz` 返回该 SHA，发布成功必须同时
 满足存活和版本完全一致，不能由旧进程或另一并发发布的响应代替。发布流程使用全局非阻塞锁，
 同一时刻只允许一个任务构建、切换和验证。
+Web 进程启动时只在 data.db 缺失、为空、损坏（`PRAGMA quick_check` 非 ok）或备份比当前库新时
+才从 `backup/<api_key>.db` 恢复，不每次启动全量回滚所有用户的 SQLite；这样既保留崩溃/损坏后的
+备份兜底，又避免启动时间随用户数线性增长，也避免把上次同步之后的本地数据库写入覆盖掉。
 控制台的启动脚本只需从当前工作目录定位
 `code_deploy_application/scripts/deploy-ecs.sh`；文件不存在时直接返回非零，不得尝试
 `systemctl stop/restart` 或清理任何 release。完整入口示例见 README。

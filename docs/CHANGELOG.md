@@ -42,6 +42,14 @@
 - **影响范围**: `web/templates/sync.html`、`web/templates/profile.html`、`web/templates/training.html`
 - **关联文档**: [前端设计系统](design/frontend-design-system.md)
 
+- **改动描述**: ECS 发布健康检查轮询窗口从固定 20 次（约 20 秒）放宽为默认 60 次（约 60 秒），并新增环境变量 `HEALTH_CHECK_ATTEMPTS` 可调、非正整数时明确报错。应用启动时逐个恢复用户 SQLite 备份、用户较多时启动耗时接近甚至超过 20 秒，旧窗口会在新版本实际就绪前判负并触发回滚，回滚后的旧版本同样超窗，造成"新版本启动失败 / 旧版本已恢复但健康检查仍未通过"的误报。
+- **影响范围**: `scripts/deploy-ecs.sh`、`tests/test_packaging.py`、README、`docs/design/13-sae-deployment.md`
+- **关联文档**: [Bug 记录：部署健康检查窗口短于启动耗时导致误回滚](bugfixes/2026-08-20-deploy-health-check-timeout.md)
+
+- **改动描述**: Web 启动恢复改为按需执行：仅在 data.db 缺失、为空、损坏（`PRAGMA quick_check` 非 ok）或备份比当前库新时才从 `backup/<api_key>.db` 恢复，不再每次启动无条件把备份覆盖回所有用户 SQLite。保留崩溃/损坏后的备份兜底，同时消除启动耗时随用户数线性增长的问题，并避免把上次同步之后的本地数据库写入回滚掉。
+- **影响范围**: `src/main.py`（`_restore_all_users` 按需判断）、`tests/test_main.py`（新增按需恢复测试）、README、`docs/design/13-sae-deployment.md`
+- **关联文档**: [Bug 记录：部署健康检查窗口短于启动耗时导致误回滚](bugfixes/2026-08-20-deploy-health-check-timeout.md)
+
 ### Fixed
 
 - **改动描述**: 修复分享卡多项缺陷：周报分享 modal 背景透明（CSS 变量名不一致）、内容超长被固定高度截断、overflow 全局替换破坏圆角、周报 AI 洞察恒为空、临时文件泄漏、心率区间颜色全为绿色、60'00"/km 边界配速显示为 "—"、强度条百分比溢出、前端下载失败无提示；分享卡截图改为等待字体加载后再测量内容高度（Playwright 等待 `document.fonts.ready`，Chrome 测量后预留 +20px 安全余量），避免底部内容被裁切。

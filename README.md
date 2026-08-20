@@ -245,6 +245,10 @@ exec env \
 release SHA。候选构建失败时，在线 release 保持不变。
 部署脚本生成的 `neurun.service` 由 systemd 直接守护 Python 进程，使用
 `Restart=on-failure` 自动拉起异常退出，并设置 `LimitNOFILE=8192`；该部署不依赖 Docker。
+发布后脚本会轮询 `GET /healthz` 等待新版本就绪，默认最多 60 秒
+（环境变量 `HEALTH_CHECK_ATTEMPTS` 可调）。应用启动时只在 data.db 缺失、为空、损坏或
+备份比当前库新时才从备份恢复，不每次全量回滚用户 SQLite，因此启动耗时不会随用户数线性增长；
+健康检查窗口必须大于实际启动耗时，否则会把已就绪的服务误判为失败并触发回滚。
 
 ### Web 同步页面
 
