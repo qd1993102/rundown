@@ -25,6 +25,10 @@
 - **关联文档**: [操作手册 — ECS 用户数据本地还原](operations/ecs-user-data-restore.md)
 
 ### Changed
+- **改动描述**: 修复 ECS 分享卡图片生成失败（续）：`deploy-ecs.sh` 对 Alibaba Cloud Linux 等 dnf/yum 系发行版不再使用 Playwright `install-deps`（该命令不识别 alinux 会错误 fallback 到 apt-get 而失败），改为直接 dnf/yum 安装 Chromium 运行依赖与中文字体，并增加 Chromium 启动冒烟验证，部署时即暴露缺失系统库。
+- **影响范围**: `scripts/deploy-ecs.sh`、`README.md`
+- **关联文档**: [README 部署说明](../README.md)
+
 - **改动描述**: 修复 ECS 分享卡图片生成失败：`deploy-ecs.sh` 安装 `[image]` extra（playwright 包）、Chromium 系统依赖、中文字体，浏览器装入共享目录 `/opt/neurun-browsers` 并注入 `PLAYWRIGHT_BROWSERS_PATH`（官方 CDN 失败回退 npmmirror），解决无 GUI ECS 上「未找到 Chrome」导致图片生成 500 的问题。
 - **影响范围**: `scripts/deploy-ecs.sh`、`README.md`
 - **关联文档**: [README 部署说明](../README.md)
