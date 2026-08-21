@@ -710,11 +710,18 @@ CLB 通过 ECS 私网地址访问后端，因此 Web 服务必须监听所有网
 Environment=MCP_HOST=0.0.0.0
 Environment=MCP_PORT=8080
 EnvironmentFile=-/etc/neurun/neurun.env
+Environment=PLAYWRIGHT_BROWSERS_PATH=/opt/neurun-browsers
+Environment=HOME=/var/lib/neurun
 Restart=on-failure
 RestartSec=5
 TimeoutStopSec=30
 LimitNOFILE=8192
 ```
+
+`HOME` 必须等于 neurun 系统用户的实际 home（部署脚本用 `useradd --home-dir /var/lib/neurun`
+创建），应用 `db_path` 与 Garmin token 目录默认基于 `HOME` 解析；若误设 `/home/neurun`，
+Web 启动会在 `/home/neurun/.neurun` 上 `PermissionError` 崩溃，且回滚重写 unit 时同样带病。
+Playwright 浏览器由 `PLAYWRIGHT_BROWSERS_PATH` 定位，与 `HOME` 解耦。
 
 ECS 原生部署由 systemd 直接守护 Python 进程，不要求 Docker。`Restart=on-failure`
 负责异常退出后的自动拉起，`LimitNOFILE=8192` 为服务级文件描述符兜底；应用仍必须主动

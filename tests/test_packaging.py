@@ -116,6 +116,8 @@ def test_ecs_deploy_uses_release_directory_instead_of_download_checkout():
     assert 'if wait_for_health "${SOURCE_COMMIT}"; then' in script
     assert 'HEALTH_CHECK_ATTEMPTS="${HEALTH_CHECK_ATTEMPTS:-60}"' in script
     assert 'for attempt in $(seq 1 "${HEALTH_CHECK_ATTEMPTS}"); do' in script
+    assert "Environment=HOME=${DATA_DIR}" in script
+    assert "Environment=HOME=/home/" not in script
     assert "Coros 自动鉴权不会默认开启" in script
     assert "LimitNOFILE=8192" in script
 

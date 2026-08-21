@@ -1,5 +1,13 @@
 # Changelog
 
+## 2026-08-21
+
+### Fixed
+
+- **改动描述**: 修复 ECS 发布后服务启动崩溃：`deploy-ecs.sh` 生成的 systemd unit 曾新增 `Environment=HOME=/home/neurun`，但 neurun 系统用户由 `useradd --home-dir /var/lib/neurun` 创建，`/home/neurun` 不存在且无权创建；应用 `db_path`/`token_dir` 默认基于 HOME 解析，导致 Web 启动时 `PermissionError: /home/neurun/.neurun`、8080 从未监听，新版本健康检查失败，且回滚重写 unit 时沿用同一模板使旧版本同样崩溃。改为 `Environment=HOME=${DATA_DIR}`（即 `/var/lib/neurun`），与运行用户实际 home 一致。
+- **影响范围**: `scripts/deploy-ecs.sh`、`tests/test_packaging.py`、README、`docs/design/13-sae-deployment.md`
+- **关联文档**: [Bug 记录：systemd HOME 指向 /home/neurun 导致部署启动崩溃](bugfixes/2026-08-21-deploy-home-regression.md)
+
 ## 2026-08-20
 
 ### Added

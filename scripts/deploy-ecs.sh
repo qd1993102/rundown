@@ -255,7 +255,10 @@ Environment=MCP_TRANSPORT=sse
 EnvironmentFile=-${ENV_DIR}/neurun.env
 Environment=NEURUN_RELEASE_SHA=${release_sha}
 Environment=PLAYWRIGHT_BROWSERS_PATH=${BROWSERS_DIR}
-Environment=HOME=/home/${RUN_USER}
+# HOME 必须等于运行用户的实际 home（useradd --home-dir ${DATA_DIR}）。
+# db_path / token_dir 等默认路径基于 HOME 解析；指向 /home/neurun 会导致
+# 应用在 /home/neurun/.neurun 下创建数据库时因权限不足启动崩溃。
+Environment=HOME=${DATA_DIR}
 
 ExecStart=${CURRENT_LINK}/.venv/bin/python -c "from src.main import cmd_serve; cmd_serve()"
 

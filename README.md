@@ -218,10 +218,13 @@ curl -fsS http://<ECS_PRIVATE_IP>:8080/healthz
 
 分享卡 PNG 渲染依赖 Playwright Chromium。`deploy-ecs.sh` 会自动安装 `[image]` extra、
 Chromium 系统依赖、中文字体，并把浏览器装入共享目录 `/opt/neurun-browsers`
-（systemd 服务注入 `PLAYWRIGHT_BROWSERS_PATH`，避免 HOME 未设置导致找不到浏览器）。
+（systemd 服务注入 `PLAYWRIGHT_BROWSERS_PATH`，浏览器定位与 HOME 解耦）。
 国内 ECS 官方 CDN 下载失败时会自动回退 npmmirror 镜像。Alibaba Cloud Linux 等
 dnf/yum 系发行版 Playwright `install-deps` 不支持（会错误 fallback apt-get），脚本改为
 直接用 dnf/yum 安装 Chromium 运行依赖，并在部署时做 Chromium 启动冒烟验证。
+服务 unit 显式设置 `HOME=/var/lib/neurun`（与 neurun 用户 `useradd --home-dir` 一致），
+保证 `db_path`、Garmin token 等默认路径始终落在数据目录下；不要把 HOME 指向
+`/home/neurun`，那会导致应用启动时在 `/home/neurun/.neurun` 下创建数据库失败（权限拒绝）。
 阿里云控制台的“启动脚本”使用：
 
 ```bash
