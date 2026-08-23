@@ -15,7 +15,7 @@ pip install -e .
 # 3. 首次同步
 neurun sync --full
 
-# 4. 查看今日日报（自动同步 + md + HTML + PNG + AI）
+# 4. 查看今日日报（自动同步 + md + HTML + AI）
 neurun daily
 ```
 
@@ -51,12 +51,11 @@ neurun sync --metrics sleep hrv    # 仅同步指定指标
 
 ### `neurun daily`
 
-一站式命令：自动检查并同步数据 → 生成完整日报（md + HTML + PNG + AI 洞察）。
+一站式命令：自动检查并同步数据 → 生成完整日报（md + HTML + AI 洞察）。
 
 ```bash
 neurun daily                       # 今天（自动检查并补同步缺失数据）
 neurun daily --date 2026-06-25     # 指定日期
-neurun daily --theme dark          # 暗黑主题
 neurun daily --format json         # 仅 JSON 输出
 neurun daily --skip-sync           # 不访问 Provider，但仍执行完整性门禁
 neurun daily -m limited            # 明确接受缺失维度，生成带标记的受限版
@@ -66,7 +65,7 @@ neurun daily --force               # 强制覆盖已有数据后重新同步
 ```
 
 每次执行自动：按报告日活动、睡眠/恢复、近 7 天趋势和近 28 天负荷检查完整性 →（缺失时按需拉取）→
-生成 md → AI 洞察 → HTML → PNG → 终端展示。核心活动覆盖未知时不写报告、不调用 AI；辅助维度
+生成 md → AI 洞察 → HTML → 终端展示。核心活动覆盖未知时不写报告、不调用 AI；辅助维度
 不足时默认拒绝，只有显式使用 `--report-mode limited` 才生成受限版并省略对应结论。
 
 > 默认智能检测：只同步缺失的日期，已有本地数据则跳过。`--force` 可强制重新拉取。
@@ -74,13 +73,11 @@ neurun daily --force               # 强制覆盖已有数据后重新同步
 生成文件：
 - `memory/auto/daily/YYYY-MM-DD.md` — 记忆文件
 - `output/YYYY-MM-DD.html` — 静态网页
-- `output/YYYY-MM-DD.png` — 截图
 
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|
 | `--date DATE` | str | 今天 | 报告日期 YYYY-MM-DD |
 | `--format FMT` | md/json | md | md(终端+文件输出) / json |
-| `--theme NAME` | str | sport | HTML/PNG 主题: fresh / sport / dark |
 | `--sync-days N` | int | auto | 同步最近 N 天（默认自动检测缺失） |
 | `--skip-sync` | flag | — | 不访问 Provider，仅用本地覆盖证据；不绕过门禁 |
 | `-m, --report-mode MODE` | complete/limited | complete | 默认只生成完整日报；limited 为显式受限版 |
@@ -216,12 +213,9 @@ curl -fsS http://<ECS_PRIVATE_IP>:8080/healthz
 `/opt/neurun-releases/<release-id>`，并通过 `/opt/neurun-current` 切换。如果 Git 未下载成功或
 新版本依赖安装失败，脚本会在重启 systemd 前退出，保留当前应用继续运行。
 
-分享卡 PNG 渲染依赖 Playwright Chromium。`deploy-ecs.sh` 会自动安装 `[image]` extra、
-Chromium 系统依赖、中文字体，并把浏览器装入共享目录 `/opt/neurun-browsers`
-（systemd 服务注入 `PLAYWRIGHT_BROWSERS_PATH`，浏览器定位与 HOME 解耦）。
-国内 ECS 官方 CDN 下载失败时会自动回退 npmmirror 镜像。Alibaba Cloud Linux 等
-dnf/yum 系发行版 Playwright `install-deps` 不支持（会错误 fallback apt-get），脚本改为
-直接用 dnf/yum 安装 Chromium 运行依赖，并在部署时做 Chromium 启动冒烟验证。
+分享卡 PNG 由登录用户的浏览器使用 Canvas 2D 本地生成。生产部署不安装 Playwright、
+Chromium 或系统 Chrome，也不配置浏览器运行目录；日报和周复盘 JSON 不会为生成图片上传到
+额外服务。旧分享卡图片 URL 对已登录调用方返回 `410 Gone`，应改为在 Web 页面内分享。
 服务 unit 显式设置 `HOME=/var/lib/neurun`（与 neurun 用户 `useradd --home-dir` 一致），
 保证 `db_path`、Garmin token 等默认路径始终落在数据目录下；不要把 HOME 指向
 `/home/neurun`，那会导致应用启动时在 `/home/neurun/.neurun` 下创建数据库失败（权限拒绝）。
@@ -382,7 +376,8 @@ GET /api/reports/readiness?date=2026-07-19
 `review-daily-training` Skill 做一次在线解释，最后将同一份洞察渲染到 Front Matter 和
 Markdown 正文并落盘一次。模型不调用应用 tools，也不读取聊天历史。未配置 `NEURUN_AI_API_KEY` 或在线调用失败时，
 保留本地规则洞察作为降级结果。受限版会把缺失维度对应的指标、建议和 AI 输入同时移除；日报
-Front Matter、列表、详情、HTML 和 PNG 持续保留完整性、`data_as_of` 和暂态/最终标记。
+Front Matter、列表、详情和 HTML 持续保留完整性、`data_as_of` 和暂态/最终标记；浏览器分享卡
+只读取允许分享的跑步字段，不展示恢复与健康隐私数据。
 日报还会从训练域读取只读运动员能力画像（与方案草稿同口径的 `capacity_profile(D)`）投影为
 `athlete_context`：正文“负荷状态”章节显示一行紧凑的能力参考（可持续周跑量、长距离、参考配速），
 `review-daily-training` 在同一调用中引用该背景解释当日/近期负荷相对个人可持续容量的位置；
@@ -462,7 +457,7 @@ Front Matter、列表、详情、HTML 和 PNG 持续保留完整性、`data_as_o
 训练摘要和睡眠/恢复评分在手机上保持同一行，摘要过长时省略，不会挤压评分或产生横向滚动；
 桌面端在更宽视口下恢复紧凑的多列布局。
 
-日报详情提供“保存图片”按钮。图片直接在当前浏览器中根据已加载的日报 JSON 绘制为高清 PNG，
+日报详情提供“分享卡”按钮。图片直接在当前浏览器中根据已加载的日报 JSON 绘制为高清 PNG，
 不会把训练数据上传到第三方服务，也不要求服务器安装 Playwright 或连接 CDN。支持文件分享的
 手机浏览器会打开系统分享面板，可继续保存到相册；其他浏览器会下载
 `neurun-daily-YYYY-MM-DD.png`。该能力只影响 Web 展示，不新增 CLI 参数或 MCP tool。
@@ -607,7 +602,7 @@ neurun serve                       # 默认监听 0.0.0.0:8080（MCP SSE）
 
 ## HTML Daily Report
 
-`neurun daily` 自动生成静态 HTML 日报 + PNG 截图，输出到统一目录 `output/`。
+`neurun daily` 自动生成静态 HTML 日报，输出到统一目录 `output/`。
 
 绿黑色硬核风格，无需服务器，浏览器直接打开。
 
@@ -799,7 +794,7 @@ MCP 提供的 Tools:
 - `query_health_metrics` — 查询健康指标
 - `get_activity_detail` — 获取活动分段详情及已生成的训练类型、地形、置信度和后续影响
 - `search_memories` — 搜索记忆库
-- `generate_report` / `generate_html_report` / `generate_image` — 生成或导出日报；`mode` 默认
+- `generate_report` / `generate_html_report` — 生成或导出日报；`mode` 默认
   `complete`，仅在用户明确接受缺失维度时使用 `limited`，核心活动覆盖仍不可绕过
 - `get_training_advice` — 生成训练建议
 - `get_training_home` / `get_training_plan` — 读取实时训练首页与生效方案；后者可用 `target_date` 查询历史日期上下文

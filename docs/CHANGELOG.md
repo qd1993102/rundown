@@ -1,6 +1,32 @@
 # Changelog
 
+## [Unreleased]
+
+### Changed
+
+- **改动描述**: 分享卡三项训练统计的数值与标签改为按各自等宽栏位居中对齐，消除左侧偏重。
+- **影响范围**: `web/static/share-card.js`
+- **关联文档**: [docs/design/share-card.md](design/share-card.md)
+
+- **改动描述**: 优化分享卡 AI 教练区的信息层级，训练观察收敛为紧凑证据行，教练结论改为独立分隔后的主句，避免标签与正文、观察与结论争夺视觉权重。
+- **影响范围**: `web/static/share-card.js`
+- **关联文档**: [docs/product/share-card.md](product/share-card.md), [docs/design/share-card.md](design/share-card.md)
+
+- **改动描述**: 分享卡恢复旧版的安全 AI 训练观察：日报展示运动概要、强度分布、跑步动力学和跑步分析，周复盘展示概览、质量课和近期变化；逐条过滤恢复、HRV、ACWR、风险、警告、异常和建议文本。
+- **影响范围**: `web/static/share-card.js`, `tests/test_web.py`
+- **关联文档**: [docs/product/share-card.md](product/share-card.md), [docs/design/share-card.md](design/share-card.md)
+
+- **改动描述**: 分享卡 Canvas 改为跑步日志页视觉，使用距离主视觉、训练记录分栏与本地绘制的虚线路线；不改变数据接口、隐私白名单或本地 PNG 导出链路。
+- **影响范围**: `web/static/share-card.js`, `tests/test_web.py`
+- **关联文档**: [docs/product/share-card.md](product/share-card.md), [docs/design/share-card.md](design/share-card.md)
+
 ## 2026-08-21
+
+### Changed
+
+- **改动描述**: 日报与周复盘分享卡迁移为浏览器 Canvas 2D 白名单绘制，固定 375 逻辑宽、3 倍像素密度，并使用 Web Share 文件分享或本地下载；生产端删除 Playwright/Chromium/系统 Chrome、服务端 PNG 渲染模块、CLI `daily` PNG 输出和 MCP `generate_image` / `generate_share_card` 工具。`GET /api/dashboard` 与 `GET /api/reports/weekly` 合同保持不变，旧分享卡图片路由保留鉴权并对已登录调用返回固定 `410 Gone` JSON。
+- **影响范围**: `web/static/share-card.js`、`web/templates/dashboard.html`、`web/templates/reports.html`、`src/web.py`、`src/main.py`、`src/mcp_server.py`、`src/render.py`、`pyproject.toml`、`scripts/deploy-ecs.sh`、README 与相关测试
+- **关联文档**: [产品方案 — 分享卡](product/share-card.md)、[技术设计 — 分享卡浏览器 Canvas 生成](design/share-card.md)、[迁移过程记录](process/2026-08-21-canvas-share-card-migration.md)
 
 ### Fixed
 

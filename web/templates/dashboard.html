@@ -271,7 +271,7 @@
     </div>
     <div class="share-modal-actions" id="shareModalActions" hidden>
       <button class="btn" onclick="closeShareModal()">关闭</button>
-      <button class="btn primary" id="shareModalSaveBtn" onclick="saveShareCard()">💾 保存到本地</button>
+      <button class="btn primary" id="shareModalSaveBtn" onclick="shareCurrentCard()">分享 / 保存</button>
     </div>
   </div>
 </div>
@@ -289,6 +289,7 @@
 
 </div><!-- /.container -->
 
+<script src="/static/share-card.js"></script>
 <script>
 function $(id){return document.getElementById(id)}
 function esc(v){return String(v==null?'':v).replace(/[&<>"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]})}
@@ -494,100 +495,47 @@ function deepAnalysisHtml(analyses){
 
 }
 
-// ── Local PNG export ──
-function reportPalette(){
-  var theme=document.body.getAttribute('data-theme')||'dark';
-  var palettes={
-    dark:{bg:"#141a14",card:"#1e261e",subtle:"#1a201a",text:"#e6e8e3",secondary:"#9aa89a",muted:"#5a6b5a",border:"#2a342a",accent:"#f0a030",sleep:"#9a8ad0",recovery:"#6ba8e0",performance:"#5cb878",hrv:"#50b8c8"},
-    sport:{bg:'#f0f0f0',card:'#ffffff',subtle:'#f5f5f5',text:'#171717',secondary:'#525252',muted:'#858585',border:'#e3e3e3',accent:'#f15b2a',sleep:'#7c3aed',recovery:'#2563eb',performance:'#16a34a',hrv:'#0891b2'},
-    fresh:{bg:'#e8efe9',card:'#ffffff',subtle:'#f0f4f0',text:'#1a2e23',secondary:'#5a7d6e',muted:'#789689',border:'#d7e1da',accent:'#2d9d6f',sleep:'#7c6fcf',recovery:'#3b82b6',performance:'#22a86e',hrv:'#3b9fc6'}
-  };
-  return palettes[theme]||palettes.dark;
+// ── Browser Canvas share card ──
+var currentShareCard=null,currentShareObjectUrl=null;
+function releaseSharePreview(){
+  if(currentShareObjectUrl){URL.revokeObjectURL(currentShareObjectUrl);currentShareObjectUrl=null}
+  currentShareCard=null;
 }
-
-function roundedRect(ctx,x,y,w,h,r,fill,stroke){
-  var radius=Math.min(r,w/2,h/2);
-  ctx.beginPath();
-  ctx.moveTo(x+radius,y);
-  ctx.arcTo(x+w,y,x+w,y+h,radius);
-  ctx.arcTo(x+w,y+h,x,y+h,radius);
-  ctx.arcTo(x,y+h,x,y,radius);
-  ctx.arcTo(x,y,x+w,y,radius);
-  ctx.closePath();
-  if(fill){ctx.fillStyle=fill;ctx.fill()}
-  if(stroke){ctx.strokeStyle=stroke;ctx.lineWidth=1;ctx.stroke()}
-}
-
-function wrapCanvasText(ctx,text,maxWidth){
-  var source=String(text||'').trim();
-  if(!source)return [];
-  var lines=[];
-  source.split(/\n/).forEach(function(paragraph){
-    var line='';
-    Array.from(paragraph).forEach(function(char){
-      var next=line+char;
-      if(line&&ctx.measureText(next).width>maxWidth){lines.push(line);line=char}else{line=next}
-    });
-    if(line)lines.push(line);
-  });
-  return lines;
-}
-
-function drawCanvasLines(ctx,lines,x,y,lineHeight,color){
-  ctx.fillStyle=color;
-  lines.forEach(function(line,index){ctx.fillText(line,x,y+index*lineHeight)});
-  return y+lines.length*lineHeight;
-}
-
-function downloadDailyShareCard(){
-  var date = document.getElementById('viewDate').value || todayStr;
-  openShareModal('daily', date);
-}
-
-var currentShareUrl = null;
-function openShareModal(type, dateStr) {
-  var theme = localStorage.getItem('neurun-theme') || 'sport';
-  var url = '/api/reports/share-card/' + type + '?date=' + encodeURIComponent(dateStr) + '&theme=' + theme;
-  currentShareUrl = url;
+function downloadDailyShareCard(){openShareModal()}
+async function openShareModal() {
   var overlay = document.getElementById('shareOverlay');
-  var title = document.getElementById('shareModalTitle');
   var body = document.getElementById('shareModalBody');
   var actions = document.getElementById('shareModalActions');
-  title.textContent = type === 'daily' ? '日报分享卡' : '周复盘分享卡';
+  var saveButton=document.getElementById('shareModalSaveBtn');
+  releaseSharePreview();
+  document.getElementById('shareModalTitle').textContent = '日报分享卡';
   body.innerHTML = '<div class="share-modal-loading"><span class="spinner"></span>生成分享卡中...</div>';
   actions.hidden = true;
+  saveButton.hidden=false;
   overlay.hidden = false;
-  var img = new Image();
-  img.onload = function() {
-    body.innerHTML = '';
-    body.appendChild(img);
-    actions.hidden = false;
-  };
-  img.onerror = function() {
-    body.innerHTML = '<div class="share-modal-loading" style="color:var(--danger)">分享卡生成失败，请重试</div>';
-    actions.hidden = false;
-    document.getElementById('shareModalSaveBtn').style.display = 'none';
-  };
-  img.src = url;
-  img.alt = '分享卡';
+  try{
+    currentShareCard=await window.NeurunShareCard.createShareCard({type:'daily',report:currentReport,theme:localStorage.getItem('neurun-theme')||'dark'});
+    currentShareObjectUrl=URL.createObjectURL(currentShareCard.blob);
+    var img=new Image();img.src=currentShareObjectUrl;img.alt='日报分享卡';
+    body.innerHTML='';body.appendChild(img);actions.hidden=false;
+  }catch(error){
+    body.innerHTML='<div class="share-modal-loading" style="color:var(--danger)">'+esc(error.message||'分享卡生成失败，请重试')+'</div>';
+    saveButton.hidden=true;actions.hidden=false;
+  }
 }
 function closeShareModal() {
   document.getElementById('shareOverlay').hidden = true;
-  currentShareUrl = null;
+  releaseSharePreview();
 }
-function saveShareCard() {
-  if (!currentShareUrl) return;
-  var a = document.createElement('a');
-  a.href = currentShareUrl;
-  a.download = '';
-  a.style.display = 'none';
-  document.body.appendChild(a);
-  a.click();
-  document.body.removeChild(a);
+async function shareCurrentCard() {
+  if(!currentShareCard)return;
+  try{await window.NeurunShareCard.shareOrDownload(currentShareCard.blob,currentShareCard.filename)}
+  catch(error){$('shareModalBody').insertAdjacentHTML('beforeend','<p style="color:var(--danger);text-align:center">'+esc(error.message||'分享失败，请重试')+'</p>')}
 }
 document.getElementById('shareOverlay').addEventListener('click', function(e) {
   if (e.target === this) closeShareModal();
 });
+window.addEventListener('beforeunload',releaseSharePreview);
 
 // ── Load ──
 async function loadDashboard(){

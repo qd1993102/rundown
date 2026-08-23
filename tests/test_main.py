@@ -8,6 +8,20 @@ from unittest import mock
 import pytest
 
 
+def test_daily_cli_keeps_html_output_without_png_runtime():
+    import inspect
+    import src.main as main
+
+    parser = main.build_parser()
+    args = parser.parse_args(["daily", "--skip-sync"])
+    source = inspect.getsource(main.cmd_daily)
+
+    assert not hasattr(args, "theme")
+    assert "render_daily_html" in source
+    assert "render_daily_image" not in source
+    assert "PNG" not in source
+
+
 @pytest.mark.parametrize("provider_type", ["garmin", "coros", "huawei"])
 def test_setup_authenticates_before_reading_provider_user_id(monkeypatch, provider_type):
     import src.main as main

@@ -1,221 +1,168 @@
 # 产品方案 — 分享卡
 
-> 版本: v1.3 · 日期: 2026-08-20
-> 状态: 分享卡改为浏览器 Canvas 生成（Web 端）；MCP/CLI 不再提供分享卡生成工具；AI 教练品牌调性、多活动日边缘情况、样式细化已确认；回流暂不建设
-> 配套文档: 无独立技术设计，分享卡在浏览器内用 Canvas 绘制，复用 `/api/dashboard` 与 `/api/reports/weekly` 已返回的数据
+> 版本: v1.5 · 日期: 2026-08-23
+> 状态: Canvas 与安全 AI 观察白名单已实现，待真实浏览器 E2E 验收
+> 配套技术设计: [分享卡浏览器 Canvas 生成](../design/share-card.md)
 
-## 1. 背景与问题
+> 视觉规范: 分享卡采用“跑步日志页”视觉。页眉标识报告周期，居中距离为主信息，三项训练指标使用分栏记录；一条低饱和虚线路线连接起点与终点。AI 教练区把训练观察作为紧凑证据行，把结论作为独立、较大的收束句；三主题颜色、系统字体栈、10px 工具标签和 10px 圆角与整站设计 token 对齐。视觉服务于跑步记录的可读性，不使用页面截图、渐变背景或装饰性插图。
 
-跑者天生有分享训练数据的欲望——间歇跑的分段配速、长距离的完成用时、一周的跑量累积。当前日报和
-周复盘只服务于「自己看」的阅读场景，没有为「给别人看」的分享场景做任何设计：
+## 1. 业务目标与范围
 
-- 日报 PNG 导出是整页长图，包含睡眠、HRV、恢复评分等隐私数据，不适合直接分享；
-- 周复盘没有图片导出能力；
-- 最值得分享的训练事实（距离、配速、训练效果）在日报中排在底部，在周复盘中与其他模块平权；
-- 没有品牌水印或自传播入口。
+- **核心价值**: 用户在不上传健康隐私数据、不依赖服务端浏览器运行时的前提下，从日报或周复盘一键生成可分享的训练 PNG。
+- **成功指标**:
+  1. 有可分享跑步数据时，受支持浏览器生成的 PNG 成功率达到 99%，导出宽度固定为 1125 px，且任何成功图片均不截断底部水印。
+  2. 点击分享后 2 秒内展示本地预览（P95，基准为近两年发布的主流手机，数据已在页面加载完成且不计系统分享面板响应时间）。
+  3. 分享动作发起后不再请求服务端分享卡图片路由，训练图片不上传 neurun 或第三方服务。
+  4. 自动化隐私字段测试中，睡眠、HRV、静息心率、身体电量、恢复评分、训练准备度、ACWR、风险、警告、异常提醒和训练建议的泄漏率为 0%。
+- **In-Scope**:
+  1. 日报详情和周复盘归档中的分享入口。
+  2. 基于页面已加载报告 JSON 构造白名单数据，并用浏览器 Canvas 2D 专门绘制分享卡；不截取页面 DOM。
+  3. 日报分享卡展示当日跑步事实，以及 AI 观察中的运动概要、强度分布、跑步动力学、跑步分析和结论；周复盘分享卡展示自然周跑步汇总，以及概览、质量课、近期变化和结论。
+  4. Canvas 生成 PNG、本地预览、支持文件分享时调用系统分享面板、不支持时下载 PNG。
+  5. `fresh`、`sport`、`dark` 三种主题跟随当前 Web 主题。
+  6. 保持 `GET /api/dashboard` 与 `GET /api/reports/weekly` 的 URL、鉴权和既有 JSON 响应合同不变。
+  7. 旧分享卡图片 URL 保留过渡响应，明确告知调用方图片已改为浏览器内生成。
+  8. 生产依赖和运行链路不安装、不启动、也不调用 Playwright、Chromium 或系统 Chrome；Web Canvas 是唯一 PNG 生成能力。
+  9. MCP 和 CLI 不提供分享卡或完整日报 PNG 生成命令/工具，仅保留报告数据和 HTML 能力。
+- **Out-of-Scope**:
+  1. 页面 DOM、整页报告或隐藏节点截图。
+  2. 服务端生成、缓存、存储或转发分享卡图片。
+  3. 改变日报和周复盘数据接口的字段、类型、状态码或鉴权规则。
+  4. CLI/MCP 的报告数据与 HTML 生成能力；本次只移除其中的 PNG 输出，不改变报告事实或 HTML 输出合同。
+  5. 回流链接、邀请码二维码、落地页、注册转化追踪和社交平台 API 直发。
+  6. 用户头像、昵称、社交身份、自由文案、裁剪或模块自定义。
+  7. 无跑步活动的休息日分享卡。
 
-## 2. 产品目标
+## 2. 用户故事与验收标准 (Acceptance Criteria)
 
-让用户**一键生成适合分享的训练卡片并保存到本地**，卡片上的信息不包含隐私数据，适合发到微信朋友圈、
-微信群、小红书、微博、Keep 动态等任何平台。
+### US-01: 生成日报分享卡
+- **As a**: 已登录且已绑定数据源的跑者
+- **I want**: 在已生成日报中预览并导出当日跑步分享卡
+- **So that**: 我可以分享训练成果而不暴露恢复和健康隐私
+- **Gherkin 验收条件**:
+  - Given 日报 JSON 已加载且包含至少一条跑步活动
+  - When 用户点击“分享卡”
+  - Then 浏览器只从白名单字段构造卡片数据并用 Canvas 2D 生成预览，不请求 `/api/reports/share-card/daily`
+  - And 主活动为距离最长的跑步活动，其余跑步活动按距离降序全部列入“当日其他训练”
+  - And 卡片展示训练类型、距离、时长和配速；有步频时展示步频，无步频时指标列从 3 列变为 2 列
+  - And L1 数据展示强度分布，L0 数据不展示强度分布
+  - And `ai_insight.observations` 中以“运动概要：”“强度分布：”“跑步动力学：”或“跑步分析：”开头的观察允许进入 AI 教练区块，其他类别观察不进入分享卡
+  - And 有 `ai_insight.conclusion` 时允许展示 AI 教练结论，无安全观察且无结论时省略 AI 教练区块
+  - And `ai_insight.warnings` 与 `ai_insight.recommendations` 始终不读取
+  - Given 同一日报的 AI 观察同时包含允许类别和恢复、HRV、ACWR、风险、警告、异常提醒或训练建议
+  - When 浏览器构造日报分享卡
+  - Then 只展示允许类别中的训练观察和结论，禁止内容及其原始文本均不进入分享卡数据对象或 PNG
 
-- 日报分享卡：单次训练完成后即时分享，聚焦当日训练事实
-- 周复盘分享卡：一周总结，聚焦本周亮点与质量课
-- 两张卡都带品牌标识，作为自然增长渠道
-- 不要求用户登录第三方平台，不需要公网域名或落地页
+### US-02: 生成周复盘分享卡
+- **As a**: 已登录且已绑定数据源的跑者
+- **I want**: 从已归档周复盘生成本周训练分享卡
+- **So that**: 我可以分享一周跑量和质量课亮点
+- **Gherkin 验收条件**:
+  - Given 周复盘 JSON 已加载且 `actual_summary.running_distance_km` 大于 0
+  - When 用户点击“分享本周”
+  - Then 浏览器使用该归档周复盘的既有 JSON 在本地生成预览，不重新生成周复盘也不请求 `/api/reports/share-card/weekly`
+  - And 卡片展示周范围、跑量、最长单次、平均配速和跑步天数
+  - And 有质量课时逐课展示，零质量课时展示“本周以有氧跑为主，未检测到满足证据门槛的质量课”
+  - And 有可比较历史周时展示趋势，无参照周时省略趋势区块
+  - And 只有 `review_sections.overview`、`review_sections.quality_sessions` 和 `review_sections.trend` 中的概览、质量课和近期变化允许进入 AI 教练区块，其他周复盘观察类别不进入分享卡
+  - And 有 `finding.conclusion` 时允许展示 AI 教练结论，无安全观察且无结论时省略 AI 教练区块
+  - And `review_sections.recovery_and_risk`、行动建议及警告来源始终不读取
+  - Given 同一周复盘同时包含概览、质量课、近期变化以及恢复、HRV、ACWR、风险、警告、异常提醒或训练建议
+  - When 浏览器构造周复盘分享卡
+  - Then 只展示概览、质量课、近期变化和结论，禁止内容及其原始文本均不进入分享卡数据对象或 PNG
 
-## 3. 范围与边界
+### US-03: 分享或下载 PNG
+- **As a**: 已看到分享卡预览的跑者
+- **I want**: 通过系统分享面板发送图片，或将图片下载到本地
+- **So that**: 我能在不同浏览器中完成可预测的导出
+- **Gherkin 验收条件**:
+  - Given Canvas 已成功导出 `image/png` Blob
+  - When 浏览器同时支持 `navigator.share` 和文件分享
+  - Then 用户操作触发系统分享面板，文件名分别为 `neurun-daily-YYYY-MM-DD.png` 或 `neurun-weekly-YYYY-Www.png`
+  - Given 浏览器不支持文件分享或调用返回能力不支持错误
+  - When 用户执行分享
+  - Then 页面在同一次操作中回退为下载 PNG，并显示“当前浏览器不支持直接分享，图片已下载”
+  - Given 用户主动取消系统分享面板
+  - When 浏览器返回取消结果
+  - Then 预览保持可用，不自动下载，并显示“已取消分享”
 
-### 本期范围
+### US-04: 隐私最小化
+- **As a**: 关注健康数据隐私的跑者
+- **I want**: 分享图片只包含训练成果白名单
+- **So that**: 分享时不会意外暴露恢复和健康状态
+- **Gherkin 验收条件**:
+  - Given 报告 JSON 同时包含允许的训练观察，以及睡眠、HRV、恢复、风险、警告、异常提醒和建议数据
+  - When 浏览器构造分享卡数据并绘制 PNG
+  - Then 分享卡数据对象和绘制调用中均不存在睡眠、HRV、静息心率、身体电量、恢复评分、训练准备度、ACWR、风险标记、警告、异常提醒、方案执行状态或训练建议
+  - And 日报 AI 文本仅来自运动概要、强度分布、跑步动力学、跑步分析和结论，周复盘 AI 文本仅来自概览、质量课、近期变化和结论
+  - And 即使文本来自允许来源，只要单条文本包含“睡眠”“恢复”“HRV”“ACWR”“风险”“警告”“异常”或“建议”（`HRV`、`ACWR` 不区分大小写），该条文本必须整体剔除，不得部分截取后展示
+  - And PNG Blob 只存在当前浏览器内，不上传服务器，不写入服务端临时文件
+  - And 预览关闭或被替换后释放对应 Object URL
 
-- 日报分享卡：浏览器 Canvas 绘制 + PNG 导出（375×500 @3x，竖版移动端卡片）
-- 周复盘分享卡：浏览器 Canvas 绘制 + PNG 导出（375×600 @3x，竖版移动端卡片）
-- Web 端「📷 分享卡」按钮
-- 不提供 MCP/CLI 分享卡生成（服务端不再为分享卡依赖 Playwright/Chromium 出图）
+### US-05: 保持报告数据接口稳定
+- **As a**: Web 报告页面或既有报告数据接口调用方
+- **I want**: 分享卡实现迁移不改变报告读取合同
+- **So that**: 日报和周复盘的其他功能不会回归
+- **Gherkin 验收条件**:
+  - Given 调用方使用既有 Cookie 鉴权访问 `GET /api/dashboard` 或 `GET /api/reports/weekly`
+  - When 浏览器 Canvas 分享卡能力上线
+  - Then 两个接口的 URL、方法、鉴权、既有成功与错误状态码、既有 JSON 字段名称和字段类型保持不变
+  - And 本次实现不要求两个接口新增分享卡专用字段
 
-### 明确不建设
+### US-06: 迁移旧分享卡图片 URL
+- **As a**: 仍持有旧分享卡图片 URL 的调用方
+- **I want**: 收到明确且机器可读的迁移响应
+- **So that**: 我不会把 JSON 错误误当成损坏的 PNG
+- **Gherkin 验收条件**:
+  - Given 已登录且已绑定数据源的调用方访问 `GET /api/reports/share-card/daily` 或 `GET /api/reports/share-card/weekly`
+  - When 浏览器 Canvas 方案上线
+  - Then 服务端返回 `410 Gone` 和 `application/json`，错误码为 `share_card_client_rendering_required`
+  - And 响应提示用户前往日报或报告页面使用浏览器内分享入口，不返回空图片、重定向或伪造的 `image/png`
+  - Given 未登录或未绑定数据源的调用方访问旧 URL
+  - When 服务端执行现有鉴权门禁
+  - Then 仍返回既有 `401` JSON，不泄露报告是否存在
 
-- 回流（邀请码二维码、落地页、注册转化追踪）
-- 分享链接、微信 JS-SDK、小红书/微博 API 直发
-- 分享卡上的用户头像、昵称或社交信息
-- 分享卡的编辑/自定义（裁剪区域、隐藏模块、添加文案）
-- 休息日分享卡（休息日不生成分享卡）
+### US-07: 失败与重试
+- **As a**: 遇到浏览器资源不足或图片编码失败的跑者
+- **I want**: 保留当前报告并获得可重试的错误状态
+- **So that**: 失败不会触发服务端兜底或产生残缺图片
+- **Gherkin 验收条件**:
+  - Given 报告没有跑步活动
+  - When 用户点击分享入口
+  - Then 不创建 Canvas 或 PNG，并显示“该日报无可分享的跑步活动”或“该周无跑步活动，不生成分享卡”
+  - Given 计算后的逻辑高度超过 2048 px、Canvas 上下文创建失败或 PNG Blob 编码失败
+  - When 浏览器尝试生成卡片
+  - Then 状态进入“生成失败”，不输出截断图片，显示“分享卡生成失败，请重试”，并保留重试入口
+  - Given 用户重试
+  - When 报告数据仍在页面内
+  - Then 复用现有报告数据重新生成，不刷新页面、不重新调用报告 API
 
-## 4. 用户流程
+## 3. 状态机与边界条件 (Edge Cases)
 
-### 4.1 日报分享卡
+- **状态流转**: [不可用] -> (加载到含跑步活动的报告 JSON) -> [可生成] -> (点击分享) -> [生成中] -> (Canvas 绘制及 PNG 编码成功) -> [预览就绪] -> (系统分享或下载成功) -> [已完成]
+- **失败流转**: [生成中] -> (无数据、超出高度上限、Canvas 或编码失败) -> [生成失败] -> (重试) -> [生成中]
+- **分享降级流转**: [预览就绪] -> (文件分享能力不支持) -> [下载中] -> (下载触发) -> [已完成]
+- **异常处理规则**:
+  1. 未登录或数据源未绑定: 报告数据接口按既有规则返回 `401`，页面不得尝试生成分享卡；提示文案“请先绑定数据源”。
+  2. 日报不存在或周复盘未归档: 分享入口不可用；不得为分享动作隐式生成报告。
+  3. 无跑步活动: 不生成空卡或休息日卡，使用对应的明确提示文案。
+  4. 多活动日: 只保留跑步活动；按距离降序，最长为主活动，其余全部展示。
+  5. 缺失可选指标: 省略对应指标或区块，不显示 `null`、`undefined`、`NaN`、`0'00\"/km` 等占位错误。
+  6. 文本过长: AI 结论最多绘制 4 行，每行按 Canvas 实测宽度换行，超出部分以省略号结束；活动名称最多 1 行，超出部分以省略号结束。
+  7. 内容过高: 逻辑高度最大 2048 px；超过时整体失败且不导出部分图片。
+  8. 重复点击: “生成中”期间忽略后续点击，只允许一个生成任务；完成、失败或取消后恢复入口。
+  9. 主题切换: 每次生成读取点击时的当前主题；已打开的预览不随主题切换重绘，下次生成使用新主题。
+  10. 系统分享取消: 保留预览，不视为故障，不自动下载。
+  11. Object URL 生命周期: 新预览替换旧预览或关闭弹窗时立即释放；页面卸载时释放剩余 URL。
+  12. 旧图片路由: 登录用户固定返回 `410` JSON；不得按日期、主题或报告存在性继续渲染图片。
+  13. AI 观察为空: 保留训练事实卡；日报四类安全观察或周报三类安全观察全部缺失时，只在有安全结论时展示 AI 教练区块。
+  14. AI 观察混合: 先应用允许来源白名单，再逐条检查禁止词；包含“睡眠”“恢复”“HRV”“ACWR”“风险”“警告”“异常”或“建议”的整条文本不展示，禁止规则优先级高于来源白名单。
 
-```
-用户在日报详情页 → 点击「📷 分享卡」
-  → 浏览器用已加载的日报 JSON（/api/dashboard 的 session_analyses/ai_insight）绘制分享卡 Canvas
-  → 导出 PNG（Web Share API，不支持时下载回退）
-  → 用户自行发到微信/微博/小红书等
-```
+## 4. 数据实体草案
 
-### 4.2 周复盘分享卡
-
-```
-用户在某周复盘归档卡上 → 点击「分享本周」
-  → 浏览器用已加载的周复盘 JSON（/api/reports/weekly 的 actual_summary/quality_sessions/finding）绘制分享卡 Canvas
-  → 导出 PNG（Web Share API，不支持时下载回退）
-  → 用户自行分享
-```
-
-## 5. 分享卡内容设计
-
-### 5.1 日报分享卡
-
-```
-┌──────────────────────────────┐
-│                              │
-│  NEURUN                      │  ← 品牌标识
-│  2026年8月18日 周一            │  ← 日期
-│                              │
-│  ┌────────────────────────┐  │
-│  │  🏃 节奏跑              │  │  ← 训练主类型 badge（视觉重心）
-│  │     8.50 km            │  │  ← 主数字 42px 加粗
-│  │  1h05                  │  │  ← 时长（单位弱化）
-│  └────────────────────────┘  │
-│                              │
-│  时长         配速         步频│  ← 3 列 stats（无步频时 2 列）
-│  1h05      4'57"/km    178   │
-│                              │
-│  强度分布                     │  ← L1 粒度时展示
-│  ▓▓▓▓▓▓▓░░░ 轻松 65%         │
-│                              │
-│  当日其他训练                 │  ← 多活动日时展示
-│  轻松跑  5.0km  28min        │
-│                              │
-│  ┌────────────────────────┐  │
-│  │ AI 教练                 │  │  ← AI 教练调性（有 AI 结论时）
-│  │ "今天训练质量不错，      │  │
-│  │  继续保持。"             │  │
-│  └────────────────────────┘  │
-│                              │
-│  ── AI 教练 · NeuRun ──     │  ← 品牌水印
-└──────────────────────────────┘
-```
-
-**数据来源**：日报 `front_matter` 中的 `session_analyses` → `session_summary`、`pace_profile`、`intensity`、`structure`、`effect`；AI 结论来自 `ai_insight.conclusion`。
-
-**口径说明**：分享卡只展示跑步活动数据，不包含骑车等非跑步运动。
-
-**省略规则**：
-- 不展示睡眠、HRV、静息心率、身体电量、恢复评分、训练准备度
-- 不展示 ACWR、训练建议、异常提醒、数据完整性横幅
-- 只展示跑步活动数据，不包含骑车等非跑步运动
-- 多活动日按距离降序展示全部跑步活动，最长作为主 Hero，其余在「当日其他训练」区块
-- 无跑步活动时不生成分享卡（休息日点击分享给出明确提示）
-- L0 粒度（无分段数据）时省略强度分布区块；不展示训练效果（有氧/无氧）和配速节奏（均速/最快）独立区块
-- 无步频数据时 stats 行自动从 3 列切换为 2 列
-- AI 结论为空时不渲染 AI 教练区块
-- 日报分享卡 hero 区域只展示距离，时长和配速在 stats 区域展示
-
-### 5.2 周复盘分享卡
-
-> **口径说明**：周复盘分享卡只展示跑步活动数据（跑量、最长单次、平均配速、跑步天数），不包含骑车等非跑步运动。
-
-```
-┌──────────────────────────────┐
-│                              │
-│  NEURUN                      │
-│  本周训练 · 8/11–8/17        │  ← 周范围
-│                              │
-│  ┌────────────────────────┐  │
-│  │  跑步                   │  │
-│  │     38.5 km            │  │  ← 主数字
-│  └────────────────────────┘  │
-│                              │
-│  最长单次    平均配速    跑步天数│  ← 3 列 stats
-│    12.0     4'42"/km     4   │
-│                              │
-│  📈 较前 4 周均 35 km ↑ +10% │  ← 趋势精简（有参照周时）
-│                              │
-│  ⚡ 本周质量课 2 节           │  ← 质量课高光（有质量课时）
-│  周三 · 间歇                 │
-│  5.0km @ 4'05"/km           │
-│  有氧 3.8 · 无氧 2.5         │
-│                              │
-│  周六 · 节奏                 │
-│  8.0km @ 4'42"/km           │
-│  有氧 3.2 · 无氧 1.8         │
-│                              │
-│  ┌────────────────────────┐  │
-│  │ AI 教练                 │  │  ← AI 教练调性（有 AI 结论时）
-│  │ "本周跑量稳定，          │  │
-│  │  下周可继续保持节奏。"   │  │
-│  └────────────────────────┘  │
-│                              │
-│  ── AI 教练 · NeuRun ──     │  ← 品牌水印
-└──────────────────────────────┘
-```
-
-**数据来源**：`review_week()` 返回的 `actual_summary`、`trend_summary`、`quality_sessions`；AI 结论来自 `finding.conclusion`。
-
-**省略规则**：
-- 不展示恢复评分、风险标记、睡眠、ACWR
-- 不展示下周行动建议、方案执行状态
-- 只展示跑步活动数据，不包含骑车等非跑步运动
-- 没有质量课时，质量课区块替换为「本周以有氧跑为主，未检测到满足证据门槛的质量课」
-- 没有可比较历史周时，趋势区块不渲染
-- 无跑步活动时不生成分享卡（点击分享给出明确提示）
-- AI 结论为空时不渲染 AI 教练区块
-
-## 6. 视觉设计
-
-### 6.1 尺寸与比例
-
-- 绘制基准：375px 逻辑宽，先测量各区块文本再定画布高度（避免底部留白或内容截断），导出缩放 `@3x`（1125px 宽）
-- 导出缩放：`@3x`（1125px 宽），保证在 Retina 屏幕上清晰
-- 圆角：20px 卡片外框
-- 背景：跟随当前主题（fresh/sport/dark），Canvas 内使用与 Web 主题一致的三套色值，不依赖页面完整 CSS
-
-### 6.2 品牌
-
-- 左上角：NEURUN 文字标识（品牌色）
-- 底部：`── AI 教练 · NeuRun ──` 灰色小字水印，强调 AI 教练品牌调性
-- 不使用 emoji 作为品牌元素
-
-### 6.3 主题适配
-
-三种主题均可用，默认使用当前用户选择的主题：
-- 清新版：浅绿底，深绿文字
-- 运动版：浅灰底，深灰文字，橙色强调
-- 暗黑版：深蓝底，浅灰文字，绿色强调
-
-## 7. 接口设计
-
-### 7.1 后端接口
-
-分享卡不新增后端接口，也不调用服务端截图能力：浏览器复用已鉴权获取的
-`GET /api/dashboard`（日报）与 `GET /api/reports/weekly`（周复盘）JSON，
-在本地 Canvas 绘制并导出 PNG；图片数据不回传服务器。
-
-### 7.2 MCP / CLI
-
-不提供分享卡生成工具（`generate_share_card` 不再建设）。
-
-## 8. 验收标准
-
-1. 日报有跑步活动时，分享卡展示训练类型、距离、时长、配速、训练效果；无跑步活动时不生成分享卡并给出明确提示
-2. 分享卡上不出现睡眠、HRV、恢复评分、ACWR、训练建议
-3. L1 粒度活动展示强度分布；L0 粒度省略强度分布区块；不展示训练效果（有氧/无氧）和配速节奏（均速/最快）独立区块
-4. 周复盘有质量课时逐课展示；无质量课时显示「本周以有氧跑为主」
-5. 三种主题切换后分享卡颜色跟随变化
-6. PNG 导出为 1125px 宽（375×3），清晰可读
-7. 休息日不生成日报分享卡
-8. 品牌标识和底部水印（AI 教练 · NeuRun）始终可见
-9. 有 AI 结论时，日报和周复盘分享卡均展示 AI 教练区块
-10. 多活动日展示全部跑步活动，最长作为主 Hero，其余在附区块
-11. 配速、时间等单位（/km、h、min、spm）比数字小且颜色弱化
-
-## 9. 已确认决策
-
-- 分享卡事实部分是**纯确定性渲染**，不依赖 AI 调用；AI 教练区块从已有日报/周复盘 AI 结论中读取
-- 分享卡**不携带用户隐私数据**（睡眠、HRV、恢复评分等一律不出现）
-- 回流（邀请码、落地页）**本期不建设**，后续可作为独立迭代
-- 分享卡是**新增卡片**，不修改现有日报/周复盘的完整渲染
-- 分享卡只在浏览器内生成：复用已鉴权获取的日报/周复盘 JSON 在 Canvas 中绘制，PNG 数据不回传服务器；移动端用 Web Share API，桌面及不支持环境回退为下载，不依赖服务端 Playwright/Chromium
-- MCP/CLI 不提供分享卡生成（`generate_share_card` 不再建设）
-- 水印文案为「AI 教练 · NeuRun」，强调 AI 教练品牌调性
-- 多活动日展示全部跑步活动，非仅最长
+- **ShareCardRequest**: { card_type: Enum(daily/weekly), Required: Yes; reference_date: String(YYYY-MM-DD), Required: Yes; theme: Enum(fresh/sport/dark), Required: Yes }
+- **ShareCardActivity**: { label: String, Required: Yes; distance_km: Number, Required: Yes; duration_seconds: Int, Required: Yes; average_pace_seconds_per_km: Int, Required: No; average_cadence_spm: Int, Required: No; intensity_distribution: Object<String, Number>, Required: No }
+- **DailyShareCardData**: { kind: Enum(daily), Required: Yes; report_date: String(YYYY-MM-DD), Required: Yes; primary_activity: ShareCardActivity, Required: Yes; additional_activities: Array<ShareCardActivity>, Required: Yes; coach_observations: Array<String (运动概要/强度分布/跑步动力学/跑步分析)>, Required: No; ai_conclusion: String, Required: No; theme: Enum(fresh/sport/dark), Required: Yes }
+- **WeeklyQualitySession**: { date: String(YYYY-MM-DD), Required: Yes; label: String, Required: Yes; distance_km: Number, Required: No; average_pace_seconds_per_km: Int, Required: No; aerobic_effect: Number, Required: No; anaerobic_effect: Number, Required: No }
+- **WeeklyShareCardData**: { kind: Enum(weekly), Required: Yes; week_id: String(YYYY-Www), Required: Yes; week_start: String(YYYY-MM-DD), Required: Yes; week_end: String(YYYY-MM-DD), Required: Yes; running_distance_km: Number, Required: Yes; longest_run_km: Number, Required: No; average_pace_seconds_per_km: Int, Required: No; running_days: Int, Required: Yes; trend: Object, Required: No; quality_sessions: Array<WeeklyQualitySession>, Required: Yes; coach_observations: Array<String (概览/质量课/近期变化)>, Required: No; ai_conclusion: String, Required: No; theme: Enum(fresh/sport/dark), Required: Yes }
+- **ShareCardResult**: { state: Enum(preview_ready/shared/downloaded/cancelled/failed), Required: Yes; blob: Blob(image/png), Required: No; filename: String, Required: No; error_code: Enum(no_running_activity/canvas_unavailable/content_too_tall/png_encode_failed/share_failed), Required: No }

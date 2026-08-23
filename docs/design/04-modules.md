@@ -370,9 +370,10 @@ Web 数据同步与日报生成是两个独立动作：
   回填并均分容器，不保留固定网格空位；
 - 日报列表卡片在 320px 起保持“日期 / 可收缩摘要 / 固定评分”单行 Grid；训练摘要使用省略号，
   `report-scores` 禁止换行且不得跨到第二行，避免评分被压缩或改变卡片节奏；
-- 日报图片由 `dashboard.html` 在浏览器内根据 `GET /api/dashboard` 已返回的数据绘制到 Canvas。
-  支持文件分享时调用 Web Share API，否则使用 Blob URL 下载 PNG；图片数据不回传服务器，
-  不引入外部 CDN，也不修改 `src/image.py` 的 CLI 静态报告截图职责。
+- 日报与归档周复盘分享卡由 `web/static/share-card.js` 根据既有报告 JSON 的白名单 ViewModel
+  绘制到 Canvas 2D；逻辑宽 375、3 倍像素密度，固定输出 1125px 宽 PNG。支持文件分享时调用
+  Web Share API，否则使用 Blob URL 下载；图片数据不回传服务器。生产端不保留 `src/image.py`、
+  `src/share_card.py`、Playwright、Chromium 或系统 Chrome 截图职责，CLI/MCP 只输出报告与 HTML。
 
 Web 异步旅程在不改变 CLI/MCP 同步合同的前提下增加 `sync_tasks.py`：按用户在
 `sync-tasks.json` 中原子保存任务状态，由

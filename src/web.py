@@ -11,7 +11,6 @@ import hashlib
 import json
 import logging
 import os
-import tempfile
 import re
 import secrets
 from dataclasses import dataclass
@@ -38,7 +37,6 @@ from .invitations import InvitationError, InvitationStore
 from .local_files import LocalPersistenceError, atomic_write_private
 from .main import ProviderAuthenticationError, _do_daily_sync, _do_data_sync
 from .memory import MemoryStore, MemoryType, build_memory_file, get_daily_activities
-from .share_card import generate_daily_share_image, generate_weekly_share_image
 from .resource_lifecycle import close_runtime_resources
 from .report_readiness import (
     DailyReportReadinessError,
@@ -2277,48 +2275,14 @@ def register_web_routes(server, user_manager: UserManager, config: Config):
         if not user or user.token_status != "active":
             return JSONResponse({"status": "error", "message": "请先绑定数据源"}, status_code=401)
 
-        raw_date = request.query_params.get("date", "")
-        try:
-            target = date.fromisoformat(raw_date) if raw_date else date.today()
-        except ValueError:
-            return JSONResponse(
-                {"status": "error", "message": "date 格式无效，应为 YYYY-MM-DD"},
-                status_code=400,
-            )
-
-        theme = request.query_params.get("theme", "sport")
-        if theme not in {"fresh", "sport", "dark"}:
-            theme = "sport"
-
-        user_cfg = config.for_user(api_key)
-        user_manager.ensure_dirs(api_key)
-        memory_store = MemoryStore(user_cfg.memory_dir)
-        mem = memory_store.get(str(target))
-        if mem is None:
-            return JSONResponse(
-                {"status": "error", "message": f"{target} 日报不存在，请先生成"},
-                status_code=404,
-            )
-
-        fd, tmp_path = tempfile.mkstemp(suffix=".png")
-        os.close(fd)
-        try:
-            png_path = generate_daily_share_image(mem.front_matter, tmp_path, theme=theme)
-        except Exception as exc:
-            Path(tmp_path).unlink(missing_ok=True)
-            logger.error("分享卡生成失败: %s", exc)
-            return JSONResponse({"status": "error", "message": "图片生成失败"}, status_code=500)
-
-        if png_path is None:
-            Path(tmp_path).unlink(missing_ok=True)
-            return JSONResponse(
-                {"status": "error", "message": "当日无可分享的跑步活动"},
-                status_code=404,
-            )
-        return FileResponse(
-            png_path,
-            media_type="image/png",
-            headers={"Content-Disposition": f"attachment; filename=neurun-daily-{target}.png"},
+        return JSONResponse(
+            {
+                "status": "error",
+                "code": "share_card_client_rendering_required",
+                "message": "分享卡已改为浏览器本地生成，请在日报页面点击“分享卡”。",
+            },
+            status_code=410,
+            headers={"Cache-Control": "no-store"},
         )
 
     @server.custom_route("/api/reports/share-card/weekly", methods=["GET"])
@@ -2328,49 +2292,14 @@ def register_web_routes(server, user_manager: UserManager, config: Config):
         if not user or user.token_status != "active":
             return JSONResponse({"status": "error", "message": "请先绑定数据源"}, status_code=401)
 
-        raw_date = request.query_params.get("date", "")
-        try:
-            target = date.fromisoformat(raw_date) if raw_date else date.today()
-        except ValueError:
-            return JSONResponse(
-                {"status": "error", "message": "date 格式无效，应为 YYYY-MM-DD"},
-                status_code=400,
-            )
-
-        theme = request.query_params.get("theme", "sport")
-        if theme not in {"fresh", "sport", "dark"}:
-            theme = "sport"
-
-        try:
-            service = training_service(api_key)
-            review = service.review_week(target=target, include_ai=False)
-        except TrainingError as exc:
-            return training_error(exc)
-        except Exception as exc:
-            logger.error("周复盘数据获取失败: %s", exc)
-            return JSONResponse({"status": "error", "message": "周复盘数据获取失败"}, status_code=500)
-
-        fd, tmp_path = tempfile.mkstemp(suffix=".png")
-        os.close(fd)
-        try:
-            png_path = generate_weekly_share_image(review, tmp_path, theme=theme)
-        except Exception as exc:
-            Path(tmp_path).unlink(missing_ok=True)
-            logger.error("周复盘分享卡生成失败: %s", exc)
-            return JSONResponse({"status": "error", "message": "图片生成失败"}, status_code=500)
-
-        if png_path is None:
-            Path(tmp_path).unlink(missing_ok=True)
-            return JSONResponse(
-                {"status": "error", "message": "该周无跑步活动，不生成分享卡"},
-                status_code=404,
-            )
-
-        week_id = review.get("week_id", str(target))
-        return FileResponse(
-            png_path,
-            media_type="image/png",
-            headers={"Content-Disposition": f"attachment; filename=neurun-weekly-{week_id}.png"},
+        return JSONResponse(
+            {
+                "status": "error",
+                "code": "share_card_client_rendering_required",
+                "message": "分享卡已改为浏览器本地生成，请在报告中心打开已归档周复盘后分享。",
+            },
+            status_code=410,
+            headers={"Cache-Control": "no-store"},
         )
 
     @server.custom_route("/api/profile", methods=["GET"])

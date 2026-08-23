@@ -197,7 +197,7 @@
     </div>
     <div class="share-modal-actions" id="shareModalActions" hidden>
       <button class="btn" onclick="closeShareModal()">关闭</button>
-      <button class="btn primary" id="shareModalSaveBtn" onclick="saveShareCard()">💾 保存到本地</button>
+      <button class="btn primary" id="shareModalSaveBtn" onclick="shareCurrentCard()">分享 / 保存</button>
     </div>
   </div>
 </div>
@@ -206,6 +206,7 @@
 
 </div>
 
+<script src="/static/share-card.js"></script>
 <script>
 // ── Theme (shared with dashboard via localStorage) ──
 var savedTheme = localStorage.getItem('neurun-theme')||'dark';
@@ -301,7 +302,7 @@ function weeklyReviewDetails(report,open){
 }
 function renderWeekly(reports,pagination){
   var el=document.getElementById('weeklyList');
-  archivedWeeks={};(reports||[]).forEach(function(r){if(r.report_id)archivedWeeks[r.week_start]=true});
+  archivedWeeks={};(reports||[]).forEach(function(r){if(r.report_id)archivedWeeks[r.week_start]=r});
   if(!reports.length){el.innerHTML='<article class="weekly-card"><strong>还没有已完成周复盘</strong><p>周中可查看本周进度；自然周结束后才会在此归档正式结论。</p></article>';renderPagination('weekly',pagination);return}
   el.innerHTML=reports.map(function(r){
     var actual=r.actual_summary||{},execution=r.plan_execution_summary||r.execution_summary,decision=r.progression_decision,quality=r.data_quality||{},sync=quality.sync_coverage||(execution||{}).sync_coverage||{},finding=typeof r.finding==='object'?(r.finding.conclusion||''):r.finding;
@@ -418,48 +419,52 @@ async function genReport(mode){
   }catch(e){msg.innerHTML='<span style="color:var(--danger)">网络错误</span>';renderDailyStatus()}
 }
 
-// Share card modal
-var currentShareUrl = null;
-function openShareModal(type, dateStr) {
-  var theme = localStorage.getItem('neurun-theme') || 'sport';
-  var url = '/api/reports/share-card/' + type + '?date=' + encodeURIComponent(dateStr) + '&theme=' + theme;
-  currentShareUrl = url;
+// Browser Canvas share card modal
+var currentShareCard=null,currentShareObjectUrl=null;
+function releaseSharePreview(){
+  if(currentShareObjectUrl){URL.revokeObjectURL(currentShareObjectUrl);currentShareObjectUrl=null}
+  currentShareCard=null;
+}
+async function openShareModal(type, dateStr) {
   var overlay = document.getElementById('shareOverlay');
   var title = document.getElementById('shareModalTitle');
   var body = document.getElementById('shareModalBody');
   var actions = document.getElementById('shareModalActions');
+  var saveButton=document.getElementById('shareModalSaveBtn');
+  releaseSharePreview();
   title.textContent = type === 'daily' ? '日报分享卡' : '周复盘分享卡';
   body.innerHTML = '<div class="share-modal-loading"><span class="spinner"></span>生成分享卡中...</div>';
   actions.hidden = true;
+  saveButton.hidden=false;
   overlay.hidden = false;
-  // Show image
-  var img = new Image();
-  img.onload = function() {
-    body.innerHTML = '';
-    body.appendChild(img);
-    actions.hidden = false;
-  };
-  img.onerror = function() {
-    body.innerHTML = '<div class="share-modal-loading" style="color:var(--danger)">分享卡生成失败，请重试</div>';
-    actions.hidden = false;
-    document.getElementById('shareModalSaveBtn').style.display = 'none';
-  };
-  img.src = url;
-  img.alt = '分享卡';
+  try{
+    var report;
+    if(type==='weekly'){
+      report=archivedWeeks[dateStr];
+      if(!report)throw new Error('未找到已归档的周复盘，请刷新列表后重试。');
+    }else{
+      var response=await fetch('/api/dashboard?date='+encodeURIComponent(dateStr));
+      if(response.status===401){location.href='/';return}
+      if(!response.ok)throw new Error('日报数据加载失败，请稍后重试。');
+      report=await response.json();
+    }
+    currentShareCard=await window.NeurunShareCard.createShareCard({type:type,report:report,theme:localStorage.getItem('neurun-theme')||'dark'});
+    currentShareObjectUrl=URL.createObjectURL(currentShareCard.blob);
+    var img=new Image();img.src=currentShareObjectUrl;img.alt=title.textContent;
+    body.innerHTML='';body.appendChild(img);actions.hidden=false;
+  }catch(error){
+    body.innerHTML='<div class="share-modal-loading" style="color:var(--danger)">'+esc(error.message||'分享卡生成失败，请重试')+'</div>';
+    saveButton.hidden=true;actions.hidden=false;
+  }
 }
 function closeShareModal() {
   document.getElementById('shareOverlay').hidden = true;
-  currentShareUrl = null;
+  releaseSharePreview();
 }
-function saveShareCard() {
-  if (!currentShareUrl) return;
-  var a = document.createElement('a');
-  a.href = currentShareUrl;
-  a.download = '';
-  a.style.display = 'none';
-  document.body.appendChild(a);
-  a.click();
-  document.body.removeChild(a);
+async function shareCurrentCard() {
+  if(!currentShareCard)return;
+  try{await window.NeurunShareCard.shareOrDownload(currentShareCard.blob,currentShareCard.filename)}
+  catch(error){document.getElementById('shareModalBody').insertAdjacentHTML('beforeend','<p style="color:var(--danger);text-align:center">'+esc(error.message||'分享失败，请重试')+'</p>')}
 }
 // Click overlay background to close
 document.getElementById('shareOverlay').addEventListener('click', function(e) {
@@ -472,6 +477,7 @@ document.addEventListener('click', function(e) {
   e.preventDefault();
   openShareModal(btn.getAttribute('data-share-type'), btn.getAttribute('data-share-date'));
 });
+window.addEventListener('beforeunload',releaseSharePreview);
 
 async function genWeeklyReport(){
   var button=document.getElementById('weekBtn'),d=document.getElementById('weekDate').value,msg=document.getElementById('weekMsg');

@@ -120,6 +120,17 @@ def test_ecs_deploy_uses_release_directory_instead_of_download_checkout():
     assert "Environment=HOME=/home/" not in script
     assert "Coros 自动鉴权不会默认开启" in script
     assert "LimitNOFILE=8192" in script
+    assert 'pip install -e "${RELEASE_DIR}"' in script
+    assert "playwright" not in script.lower()
+    assert "chromium" not in script.lower()
+    assert "PLAYWRIGHT_BROWSERS_PATH" not in script
+
+
+def test_production_dependencies_do_not_include_browser_runtime():
+    pyproject = (_ROOT / "pyproject.toml").read_text(encoding="utf-8")
+
+    assert "playwright" not in pyproject.lower()
+    assert "[project.optional-dependencies]\nimage" not in pyproject
 
 
 def test_ecs_console_entry_deploys_platform_selected_checkout_without_fixed_branch():

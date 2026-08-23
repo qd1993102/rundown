@@ -3,7 +3,7 @@
 neurun — Your AI running coach.
 
 Commands:
-    neurun daily       自动同步数据并生成每日综合报告（HTML + PNG + 终端）
+    neurun daily       自动同步数据并生成每日综合报告（HTML + 终端）
     neurun sync        纯数据同步（批量拉取，不含报告生成）
     neurun activities  查询活动列表
     neurun health      查询健康指标
@@ -36,7 +36,6 @@ from .fetcher import Fetcher
 from .storage import Storage
 from .memory import MemoryStore, MemoryType, MemoryStatus, get_daily_activities
 from .render import render_daily_html
-from .image import render_daily_image
 from .local_files import (
     LocalPersistenceError,
     atomic_write_private,
@@ -1025,11 +1024,10 @@ def _do_daily_sync(config, target: date | None = None,
 
 
 def cmd_daily(args: argparse.Namespace) -> None:
-    """daily 命令：自动同步 → 生成 md → HTML → PNG → AI 洞察。"""
+    """daily 命令：自动同步 → 生成 md → HTML → AI 洞察。"""
     config, provider, storage, memory_store, user_id = _setup()
 
     target = _parse_date(args.date) if args.date else date.today()
-    theme = getattr(args, 'theme', 'sport')
     skip_sync = getattr(args, 'skip_sync', False)
     full_sync = getattr(args, 'full', False)
     force_sync = getattr(args, 'force', False)
@@ -1064,13 +1062,13 @@ def cmd_daily(args: argparse.Namespace) -> None:
     else:
         console.print(f"  🤖 AI 洞察: 规则引擎 fallback")
 
-    # ── JSON-only 模式（跳过 HTML/PNG/终端）──
+    # ── JSON-only 模式（跳过 HTML/终端）──
     if args.format == "json":
         import json as _json
         console.print_json(_json.dumps(mem.front_matter, ensure_ascii=False, indent=2, default=str))
         return
 
-    # ── 渲染 HTML + PNG ──
+    # ── 渲染 HTML ──
     output_dir = Path("output")
     ensure_private_dir(output_dir)
 
@@ -1078,14 +1076,6 @@ def cmd_daily(args: argparse.Namespace) -> None:
     render_daily_html(mem, html_path)
     restrict_private_file(html_path)
     console.print(f"  🌐 HTML: {html_path}")
-
-    png_path = str(output_dir / f"{target}.png")
-    try:
-        render_daily_image(mem, output_path=png_path, theme=theme)
-        restrict_private_file(png_path)
-        console.print(f"  🖼️  PNG: {png_path}")
-    except Exception as exc:
-        console.print(f"  [yellow]⚠️  PNG 生成失败: {exc}[/]")
 
     # ── 终端摘要 ──
     fm = mem.front_matter
@@ -1862,12 +1852,10 @@ def build_parser() -> argparse.ArgumentParser:
     p_sync.add_argument("--force", action="store_true", help="强制覆盖：清除已有数据后重新全量拉取")
 
     # ── daily ─────────────────────────────────
-    p_daily = sub.add_parser("daily", help="自动同步数据并生成日报（md + HTML + PNG + AI 洞察）")
+    p_daily = sub.add_parser("daily", help="自动同步数据并生成日报（md + HTML + AI 洞察）")
     p_daily.add_argument("--date", help="报告日期 YYYY-MM-DD (默认今天)")
     p_daily.add_argument("--format", choices=["md", "json"], default="md",
                          help="md(终端+文件) | json(仅 JSON 输出)")
-    p_daily.add_argument("--theme", choices=["fresh", "sport", "dark"], default="sport",
-                         help="HTML/PNG 主题 (默认 sport)")
     p_daily.add_argument("--sync-days", type=int, default=None,
                          help="同步最近 N 天数据后生成报告 (默认自动检测)")
     p_daily.add_argument("--skip-sync", action="store_true",

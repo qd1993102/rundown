@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import subprocess
 import threading
 import time
 from datetime import date, timedelta
@@ -15,6 +16,24 @@ from starlette.requests import Request
 from src.config import Config
 from src.users import UserManager
 from src.web import register_web_routes
+
+
+def _share_card_view_model(card_type, report):
+    script = """
+const fs = require('fs');
+global.window = {};
+eval(fs.readFileSync('web/static/share-card.js', 'utf8'));
+const report = JSON.parse(process.argv[1]);
+const method = process.argv[2] === 'weekly' ? 'buildWeeklyShareCardData' : 'buildDailyShareCardData';
+process.stdout.write(JSON.stringify(window.NeurunShareCard[method](report, 'sport')));
+"""
+    result = subprocess.run(
+        ["node", "-e", script, json.dumps(report), card_type],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    return json.loads(result.stdout)
 
 
 class _FakeServer:
@@ -794,8 +813,10 @@ def test_daily_templates_are_mobile_first_and_support_local_png_export():
     assert "min-height:44px" in dashboard
     assert "d.daily_activities||d.yesterday_activities" in dashboard
     assert "downloadDailyShareCard" in dashboard
-    assert "function reportPalette" in dashboard
-    assert "roundedRect" in dashboard
+    assert '<script src="/static/share-card.js"></script>' in dashboard
+    assert "NeurunShareCard.createShareCard" in dashboard
+    assert "URL.revokeObjectURL" in dashboard
+    assert "/api/reports/share-card/" not in dashboard
     assert "href=\"/static/tokens.css\"" in dashboard
     assert "href=\"/static/components.css\"" in dashboard
 
@@ -848,6 +869,28 @@ def test_daily_templates_are_mobile_first_and_support_local_png_export():
     assert "质量课总结" in reports
     assert "task.message" in reports
     assert "未关联训练方案" in reports
+    assert '<script src="/static/share-card.js"></script>' in reports
+    assert "NeurunShareCard.createShareCard" in reports
+    assert "archivedWeeks[r.week_start]=r" in reports
+    assert "/api/reports/share-card/" not in reports
+
+    share_card = Path("web/static/share-card.js").read_text(encoding="utf-8")
+    assert "LOGICAL_WIDTH = 375" in share_card
+    assert "SCALE = 3" in share_card
+    assert "MAX_LOGICAL_HEIGHT = 2048" in share_card
+    assert "canvas.toBlob" in share_card
+    assert "navigator.canShare({files: [file]})" in share_card
+    assert "URL.revokeObjectURL" in share_card
+    assert "drawImage" not in share_card
+    assert "html2canvas" not in share_card
+    # Canvas layout must preserve the established share-card visual contract.
+    assert "theme: PALETTES[theme] ? theme : 'sport'" in share_card
+    assert "RUNNING NOTES" in share_card
+    assert "coachNotes" in share_card
+    assert "QUALITY SESSIONS" in share_card
+    assert "drawRoute" in share_card
+
+
     assert "制定训练方案（可选）" in reports
     assert "查看完整复盘" in reports
     assert "近期变化" in reports
@@ -916,6 +959,87 @@ def test_daily_templates_are_mobile_first_and_support_local_png_export():
     assert "w.distance_estimated?'约 ':'" in training
     assert "当前教练定位" not in training
     assert "function modeBannerMarkup" not in training
+
+
+def test_share_card_keeps_only_safe_daily_coach_observations():
+    view_model = _share_card_view_model("daily", {
+        "report_date": "2026-08-23",
+        "daily_activities": {"sessions": [{
+            "type": "running", "name": "晨跑", "distance_km": 8.2,
+            "duration_seconds": 2700, "pace_sec_per_km": 329,
+        }]},
+        "ai_insight": {
+            "observations": [
+                "运动概要：8 公里跑步完成稳定。",
+                "强度分布：主要保持有氧强度。",
+                "跑步动力学：步频节奏稳定。",
+                "跑步分析：后程配速没有明显下滑。",
+                "恢复分析：恢复状态偏低。",
+                "强度分布：HRV 波动较大。",
+            ],
+            "conclusion": "本次训练节奏控制良好。",
+            "warnings": ["警告：负荷偏高。"],
+            "recommendations": ["建议明天休息。"],
+        },
+    })
+
+    assert [note["label"] for note in view_model["coachNotes"]] == [
+        "运动概要", "强度分布", "跑步动力学", "跑步分析", "教练结论",
+    ]
+    serialized = json.dumps(view_model, ensure_ascii=False)
+    assert "恢复" not in serialized
+    assert "HRV" not in serialized
+    assert "警告" not in serialized
+    assert "建议" not in serialized
+
+
+def test_share_card_keeps_only_safe_weekly_coach_observations():
+    view_model = _share_card_view_model("weekly", {
+        "week_start": "2026-08-17", "week_end": "2026-08-23",
+        "actual_summary": {"running_distance_km": 42.5, "running_days": 4},
+        "quality_sessions": [{"label": "节奏跑", "distance_km": 10}],
+        "review_sections": {
+            "overview": {"headline": "本周跑量稳定完成。"},
+            "quality_sessions": {"items": [{"quality_type": "tempo"}]},
+            "trend": {"headline": "较上周跑量平稳。"},
+            "recovery_and_risk": {"headline": "恢复风险较高。"},
+            "next_week": {"actions": ["建议减少训练。"]},
+        },
+        "finding": {"conclusion": "本周节奏安排合理。"},
+    })
+
+    assert [note["label"] for note in view_model["coachNotes"]] == [
+        "本周概览", "质量课总结", "近期变化", "教练结论",
+    ]
+    serialized = json.dumps(view_model, ensure_ascii=False)
+    assert "恢复风险" not in serialized
+    assert "建议" not in serialized
+
+
+def test_legacy_share_card_routes_require_auth_and_return_gone(tmp_path):
+    manager, user = _active_user(tmp_path)
+    server = _FakeServer()
+    register_web_routes(server, manager, Config(data_dir=str(tmp_path)))
+
+    for path in (
+        "/api/reports/share-card/daily",
+        "/api/reports/share-card/weekly",
+    ):
+        unauthorized = asyncio.run(server.routes[(path, "GET")](
+            _request(path, {}, "missing", method="GET")
+        ))
+        assert unauthorized.status_code == 401
+
+        response = asyncio.run(server.routes[(path, "GET")](
+            _request(path, {}, user.api_key, method="GET")
+        ))
+        payload = json.loads(response.body)
+        assert response.status_code == 410
+        assert response.headers["cache-control"] == "no-store"
+        assert response.headers["content-type"].startswith("application/json")
+        assert payload["status"] == "error"
+        assert payload["code"] == "share_card_client_rendering_required"
+        assert payload["message"]
 
 
 def test_training_pace_result_is_visible_and_reasons_are_expandable():

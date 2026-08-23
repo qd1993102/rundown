@@ -827,6 +827,8 @@ def test_invite_mcp_tools_are_registered_only_when_enabled(monkeypatch, tmp_path
     } <= set(normal.tool_names)
     assert "save_training_plan" not in normal.tool_names
     assert "set_goal" not in normal.tool_names
+    assert "generate_image" not in normal.tool_names
+    assert "generate_share_card" not in normal.tool_names
 
     admin = create_server(
         config, object(), object(), object(), 0, enable_admin_tools=True

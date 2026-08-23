@@ -542,9 +542,10 @@ web/templates/reports.html
 320px 窄屏下评分被压缩到第二行。桌面端再增强为四列指标、横向训练详情和更紧凑的工具栏。
 hover 反馈只在支持 hover 的设备上启用，所有布局均不得产生横向滚动。
 
-“保存图片”不调用服务端截图能力。`dashboard.html` 复用当前 `GET /api/dashboard` JSON，按当前主题
-在浏览器 Canvas 中生成 2 倍像素密度 PNG。支持 `navigator.canShare({files})` 时进入系统分享，
-否则通过 Blob URL 下载；整个过程无 CDN、无额外前端依赖，训练数据不离开当前浏览器。
+“分享卡”不调用服务端截图能力。`dashboard.html` 复用当前 `GET /api/dashboard` JSON，报告中心
+复用已经加载的 `GET /api/reports/weekly` 归档 JSON，经白名单 ViewModel 在浏览器 Canvas 中生成
+3 倍像素密度、1125px 宽 PNG。支持 `navigator.canShare({files})` 时进入系统分享，否则通过 Blob
+URL 下载；整个过程无 CDN、无额外前端依赖，训练数据不离开当前浏览器。
 
 ### 7.1 ARMS RUM 的 PV、UV 与账户归因
 
@@ -710,7 +711,6 @@ CLB 通过 ECS 私网地址访问后端，因此 Web 服务必须监听所有网
 Environment=MCP_HOST=0.0.0.0
 Environment=MCP_PORT=8080
 EnvironmentFile=-/etc/neurun/neurun.env
-Environment=PLAYWRIGHT_BROWSERS_PATH=/opt/neurun-browsers
 Environment=HOME=/var/lib/neurun
 Restart=on-failure
 RestartSec=5
@@ -721,7 +721,7 @@ LimitNOFILE=8192
 `HOME` 必须等于 neurun 系统用户的实际 home（部署脚本用 `useradd --home-dir /var/lib/neurun`
 创建），应用 `db_path` 与 Garmin token 目录默认基于 `HOME` 解析；若误设 `/home/neurun`，
 Web 启动会在 `/home/neurun/.neurun` 上 `PermissionError` 崩溃，且回滚重写 unit 时同样带病。
-Playwright 浏览器由 `PLAYWRIGHT_BROWSERS_PATH` 定位，与 `HOME` 解耦。
+分享卡由用户浏览器 Canvas 本地生成，ECS 运行时不安装或定位 Playwright、Chromium、系统 Chrome。
 
 ECS 原生部署由 systemd 直接守护 Python 进程，不要求 Docker。`Restart=on-failure`
 负责异常退出后的自动拉起，`LimitNOFILE=8192` 为服务级文件描述符兜底；应用仍必须主动
