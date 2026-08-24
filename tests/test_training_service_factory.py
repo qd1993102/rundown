@@ -50,6 +50,51 @@ class _MockStorage:
         pass
 
 
+def test_training_activity_loader_reuses_overlapping_snapshot(tmp_path, monkeypatch):
+    """首页的 55d/42d/28d/7d 窗口只应触发一次活动范围查询。"""
+    from src.config import Config
+    from src.training_service_factory import build_training_service
+
+    class Storage:
+        calls = 0
+
+        def __init__(self, config):
+            self.config = config
+
+        def get_local_user_id(self):
+            return 1
+
+        def get_activities_range(self, user_id, start, end):
+            type(self).calls += 1
+            return []
+
+        def close(self):
+            pass
+
+    class Memory:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def get_training_history_entries(self, **kwargs):
+            return []
+
+    monkeypatch.setattr("src.training_service_factory.MemoryStore", Memory)
+    config = Config(data_dir=str(tmp_path))
+    Path(config.db_path).parent.mkdir(parents=True, exist_ok=True)
+    Path(config.db_path).touch()
+    service = build_training_service(
+        config, storage_factory=Storage,
+    )
+
+    target = date(2026, 8, 24)
+    service.activity_loader(target - timedelta(days=55), target)
+    service.activity_loader(target - timedelta(days=42), target)
+    service.activity_loader(target - timedelta(days=28), target)
+    service.activity_loader(target - timedelta(days=7), target)
+
+    assert Storage.calls == 1
+
+
 def test_setup_baseline_longest_distance_uses_28d_window(tmp_path):
     """周量基线取上一完整自然周，但长距离能力取近 28 天窗口：
     本周刚完成的 30km 长距离不得被上一周窗口漏掉。"""

@@ -8,6 +8,7 @@ Web 草稿/训练页、CLI 日报、MCP 报告共用同一套活动加载器与�
 
 from __future__ import annotations
 
+import copy
 from datetime import date, timedelta
 from pathlib import Path
 from typing import Any, Callable
@@ -68,68 +69,110 @@ def build_training_service(
     Web 传入自身 ``Storage`` 引用（保持既有测试注入点与行为一致）。
     """
     storage_factory = storage_factory or Storage
+    # A single home read asks for overlapping windows (55d/42d/28d/7d/2d).
+    # Keep one request-local snapshot and slice it for later callers.
+    activity_snapshot: dict[str, Any] = {
+        "start": None, "end": None, "items": [], "states": {},
+        "user_id": None, "history_loaded": False, "enriched": False,
+    }
+
+    def _activity_date(item: dict[str, Any]) -> date | None:
+        try:
+            return date.fromisoformat(
+                str(item.get("activity_date") or item.get("date") or item.get("start_time"))[:10]
+            )
+        except (TypeError, ValueError):
+            return None
+
+    def load_activities(start: date, end: date) -> list[dict[str, Any]]:
+        if not Path(config.db_path).exists():
+            return []
+        cached_start = activity_snapshot["start"]
+        cached_end = activity_snapshot["end"]
+        cache_miss = (
+            cached_start is None
+            or cached_end is None
+            or start < cached_start
+            or end > cached_end
+        )
+        if cache_miss:
+            storage = storage_factory(config)
+            try:
+                user_id = storage.get_local_user_id()
+                if user_id is None:
+                    return []
+                items = storage.get_activities_range(user_id, start, end)
+            finally:
+                storage.close()
+            activity_snapshot.update({
+                "start": start, "end": end, "items": copy.deepcopy(items),
+                "states": {}, "user_id": user_id,
+                "history_loaded": False, "enriched": False,
+            })
+        return [
+            copy.deepcopy(item) for item in activity_snapshot["items"]
+            if (activity_date := _activity_date(item)) is not None
+            and start <= activity_date <= end
+        ]
 
     def load_week(start: date, end: date) -> tuple[list[dict[str, Any]], dict[str, str]]:
         if not Path(config.db_path).exists():
             return [], {}
-        storage = storage_factory(config)
-        try:
-            user_id = storage.get_local_user_id()
-            if user_id is None:
-                return [], {}
-            activities = storage.get_activities_range(user_id, start, end)
-            fixed_week_activities: list[dict[str, Any]] = []
-            for item in activities:
-                raw_date = item.get("activity_date") or item.get("date")
-                try:
-                    activity_date = date.fromisoformat(str(raw_date)[:10])
-                except (TypeError, ValueError):
-                    continue
-                if start <= activity_date <= end:
-                    fixed_week_activities.append(item)
-            running_activities = [
-                item for item in fixed_week_activities
-                if "run" in str(item.get("activity_type") or "").lower()
-                or "跑" in str(item.get("activity_name") or "")
-            ]
-            history = MemoryStore(
-                config.memory_dir, db_getter=lambda: storage.db,
-            ).get_training_history_entries(
-                user_id=user_id, days=(end - start).days + 1, end_date=end,
-            )
-            from .training_analysis import (
-                display_name,
-                get_latest_training_analysis,
-            )
-            from .activity import get_activity_summary_facts
-            for activity in activities:
-                analysis = get_latest_training_analysis(
-                    storage.db, user_id, str(activity.get("activity_id") or ""),
-                )
-                if analysis:
-                    activity["training_analysis"] = {
-                        **analysis,
-                        "display_name": display_name(
-                            analysis["primary_type"], analysis["terrain"],
-                        ),
-                    }
-                # 统一来源：草稿/周报/训练首页与日报消费同一份 activity_summary_facts
-                # （session-summary），由 TrainingDaySummaryBuilder 透传；不重复计算。
-                try:
-                    summary_facts = get_activity_summary_facts(
-                        storage.db, str(activity.get("activity_id") or ""),
+        activities = load_activities(start, end)
+        if not activity_snapshot["history_loaded"] or not activity_snapshot["enriched"]:
+            storage = storage_factory(config)
+            try:
+                user_id = activity_snapshot["user_id"]
+                if not activity_snapshot["history_loaded"]:
+                    history = MemoryStore(
+                        config.memory_dir, db_getter=lambda: storage.db,
+                    ).get_training_history_entries(
+                        user_id=user_id, days=(end - start).days + 1, end_date=end,
                     )
-                except Exception:
-                    summary_facts = None
-                if summary_facts:
-                    activity["session_summary"] = summary_facts
-            states = {
-                str(item["date"]): str(item.get("activity_state") or "unknown")
-                for item in history
-            }
-            return activities, states
-        finally:
-            storage.close()
+                    activity_snapshot["states"] = {
+                        str(item["date"]): str(item.get("activity_state") or "unknown")
+                        for item in history
+                    }
+                    activity_snapshot["history_loaded"] = True
+                if not activity_snapshot["enriched"]:
+                    from .training_analysis import (
+                        display_name,
+                        get_latest_training_analysis,
+                    )
+                    from .activity import get_activity_summary_facts
+                    for activity in activity_snapshot["items"]:
+                        analysis = get_latest_training_analysis(
+                            storage.db, user_id, str(activity.get("activity_id") or ""),
+                        )
+                        if analysis:
+                            activity["training_analysis"] = {
+                                **analysis,
+                                "display_name": display_name(
+                                    analysis["primary_type"], analysis["terrain"],
+                                ),
+                            }
+                        # 统一来源：草稿/周报/训练首页与日报消费同一份 activity_summary_facts。
+                        try:
+                            summary_facts = get_activity_summary_facts(
+                                storage.db, str(activity.get("activity_id") or ""),
+                            )
+                        except Exception:
+                            summary_facts = None
+                        if summary_facts:
+                            activity["session_summary"] = summary_facts
+                    activity_snapshot["enriched"] = True
+            finally:
+                storage.close()
+        activities = [
+            copy.deepcopy(item) for item in activity_snapshot["items"]
+            if (activity_date := _activity_date(item)) is not None
+            and start <= activity_date <= end
+        ]
+        states = {
+            key: value for key, value in activity_snapshot["states"].items()
+            if start <= date.fromisoformat(key) <= end
+        }
+        return activities, states
 
     def load_setup(target: date | None = None) -> dict[str, Any]:
         baseline = {
@@ -204,7 +247,9 @@ def build_training_service(
             end = current_monday - timedelta(days=1)
             start = end - timedelta(days=6)
             long_start = as_of - timedelta(days=28)
-            activities = storage.get_activities_range(user_id, long_start, as_of)
+            # Reuse the same request-local activity snapshot used by the training
+            # loader; this avoids a second overlapping SQLite range query.
+            activities = load_activities(long_start, as_of)
             calendar = storage.get_sync_calendar(user_id, start, end, today=end)
             calendar_counts = calendar.get("summary") or calendar.get("counts") or {}
             synced_days = int(calendar_counts.get("synced") or 0)

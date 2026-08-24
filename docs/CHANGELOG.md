@@ -10,6 +10,10 @@
 
 ### Fixed
 
+- **改动描述**: 优化 `GET /api/training/home` 的重复读路径：一次请求内复用重叠活动窗口快照、活动分析/摘要事实和训练历史状态，并按目标日缓存 setup 上下文；不改变响应口径，也不引入跨请求陈旧缓存。
+- **影响范围**: `src/training_service_factory.py`, `src/training.py`, `tests/test_training_service_factory.py`
+- **关联文档**: [Bug 记录](bugfixes/2026-08-25-training-home-slow-read.md)、[训练系统技术设计](design/training-system.md)
+
 - **改动描述**: 修复短跑活动的训练课型为 `unknown` 时被日报误报为“非跑步”并隐藏教练分析的问题；分离 `is_running` 运动模态与 `primary_type` 课型判定，保留课型未知跑步的配速、心率和动力学分析；统一日报与跑步分析的 ACWR 口径，并显式标记在线 AI 与本地规则兜底来源；可选分享卡摘要的非法条目不再阻断核心 CoachInsight；日报 Skill 输出预算提高至 4000 tokens，避免完整结构化洞察被截断；Dashboard 现在默认展示完整结构化教练分析，包括逐次训练特点、训练效果、恢复反应、能力信号、次日约束、证据和数据缺口；分享卡遇到稀疏的 AI `share_card` 时，会从安全的逐次训练特点和训练效果补足运动分析。
 - **影响范围**: `src/memory.py`、`src/coach.py`、`src/mcp_server.py`、`src/main.py`、`src/render.py`、`web/templates/dashboard.html`、`prompts/skills/review-daily-training/SKILL.md`
 - **关联文档**: [Bug 记录](bugfixes/2026-08-24-daily-running-coach-fallback.md)、[日报产品方案](product/daily-report.md)、[记忆系统设计](design/memory-system.md)

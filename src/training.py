@@ -1126,6 +1126,9 @@ class TrainingService:
         self.pace_adjustment_engine = pace_adjustment_engine or DailyPaceAdjustmentEngine()
         self.platform_threshold_loader = platform_threshold_loader
         self._lock = _lock_for(self.repository.root)
+        # home() composes several read-only projections. Keep their setup snapshot
+        # request-local so the same SQLite/filesystem facts are not rebuilt repeatedly.
+        self._setup_context_cache: dict[date, dict[str, Any]] = {}
 
     def list_goals(self) -> list[dict[str, Any]]:
         return self.goals.list_active()
@@ -1200,6 +1203,10 @@ class TrainingService:
             return None
 
     def _setup_context(self, *, target: date | None = None) -> dict[str, Any]:
+        cache_key = target or date.today()
+        cached = self._setup_context_cache.get(cache_key)
+        if cached is not None:
+            return copy.deepcopy(cached)
         context: dict[str, Any] = {}
         if self.setup_context_loader:
             try:
@@ -1231,7 +1238,7 @@ class TrainingService:
             "reference_window_start": baseline.get("reference_window_start"),
             "reference_window_end": baseline.get("reference_window_end"),
         }
-        return {
+        result = {
             "active_goals": self.goals.list_active(),
             "baseline": baseline,
             "known_constraints": copy.deepcopy(context.get("known_constraints") or {}),
@@ -1239,6 +1246,8 @@ class TrainingService:
             "recovery_snapshot": copy.deepcopy(context.get("recovery_snapshot") or {}),
             "short_term_training": copy.deepcopy(context.get("short_term_training") or {}),
         }
+        self._setup_context_cache[cache_key] = copy.deepcopy(result)
+        return result
 
     def _recent_two_days_training(self, *, target: date) -> dict[str, Any]:
         """读取最近两个已结束自然日，仅用于课程衔接，不作为周量基线。"""
