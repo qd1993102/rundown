@@ -48,7 +48,7 @@
   - And L1 数据展示强度分布，L0 数据不展示强度分布
   - And 优先读取 `ai_insight.share_card` 中由 AI 基于完整训练事实生成的 `headline`、逐次 `sessions`、`takeaway` 和 `conclusion`，不依赖中文观察前缀
   - And `share_card.sessions` 最多展示 4 条，每次跑步最多 1 条，每条摘要最多 70 个中文字符，其他摘要文本最多 90 个字符
-  - And `ai_insight.share_card` 缺失时，兼容读取旧日报的安全运动观察；旧观察中的 `第N次跑步` 前缀必须可以被识别
+  - And `ai_insight.share_card` 缺失或内容稀疏时，兼容读取旧日报的安全运动观察；同一份 CoachInsight 中的 `session_characteristics` 和 `training_effect` 可作为安全运动补充；旧观察中的 `第N次跑步` 前缀必须可以被识别
   - And 有安全 `share_card.conclusion` 或 `ai_insight.conclusion` 时允许展示教练结论，无安全摘要且无结论时省略 AI 教练区块
   - And `ai_insight.warnings` 与 `ai_insight.recommendations` 始终不读取
   - Given 同一日报的 AI 观察同时包含允许类别和恢复、HRV、ACWR、风险、警告、异常提醒或训练建议

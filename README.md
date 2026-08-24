@@ -374,8 +374,8 @@ GET /api/reports/readiness?date=2026-07-19
 
 日报先在内存中生成结构化指标，再把已经过服务端计算的事实交给
 `review-daily-training` Skill 做一次在线解释，最后将同一份洞察渲染到 Front Matter 和
-Markdown 正文并落盘一次。模型不调用应用 tools，也不读取聊天历史。未配置 `NEURUN_AI_API_KEY` 或在线调用失败时，
-保留本地规则洞察作为降级结果。受限版会把缺失维度对应的指标、建议和 AI 输入同时移除；日报
+Markdown 正文并落盘一次。模型不调用应用 tools，也不读取聊天历史。未配置 `NEURUN_AI_API_KEY` 或在线调用失败时，保留本地规则洞察作为降级结果，并在报告中标记
+`generation_mode=deterministic_fallback`，不伪装为在线 AI。受限版会把缺失维度对应的指标、建议和 AI 输入同时移除；日报
 Front Matter、列表、详情和 HTML 持续保留完整性、`data_as_of` 和暂态/最终标记；浏览器分享卡
 只读取允许分享的跑步字段，不展示恢复与健康隐私数据。
 日报还会从训练域读取只读运动员能力画像（与方案草稿同口径的 `capacity_profile(D)`）投影为
@@ -405,6 +405,7 @@ Front Matter、列表、详情和 HTML 持续保留完整性、`data_as_of` 和�
 训练页查看或确认调整，报告页不会改写训练方案或宣称赛事目标已达成/失败。
 
 跑步日报会基于活动汇总、laps/splits、最近个人能力基线和爬升数据生成结构化训练内容识别：
+运动模态 `is_running` 与训练主类型独立；即使具体课型为 `unknown`，仍保留跑步概要和可用的配速、心率、动力学分析。
 训练主类型为有氧、节奏、间歇或未知，地形属性为平路、坡地、越野、山地或未知，并同时展示
 置信度、判断依据和后续训练约束。两类属性可以组合为“坡地间歇跑”等名称。历史训练上下文
 直接读取 SQLite，不要求用户逐日生成日报；平台原始训练负荷保持不变。
@@ -647,23 +648,6 @@ output/
 | `NEURUN_AI_MAX_PENDING` | Web | `64` | 单进程执行中与等待中的不同用户 AI 任务总数 |
 | `NEURUN_AI_WAIT_TIMEOUT_SECONDS` | Web | `5` | AI 执行槽位暂满时不占线程等待的最长秒数 |
 | `NEURUN_AI_DEBUG_PROMPTS` | 本地调试 | `false` | 仅用于在终端输出训练草稿两次 AI 调用的完整 Prompt 与事实载荷；含用户训练事实，严禁线上启用 |
-
-## 单用户脱敏数据导出
-
-服务器本地管理员可使用独立脚本，按应用账号昵称生成未压缩 `.tar`。该能力不属于 `neurun` 主命令，也不注册 MCP tool：
-
-```bash
-python scripts/export_user_data.py \
-  --nickname "Runner" \
-  --destination /secure/existing-directory \
-  --output json
-```
-
-`--nickname` 和 `--destination` 必填；目标目录必须已存在且可写。昵称在两端去空白后执行 Unicode 精确、区分大小写匹配。昵称重名时增加 `--email <应用账号邮箱>` 消歧。`--output` 支持 `table`（默认）和适合自动化调用的单行 `json`。
-
-脚本读取 `NEURUN_DATA_DIR`（兼容 `RUNDOWN_DATA_DIR`，默认项目根目录 `data/`），只包含脱敏账号字段、用户 `data.db`、`memory/` regular files、可选 `sync-tasks.json` 和该用户对应的共享备份。归档路径不会暴露 API Key，最终文件名使用随机请求 ID 与 UTC 时间，权限为 `0600`。
-
-导出永久排除 API Key、密码哈希、`garmin_email`、`tokens/`、`huawei-tokens/`、Provider 凭据、其他用户数据、邀请码、配置、日志、源码、symlink 和特殊文件。`data.db` 缺失、源文件读取期间变化或发现不安全成员时会失败，不生成可误认为成功的归档。完整格式、manifest 和退出码见 [技术设计](docs/design/user-data-archive.md)。
 
 AI 配置写在项目根目录 `.env`（可从 [.env.example](.env.example) 复制）或部署环境变量中。例如：
 

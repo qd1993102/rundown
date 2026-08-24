@@ -1056,11 +1056,11 @@ def cmd_daily(args: argparse.Namespace) -> None:
     ai_result = mem.front_matter.get('ai_insight', {})
     console.print(f"  ✅ md: {mem.path}")
     if mem.front_matter.get("data_readiness") == "limited":
-        console.print("  ⚠️  数据受限：已省略不具备依据的结论，未调用 AI")
-    elif ai_result:
+        console.print("  ⚠️  数据受限：已省略不具备依据的结论")
+    if ai_result.get("generation_mode") == "online_ai":
         console.print(f"  🤖 AI 洞察: {ai_result.get('model', '已配置模型')}")
     else:
-        console.print(f"  🤖 AI 洞察: 规则引擎 fallback")
+        console.print("  🤖 教练分析: 本地规则兜底（在线 AI 未生成有效结果）")
 
     # ── JSON-only 模式（跳过 HTML/终端）──
     if args.format == "json":

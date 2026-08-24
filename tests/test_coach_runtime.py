@@ -151,16 +151,20 @@ def test_coach_insight_share_card_is_bounded_and_optional():
         "conclusion": "状态良好。",
     }
 
-    with pytest.raises(ValueError, match="不能重复"):
-        validate_output("CoachInsight", {
-            "plan_execution": {},
-            "share_card": {
-                "sessions": [
-                    {"session_index": 1, "text": "一次"},
-                    {"session_index": 1, "text": "重复"},
-                ],
-            },
-        })
+    malformed_optional_summary = validate_output("CoachInsight", {
+        "plan_execution": {},
+        "share_card": {
+            "sessions": [
+                "模型把这一条错误地返回成字符串",
+                {"session_index": "bad", "text": "无效索引"},
+                {"session_index": 1, "text": "有效摘要"},
+                {"session_index": 1, "text": "重复摘要"},
+            ],
+        },
+    })
+    assert malformed_optional_summary["share_card"]["sessions"] == [
+        {"session_index": 1, "text": "有效摘要"},
+    ]
 
 
 def test_runner_loads_only_one_explicit_skill():
@@ -426,6 +430,11 @@ def test_openai_compatible_model_uses_generic_config_and_json_protocol(monkeypat
     assert "prompt_parts=skill_instruction:" in caplog.text
     assert "input_sections=goal:" in caplog.text
     assert "synthetic" not in caplog.text
+
+    daily_spec = SkillRegistry.default().get("review-daily-training")
+    with caplog.at_level(logging.INFO, logger="src.coach_runtime.runner"):
+        OpenAICompatibleSkillModel().generate(daily_spec, "生成日报教练分析。", {})
+    assert captured["json"]["max_tokens"] == 4000
 
     main_spec = SkillRegistry.default().get("draft-training-scheme")
     with caplog.at_level(logging.INFO, logger="src.coach_runtime.runner"):

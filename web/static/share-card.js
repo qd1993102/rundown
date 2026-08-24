@@ -25,6 +25,8 @@
   }
 
   function isRunningActivity(activity) {
+    if (activity && activity.is_running === true) return true;
+    if (activity && activity.is_running === false) return false;
     var values = [activityType(activity), activity.activity_name, activity.name, activity.display_name];
     var normalized = values.map(function (value) { return String(value || '').trim().toLowerCase(); }).join(' ');
     var primary = String(activity.primary_type || '').toLowerCase();
@@ -126,9 +128,60 @@
     return notes;
   }
 
+  function safeSessionCharacteristic(item, index) {
+    if (!item || typeof item !== 'object') return '';
+    var parts = [];
+    var cleanPart = function (value) { return value.replace(/[，。；;,.\s]+$/g, ''); };
+    var conclusion = safeCoachText(item.conclusion);
+    if (conclusion) parts.push(cleanPart(conclusion));
+    if (Array.isArray(item.key_data)) {
+      item.key_data.forEach(function (value) {
+        var text = safeCoachText(value);
+        if (text) parts.push(cleanPart(text));
+      });
+    }
+    var text = coachText(parts.filter(Boolean).join('，'), 70);
+    return text ? {label: '第' + (index + 1) + '次跑步', text: text} : null;
+  }
+
+  function enrichStructuredDailyCoachNotes(insight, notes, sessionCount) {
+    var characteristics = Array.isArray(insight.session_characteristics) ? insight.session_characteristics : [];
+    var existingIndexes = {};
+    notes.forEach(function (note) {
+      var match = String(note.label || '').match(/^第(\d+)次跑步$/);
+      if (match) existingIndexes[Number(match[1])] = true;
+    });
+    var insertAt = notes.findIndex(function (note) {
+      return note.conclusion || note.label === '训练提炼' || note.label === '教练结论';
+    });
+    if (insertAt < 0) insertAt = notes.length;
+    var characteristicNotes = [];
+    characteristics.slice(0, 4).forEach(function (item, index) {
+      var sessionIndex = index + 1;
+      if (sessionCount && sessionIndex > sessionCount) return;
+      if (existingIndexes[sessionIndex]) return;
+      var note = safeSessionCharacteristic(item, index);
+      if (note) {
+        characteristicNotes.push(note);
+        existingIndexes[sessionIndex] = true;
+      }
+    });
+    notes.splice.apply(notes, [insertAt, 0].concat(characteristicNotes));
+    if (!notes.some(function (note) { return note.label === '训练提炼'; })) {
+      var effect = coachText(insight.training_effect, 90);
+      if (effect) {
+        var effectAt = notes.findIndex(function (note) { return note.conclusion || note.label === '教练结论'; });
+        if (effectAt < 0) effectAt = notes.length;
+        notes.splice(effectAt, 0, {label: '训练提炼', text: effect});
+      }
+    }
+    return notes;
+  }
+
   function dailyCoachNotes(insight, sessionCount) {
     var structured = structuredDailyCoachNotes(insight, sessionCount);
-    return structured !== null ? structured : legacyDailyCoachNotes(insight);
+    if (structured !== null) return enrichStructuredDailyCoachNotes(insight, structured, sessionCount);
+    return legacyDailyCoachNotes(insight);
   }
 
   function weeklyCoachNotes(report) {

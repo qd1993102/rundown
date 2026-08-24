@@ -350,7 +350,7 @@ Web 数据同步与日报生成是两个独立动作：
 - `POST /api/reports` 由已登录用户显式触发，只读取本地 SQLite 并在工作线程生成指定日期日报；
   不得阻塞 Web 事件循环，也不得隐式访问运动平台；
 - 日报的结构化指标和固定版式由 `memory.py` 在内存中生成，在线 AI 洞察由 `coach.py` 运行一次
-  `review-daily-training` 生成；随后使用最终洞察渲染并落盘一次，使 Front Matter 与正文一致；
+  `review-daily-training` 生成；随后使用最终洞察渲染并落盘一次，使 Front Matter 与正文一致；Dashboard 顶部默认展示完整 CoachInsight 的结构化投影，包括逐次训练特点、训练效果、恢复响应、能力信号、次日约束、证据和缺口；
 - `training_service_factory.py` 把训练服务的活动加载器与上下文装配固化为共享实现（Web 草稿/训练页、
   CLI 日报、MCP 报告统一使用），并对外提供 `build_capacity_athlete_context()`：按 `omitted_sections`
   门禁调用训练域只读 `capacity_profile(D)` 并投影 `athlete_context`，供日报正文与 AI 洞察引用；
@@ -362,7 +362,8 @@ Web 数据同步与日报生成是两个独立动作：
   降级只采纳距离不少于 3 km 且距离、时长均为有限数值的活动，力量训练等距离为 `NULL` 的合法
   缺失活动直接忽略，不得使训练首页或配速刷新失败；PB 时间清洗统一兼容半角与全角冒号，
   无法解析的单条成绩只作无效样本并保留 warning，不得使训练首页失败；
-- 未配置在线模型或调用失败时，日报仍可使用 `memory.py` 的本地规则洞察完成生成；
+- 未配置在线模型或调用失败时，日报仍可使用 `memory.py` 的本地规则洞察完成生成；结果必须标记 `generation_mode=deterministic_fallback`、`semantic_status=unavailable` 和 `fallback_reason`，不能伪装为在线 AI；
+- `session_analyses[].is_running` 表示跑步运动模态，独立于 `primary_type` 课型判定；课型 `unknown` 仍进入跑步教练分析；日报级 ACWR 复用 `training_load` 的统一窗口与计算口径；
 - `sync.html`、`dashboard.html`、`reports.html` 和 `profile.html` 共用同一导航合同：320–640px
   使用固定底部三项导航（图标、文字、`aria-current="page"`），容器按 `safe-area-inset-bottom`
   预留内容空间；641px 以上恢复静态顶部横向导航；主题选择是独立工具，不属于主导航；

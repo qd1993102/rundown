@@ -1028,7 +1028,6 @@ class MemoryWriter:
             from .running_analysis import (
                 analyze_hrv_baseline,
                 check_recovery_performance_consistency,
-                calculate_acwr,
                 assess_injury_risk,
             )
         except Exception:
@@ -1095,18 +1094,24 @@ class MemoryWriter:
 
         # ── S11: ACWR ──
         try:
-            # 合并 7/28 天活动负荷
-            daily_loads = []
-            for act in (twenty_eight_day_activities or []):
-                load = act.get("training_load") or act.get("activity_training_load")
-                if load is not None:
-                    daily_loads.append({"training_load": float(load)})
-            if daily_loads:
-                acwr_result = calculate_acwr(daily_loads)
-                result["acwr"] = asdict(acwr_result)
-            else:
-                result["acwr"] = {"status": "insufficient_data",
-                                   "note": "无有效训练负荷数据"}
+            # 与日报展示使用同一份 7/28 天活动窗口和“28 天周均”口径。
+            # calculate_acwr 的日均口径适合独立分析，但不能和日报的周均口径混用。
+            result["acwr"] = {
+                "status": "ok" if training_load.get("acwr") is not None else "insufficient_data",
+                "acute_load": training_load.get("acute_load_7d"),
+                "chronic_load": training_load.get("chronic_load_28d"),
+                "acwr": training_load.get("acwr"),
+                "risk_level": {
+                    "undertraining": "减量区",
+                    "optimal": "安全区",
+                    "overreaching": "警戒区",
+                    "high_risk": "高风险区",
+                }.get(training_load.get("acwr_status")),
+                "risk_label": training_load.get("acwr_status"),
+                "acute_days": len({str(a.get("activity_date") or a.get("date")) for a in seven_day_activities}),
+                "chronic_days": len({str(a.get("activity_date") or a.get("date")) for a in twenty_eight_day_activities}),
+                "note": "与日报训练负荷使用相同窗口和计算口径",
+            }
         except Exception as exc:
             result["acwr"] = {"status": "error", "reason": str(exc)}
 
@@ -1172,6 +1177,7 @@ class MemoryWriter:
             ActivityFactsNormalizer,
             AthleteBaselineBuilder,
             TrainingSessionAnalyzer,
+            _is_running,
             display_name,
             save_training_analysis,
         )
@@ -1212,6 +1218,9 @@ class MemoryWriter:
                     "analysis_id": analysis_id,
                     "activity_id": activity_id,
                     "activity_name": activity.get("activity_name", ""),
+                    # 运动模态与训练课型是两个独立事实。即使课型因时长或
+                    # 强度证据不足而为 unknown，也必须保留“这是跑步”。
+                    "is_running": _is_running(activity),
                     "display_name": display_name(
                         analysis.primary_type, analysis.terrain,
                     ),
@@ -2056,12 +2065,23 @@ class MemoryWriter:
         else:
             # ── 当天跑步训练分析（只关注跑步，合并多 session 为一次洞察）──
             runs = []
+            running_session_ids = {
+                str(session.get("training_analysis", {}).get("activity_id") or "")
+                for session in sessions
+                if session.get("type") == "running"
+                and isinstance(session.get("training_analysis"), dict)
+            }
             for analysis in session_analyses or []:
-                # 只纳入有跑步主类型判定的 session
-                pt = analysis.get("primary_type", "unknown")
-                if pt == "unknown":
-                    continue
-                runs.append(analysis)
+                # 是否为跑步来自原始活动模态；primary_type 只表示有氧/节奏/
+                # 间歇等课型。课型 unknown 不能把真实跑步降成“非跑步”。
+                is_running = analysis.get("is_running")
+                if is_running is None:
+                    activity_id = str(analysis.get("activity_id") or "")
+                    is_running = activity_id in running_session_ids or str(
+                        analysis.get("primary_type") or ""
+                    ) in {"running", "aerobic", "tempo", "interval", "fartlek", "long"}
+                if is_running:
+                    runs.append(analysis)
             if runs:
                 # 1) 运动概要：汇总当日所有跑步
                 total_run_km = 0.0
@@ -2095,6 +2115,15 @@ class MemoryWriter:
                     overview_summary += f"，累计用时 {int(total_run_s // 60)} min"
                 if run_labels:
                     overview_summary += "（" + "、".join(run_labels) + "）"
+                unknown_type_count = sum(
+                    str(item.get("primary_type") or "unknown") == "unknown"
+                    for item in runs
+                )
+                if unknown_type_count:
+                    overview_summary += (
+                        f"；其中 {unknown_type_count} 次因时长或强度证据不足，"
+                        "具体课型暂无法可靠判定"
+                    )
                 overview_summary += "。"
                 observations.append("运动概要：" + overview_summary)
 
@@ -2371,16 +2400,8 @@ class MemoryWriter:
                 training_risk = hrv_base.get("training_risk")
                 if training_risk and training_risk != "none":
                     warnings.append(f"HRV提示训练风险：{training_risk}")
-            # S10: ACWR
-            acwr_daily = ra_daily.get("acwr") or {}
-            if acwr_daily.get("status") == "ok":
-                acwr_val = acwr_daily.get("acwr")
-                risk_level = acwr_daily.get("risk_level")
-                if acwr_val is not None and risk_level:
-                    observations.append(f"ACWR {acwr_val:.2f}（{risk_level}）")
-                suggestion = acwr_daily.get("suggestion")
-                if suggestion:
-                    recommendations.append(suggestion)
+            # ACWR 已在“近 7 天负荷与恢复”使用唯一日报口径输出；日报级
+            # running_analysis 只把同一值交给伤病风险，不重复生成第二套结论。
             # S11: 恢复-表现一致性
             consistency = ra_daily.get("consistency") or {}
             if consistency.get("status") == "ok":
@@ -2437,6 +2458,9 @@ class MemoryWriter:
             "warnings": warnings,
             "conclusion": conclusion,
             "confidence": confidence,
+            "generation_mode": "deterministic_fallback",
+            "semantic_status": "unavailable",
+            "fallback_reason": "在线 AI 未生成有效结果，当前展示本地规则分析",
         }
 
     # ── 辅助: 运动员水平 ──────────────────────

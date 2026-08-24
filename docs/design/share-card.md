@@ -112,7 +112,7 @@ Adapter 必须创建新对象，禁止把原报告对象透传给布局或绘制
 
 禁止进入 ViewModel 的字段：睡眠、HRV、静息心率、身体电量、恢复评分、训练准备度、ACWR、风险标记、异常提醒、训练建议、方案执行状态、用户昵称、邮箱、Provider 账号和 API Key。
 
-Adapter 必须优先读取日报 `ai_insight.share_card`，不得把完整报告对象或 `observations` 原文透传给 Canvas。模型生成的 `share_card.sessions` 最多 4 条，每条包含正整数、唯一且对应真实跑步 session 的 `session_index`，以及最多 70 个字符的 AI 精简摘要；headline、takeaway、conclusion 各最多 90 个字符。合规摘要按 Canvas 实测宽度完整换行；前端仅对绕过 Schema 的异常或历史字段保留防御性长度上限。所有文本仍执行禁止词过滤，包含“睡眠”“恢复”“HRV”“ACWR”“风险”“警告”“异常”或“建议”的整条文本整体丢弃，大小写不影响英文缩写判断。`warnings`、`recommendations`、`recovery_and_risk` 和 `next_week` 不得读取。旧日报缺少 `share_card` 时，Adapter 才按兼容规则识别 `第N次跑步` 后的安全观察。无安全摘要且无安全结论时，Canvas 不绘制 AI 教练区块。
+Adapter 必须优先读取日报 `ai_insight.share_card`，不得把完整报告对象或 `observations` 原文透传给 Canvas。模型生成的 `share_card.sessions` 最多 4 条，每条包含正整数、唯一且对应真实跑步 session 的 `session_index`，以及最多 70 个字符的 AI 精简摘要；headline、takeaway、conclusion 各最多 90 个字符。合规摘要按 Canvas 实测宽度完整换行；前端仅对绕过 Schema 的异常或历史字段保留防御性长度上限。所有文本仍执行禁止词过滤，包含“睡眠”“恢复”“HRV”“ACWR”“风险”“警告”“异常”或“建议”的整条文本整体丢弃，大小写不影响英文缩写判断。`warnings`、`recommendations`、`recovery_and_risk` 和 `next_week` 不得读取。旧日报缺少 `share_card` 时，Adapter 才按兼容规则识别 `第N次跑步` 后的安全观察。结构化 `share_card` 存在但 sessions/takeaway 稀疏时，Adapter 可从同一份 CoachInsight 的 `session_characteristics` 和 `training_effect` 补充安全运动表现；仍必须经过禁止词过滤、真实跑步 session 数量和索引校验。补充的逐次摘要按距离、配速、步频/步幅等安全事实保留，禁止词命中的整段不进入卡片。无安全摘要且无安全结论时，Canvas 不绘制 AI 教练区块。
 
 PNG 不包含 metadata 扩展，不上传或写入服务端。Object URL 在预览关闭、被替换和页面卸载时调用 `URL.revokeObjectURL()`；Canvas 不引用跨域图片或字体，避免 tainted canvas 和隐式第三方请求。
 

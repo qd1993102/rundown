@@ -82,10 +82,12 @@ def create_server(
         athlete_context = build_capacity_athlete_context(
             config, d, omitted_sections=readiness.omitted_sections,
         )
+        # MCP 与 Web/CLI 使用相同的日报洞察管线：受限版只省略缺失维度，
+        # 不能通过空 dict 静默跳过当日跑步的确定性兜底分析。
         return memory_store.generate_daily_report(
             str(user_id),
             d,
-            ai_insight={} if readiness.omitted_sections else None,
+            ai_insight=None,
             readiness=readiness.to_dict(),
             athlete_context=athlete_context,
         )

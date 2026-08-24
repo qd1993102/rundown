@@ -4,15 +4,15 @@
 
 ### Added
 
-- **改动描述**: 新增独立的单用户脱敏数据导出脚本，可按精确昵称和可选邮箱消歧，将账号白名单字段、用户数据库、memory、同步任务及专属备份打包为带 SHA-256 manifest 的未压缩 `0600` tar；永久排除 API Key、密码哈希和 Token，且不挂载到 `neurun` 主命令或 MCP。
-- **影响范围**: `src/user_data_archive.py`、`scripts/export_user_data.py`、`tests/test_user_data_archive.py`
-- **关联文档**: [技术设计](design/user-data-archive.md)、[开发过程](process/2026-08-24-user-data-tar-export.md)
-
 - **改动描述**: 日报 CoachInsight 新增结构化 `share_card` AI 精简摘要；同一次教练调用基于完整训练事实生成 headline、逐次跑步摘要、训练提炼和分享结论，并限制摘要条数与长度。
 - **影响范围**: `src/coach_runtime/schemas.py`、`src/coach_runtime/runner.py`、`prompts/skills/review-daily-training/SKILL.md`、`web/static/share-card.js`
 - **关联文档**: [分享卡产品方案](product/share-card.md)、[分享卡技术设计](design/share-card.md)、[过程记录](process/2026-08-24-structured-share-card-ai-summary.md)
 
 ### Fixed
+
+- **改动描述**: 修复短跑活动的训练课型为 `unknown` 时被日报误报为“非跑步”并隐藏教练分析的问题；分离 `is_running` 运动模态与 `primary_type` 课型判定，保留课型未知跑步的配速、心率和动力学分析；统一日报与跑步分析的 ACWR 口径，并显式标记在线 AI 与本地规则兜底来源；可选分享卡摘要的非法条目不再阻断核心 CoachInsight；日报 Skill 输出预算提高至 4000 tokens，避免完整结构化洞察被截断；Dashboard 现在默认展示完整结构化教练分析，包括逐次训练特点、训练效果、恢复反应、能力信号、次日约束、证据和数据缺口；分享卡遇到稀疏的 AI `share_card` 时，会从安全的逐次训练特点和训练效果补足运动分析。
+- **影响范围**: `src/memory.py`、`src/coach.py`、`src/mcp_server.py`、`src/main.py`、`src/render.py`、`web/templates/dashboard.html`、`prompts/skills/review-daily-training/SKILL.md`
+- **关联文档**: [Bug 记录](bugfixes/2026-08-24-daily-running-coach-fallback.md)、[日报产品方案](product/daily-report.md)、[记忆系统设计](design/memory-system.md)
 
 - **改动描述**: 修复 PB 时间使用全角冒号（如 `18：50`）时配速清洗抛出 `ValueError` 并导致训练首页返回 503 的问题；现在统一兼容全角冒号，并跳过无法解析的单条 PB。
 - **影响范围**: `src/pace_zones.py`、`tests/test_pace_zones.py`

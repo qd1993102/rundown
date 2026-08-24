@@ -27,7 +27,6 @@
 | [summary-extraction.md](summary-extraction.md) | 运动摘要提炼 — 单函数粒度自适应（L0/L1/L2）、版本化 schema、毫秒级实测、证据接入训练内容识别与报告 AI |
 | [frontend-design-system.md](frontend-design-system.md) | 前端设计系统 — 三主题 token、组件库、签名元素、动效框架与审计报告 |
 | [share-card.md](share-card.md) | 分享卡浏览器 Canvas 生成 — 白名单 ViewModel、接口兼容、状态机、迁移与测试 |
-| [user-data-archive.md](user-data-archive.md) | 独立脚本生成单用户脱敏 TAR — allowlist、昵称消歧、manifest、完整性校验与原子发布 |
 | [contact-community.md](contact-community.md) | 联系入口与可更新群二维码 — 统一注入、权限、响应式交互与运维替换 |
 | [13-sae-deployment.md](13-sae-deployment.md) | §13 Web 应用部署方案 — 多用户、数据隔离、API、国内轻量/ECS |
 | [14-overseas-deployment.md](14-overseas-deployment.md) | §14 海外部署 — VPS/域名/Cloudflare 渠道选型、架构与验收（未实施） |

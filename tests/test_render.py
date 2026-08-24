@@ -140,6 +140,21 @@ class TestHTMLComponents:
         assert "无法判断当天是否训练或休息" in s
         assert "<h3>休息日</h3>" not in s
 
+    def test_ai_section_labels_deterministic_fallback_as_local_rules(self):
+        fm = dict(SAMPLE_FM)
+        fm["ai_insight"] = {
+            "conclusion": "根据当前事实保守安排",
+            "observations": ["当日完成跑步"],
+            "generation_mode": "deterministic_fallback",
+            "semantic_status": "unavailable",
+        }
+
+        html = _ai_section(fm)
+
+        assert "本地规则教练分析" in html
+        assert "在线 AI 未生成有效结果" in html
+        assert "AI 教练洞察" not in html
+
     def test_load(self):
         l = _load(SAMPLE_FM)
         assert "1.05" in l

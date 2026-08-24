@@ -809,6 +809,13 @@ def test_daily_templates_are_mobile_first_and_support_local_png_export():
     assert "repeat(var(--visible-count,3),minmax(0,1fr))" in dashboard
     assert "repeat(min(var(--visible-count,2),2),minmax(0,1fr))" in dashboard
     assert "今天对计划意味着什么" in dashboard
+    assert "renderCoachDetails(ai)" in dashboard
+    assert "查看完整教练分析" in dashboard
+    assert "session_characteristics" in dashboard
+    assert "ai.recommendations" in dashboard
+    assert "ai.warnings" in dashboard
+    assert "ai.generation_mode==='online_ai'" in dashboard
+    assert "本地规则分析：在线 AI 未生成有效结果" in dashboard
     assert "@media(min-width:641px)" in dashboard
     assert "min-height:44px" in dashboard
     assert "d.daily_activities||d.yesterday_activities" in dashboard
@@ -1090,6 +1097,39 @@ def test_share_card_drops_forbidden_structured_summary_without_dropping_other_se
     serialized = json.dumps(view_model, ensure_ascii=False)
     assert "恢复" not in serialized
     assert "建议" not in serialized
+
+
+def test_share_card_enriches_sparse_ai_summary_from_session_characteristics():
+    view_model = _share_card_view_model("daily", {
+        "report_date": "2026-08-24",
+        "session_analyses": [
+            {"is_running": True, "activity_name": "基准跑", "session_summary": {
+                "volume": {"distance_m": 730, "duration_s": 438},
+                "pace_profile": {"avg_pace_sec_per_km": 599},
+            }},
+            {"is_running": True, "activity_name": "跑步机", "session_summary": {
+                "volume": {"distance_m": 2050, "duration_s": 738},
+                "pace_profile": {"avg_pace_sec_per_km": 361},
+            }},
+        ],
+        "ai_insight": {
+            "share_card": {
+                "headline": "完成 2 次跑步，总距离 2.78km",
+                "sessions": [], "takeaway": "", "conclusion": "完成短距离有氧训练。",
+            },
+            "session_characteristics": [
+                {"conclusion": "基准跑为短距离轻松有氧跑。", "key_data": ["配速 9'59\"/km", "步频 128 spm"]},
+                {"conclusion": "跑步机为短距离有氧跑，节奏稳定。", "key_data": ["配速 6'01\"/km", "步频 158 spm"]},
+            ],
+            "training_effect": "两次训练均产生轻微有氧收益。",
+        },
+    })
+
+    assert [note["label"] for note in view_model["coachNotes"]] == [
+        "训练摘要", "第1次跑步", "第2次跑步", "训练提炼", "教练结论",
+    ]
+    assert "步频 158 spm" in view_model["coachNotes"][2]["text"]
+    assert "。 ，" not in view_model["coachNotes"][1]["text"]
 
 
 def test_share_card_validates_session_indexes_and_fallback_conclusion_length():

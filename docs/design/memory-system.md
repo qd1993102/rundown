@@ -1053,6 +1053,14 @@ readiness 快照传入写入器；写入器按 `omitted_sections` 把对应维�
 按省略维度保留未知、只解释可用事实，不因辅助维度缺失整块跳过洞察）。旧日报缺少这些字段时读取为
 `data_readiness=unknown`，不回填伪造状态。
 
+日报洞察的 `ai_insight` 同时保存语义来源：在线 `review-daily-training` 成功时为
+`generation_mode=online_ai`、`semantic_status=available`、`model=<配置模型>`；未配置、超时、
+上游失败或 Schema 无效时为 `generation_mode=deterministic_fallback`、`semantic_status=unavailable`，
+并写入 `fallback_reason`。展示层必须明确区分两种来源。`share_card` 是可选的展示摘要，其单条
+非法 session 不得阻断核心 `CoachInsight`，只丢弃该条摘要。跑步活动的 `session_analyses[].is_running`
+独立于 `primary_type`：课型为 `unknown` 时仍保留跑步分析；日报级 ACWR 复用 `training_load` 的
+同一 7/28 天窗口和周均口径，避免确定性分析与日报观察产生冲突值。`review-daily-training` 输出预算为 4000 tokens，以覆盖完整观察、证据和可选分享摘要；解析或校验失败仍保留本地确定性洞察并标记语义不可用。
+
 ###### 日报能力与近期负荷背景引用（已实现）
 
 日报从训练域只读能力画像投影 `athlete_context` 作为当日/近期负荷的解释背景，与方案草稿

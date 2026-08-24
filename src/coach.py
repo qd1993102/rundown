@@ -139,6 +139,9 @@ def get_coach_insight(
         }
     result["plan_adjusted"] = False
     result["confidence"] = "ai"
+    result["generation_mode"] = "online_ai"
+    result["semantic_status"] = "available"
+    result["fallback_reason"] = None
     result["model"] = ai_config.model
     logger.info("在线日报教练洞察已生成 (review-daily-training)")
     return result

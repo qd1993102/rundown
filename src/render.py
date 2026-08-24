@@ -259,13 +259,20 @@ def _ai_section(fm: dict) -> str:
     recs = ai.get('recommendations', [])
     conf = ai.get('confidence', 'medium')
     emoji = {'high':'🎯','medium':'💡','low':'🔍','ai':'🤖'}.get(conf, '💡')
-    model = f'<span style="font-size:10px;color:var(--text-muted);margin-left:8px;font-weight:400">{ai.get("model","")}</span>' if ai.get('model') else ''
+    online = ai.get("generation_mode") == "online_ai"
+    model = (
+        f'<span style="font-size:10px;color:var(--text-muted);margin-left:8px;font-weight:400">在线 AI: {ai.get("model", "")}</span>'
+        if online and ai.get("model") else ''
+    )
     parts = []
     if conclusion: parts.append(f'<div class="ai-conclusion">{emoji} {conclusion}{model}</div>')
     if observations: parts.append(f'<div class="ai-block obs"><h4>观察</h4><ul>{"".join(f"<li>{o}</li>" for o in observations)}</ul></div>')
     if warnings: parts.append(f'<div class="ai-block warn"><h4>⚠️ 注意</h4><ul>{"".join(f"<li>{w}</li>" for w in warnings)}</ul></div>')
     if recs: parts.append(f'<div class="ai-block rec"><h4>建议</h4><ul>{"".join(f"<li>{r}</li>" for r in recs)}</ul></div>')
-    return f'<div class="ai-section"><h3>🤖 AI 教练洞察</h3>{"".join(parts)}</div>'
+    heading = "🤖 AI 教练洞察" if online else "📋 本地规则教练分析"
+    if ai.get("generation_mode") == "deterministic_fallback":
+        parts.insert(0, '<div class="ai-model">在线 AI 未生成有效结果，以下为本地规则分析。</div>')
+    return f'<div class="ai-section"><h3>{heading}</h3>{"".join(parts)}</div>'
 
 
 def _pace_text(pace_sec_per_km) -> str:

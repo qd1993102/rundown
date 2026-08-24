@@ -100,6 +100,21 @@
 .ai-block ul{list-style:none}
 .ai-block li{font-size:13px;color:var(--text-secondary);padding:2px 0}
 .ai-model{font-size:10px;color:var(--text-muted);margin-top:12px;text-align:right}
+.ai-detail{margin-top:12px;border-top:1px solid var(--border-subtle);padding-top:10px}
+.ai-detail summary{cursor:pointer;color:var(--text);font-size:12px;font-weight:700;list-style:none}
+.ai-detail summary::-webkit-details-marker{display:none}
+.ai-detail summary::after{content:'+';float:right;color:var(--accent);font-size:16px;line-height:12px}
+.ai-detail[open] summary::after{content:'−'}
+.ai-detail-body{display:grid;gap:10px;margin-top:12px}
+.ai-detail-card{padding:10px 12px;border-radius:10px;background:var(--bg-subtle);border:1px solid var(--border-subtle)}
+.ai-detail-card h4{font-size:11px;color:var(--text-muted);margin:0 0 5px;font-weight:700}
+.ai-detail-card p,.ai-detail-card li{font-size:13px;color:var(--text-secondary);line-height:1.65}
+.ai-detail-card ul{margin:0;padding-left:18px}
+.ai-characteristic{padding:7px 0;border-top:1px solid var(--border-subtle)}
+.ai-characteristic:first-child{border-top:0;padding-top:0}
+.ai-characteristic strong{display:block;color:var(--text);font-size:13px;font-weight:650}
+.ai-characteristic small{display:block;color:var(--text-muted);font-size:11px;margin-top:3px}
+.ai-evidence{font-size:11px!important;color:var(--text-muted)!important}
 
 /* ── Empty / Footer ── */
 .empty-state{text-align:center;padding:60px 20px}
@@ -310,6 +325,45 @@ function setTheme(t){
   });
 }
 
+function coachDetailList(title, items){
+  if(!Array.isArray(items)||!items.length)return '';
+  return '<div class="ai-detail-card"><h4>'+esc(title)+'</h4><ul>'+items.map(function(item){return '<li>'+esc(item)+'</li>';}).join('')+'</ul></div>';
+}
+
+function renderCoachDetails(ai){
+  var blocks=[];
+  if(ai.session_summary)blocks.push('<div class="ai-detail-card"><h4>训练摘要</h4><p>'+esc(ai.session_summary)+'</p></div>');
+  if(Array.isArray(ai.session_characteristics)&&ai.session_characteristics.length){
+    blocks.push('<div class="ai-detail-card"><h4>逐次训练特点</h4>'+ai.session_characteristics.map(function(item){
+      if(!item||typeof item!=='object')return '';
+      var data=Array.isArray(item.key_data)?item.key_data:[];
+      return '<div class="ai-characteristic"><strong>'+esc(item.conclusion||'训练特点')+'</strong>'+
+        (data.length?'<small>'+data.map(esc).join(' · ')+'</small>':'')+
+        (item.evidence?'<small>'+esc(item.evidence)+'</small>':'')+'</div>';
+    }).join('')+'</div>');
+  }
+  if(ai.training_effect)blocks.push('<div class="ai-detail-card"><h4>训练效果</h4><p>'+esc(ai.training_effect)+'</p></div>');
+  if(ai.recovery_response)blocks.push('<div class="ai-detail-card"><h4>恢复反应</h4><p>'+esc(ai.recovery_response)+'</p></div>');
+  blocks.push(coachDetailList('能力信号',ai.capability_signals));
+  blocks.push(coachDetailList('教练建议',ai.recommendations));
+  blocks.push(coachDetailList('风险提醒',ai.warnings));
+  blocks.push(coachDetailList('次日约束',ai.next_day_constraints));
+  if(Array.isArray(ai.evidence)&&ai.evidence.length){
+    blocks.push('<div class="ai-detail-card"><h4>关键证据</h4><ul>'+ai.evidence.map(function(item){
+      if(!item||typeof item!=='object')return '';
+      var value=item.value===null||item.value===undefined?'未知':String(item.value);
+      return '<li class="ai-evidence">'+esc(item.source||'事实')+' · '+esc(item.field||'')+'：'+esc(value)+'</li>';
+    }).join('')+'</ul></div>');
+  }
+  if(Array.isArray(ai.gaps)&&ai.gaps.length){
+    blocks.push('<div class="ai-detail-card"><h4>数据缺口</h4><ul>'+ai.gaps.map(function(item){
+      if(!item||typeof item!=='object')return '';
+      return '<li>'+esc(item.affects||item.reason||item.field||'该维度数据不足')+'</li>';
+    }).join('')+'</ul></div>');
+  }
+  return blocks.filter(Boolean).length?'<details class="ai-detail" open><summary>查看完整教练分析</summary><div class="ai-detail-body">'+blocks.filter(Boolean).join('')+'</div></details>':'';
+}
+
 // ── Render ──
 function render(d){
   currentReport=d&&d.has_data?d:null;
@@ -337,7 +391,12 @@ function render(d){
   var aiObs=(ai.observations||[]).filter(function(o){return o.indexOf('训练结构识别')!==0});
   var conclusionHtml='<h2>今天对计划意味着什么</h2><p class="ai-conclusion">'+esc(conclusionText)+'</p>';
   if(aiObs.length){conclusionHtml+='<div class="observation-list">'+aiObs.map(function(o){return '<div class="ai-block"><ul><li>'+esc(o)+'</li></ul></div>'}).join('')+'</div>';}
-  if(ai.model)conclusionHtml+='<div class="ai-model">模型: '+ai.model+(ai.plan_adjusted?' | 已生成训练调整建议':'')+'</div>';
+  conclusionHtml+=renderCoachDetails(ai);
+  if(ai.generation_mode==='online_ai'&&ai.model){
+    conclusionHtml+='<div class="ai-model">在线 AI: '+esc(ai.model)+(ai.plan_adjusted?' | 已生成训练调整建议':'')+'</div>';
+  }else if(ai.generation_mode==='deterministic_fallback'){
+    conclusionHtml+='<div class="ai-model">本地规则分析：在线 AI 未生成有效结果</div>';
+  }
   conclusion.innerHTML=conclusionHtml;
   conclusion.hidden=false;
 

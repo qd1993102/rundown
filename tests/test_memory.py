@@ -256,6 +256,34 @@ class TestAIInsight:
         assert "昨夜睡眠" in observations
         assert "当日完成 2 节训练" not in observations
         assert "昨天完成" not in observations
+        assert result["generation_mode"] == "deterministic_fallback"
+        assert result["semantic_status"] == "unavailable"
+        assert "在线 AI" in result["fallback_reason"]
+
+    def test_unknown_session_type_remains_running_and_gets_coach_analysis(self):
+        analysis = {
+            "activity_id": "short-run",
+            "is_running": True,
+            "primary_type": "unknown",
+            "session_summary": {
+                "volume": {"distance_m": 1763, "duration_s": 811},
+                "pace_profile": {"avg_pace_sec_per_km": 460},
+                "intensity": {"hr_bands_pct": {"145-160": 100.0}, "basis": "hr"},
+                "structure": {"avg_cadence": 139.0, "avg_stride": 95.0},
+                "effect": {"aerobic_training_effect": 2.3, "estimated": False},
+            },
+            "structure_classification": {
+                "structure_type": "aerobic", "label": "有氧",
+            },
+        }
+
+        result = self._base_insight(session_analyses=[analysis])
+
+        joined = "\n".join(result["observations"])
+        assert "运动概要：当日跑步 1.8 km" in joined
+        assert "具体课型暂无法可靠判定" in joined
+        assert "强度分布" in joined
+        assert "非跑步类型" not in joined
 
     def test_observation_three_blocks_in_order(self):
         # 训练日：运动概要 → 强度分布解释与分析 → 恢复分析
@@ -364,6 +392,24 @@ class TestAIInsight:
         joined = "\n".join(result["observations"])
         assert "稳定配速" not in joined
         assert "10.0km" in joined
+
+    def test_daily_running_analysis_reuses_report_acwr_contract(self):
+        result = MemoryWriter._build_running_analysis_daily(
+            [],
+            {
+                "acute_load_7d": 91.0,
+                "chronic_load_28d": 22.7,
+                "acwr": 4.0,
+                "acwr_status": "high_risk",
+            },
+            {}, {}, [],
+            [{"activity_date": "2026-08-24", "training_load": 91.0}],
+            [{"activity_date": "2026-08-24", "training_load": 91.0}],
+        )
+
+        assert result["acwr"]["acwr"] == 4.0
+        assert result["acwr"]["risk_level"] == "高风险区"
+        assert result["acwr"]["note"] == "与日报训练负荷使用相同窗口和计算口径"
 
     def test_observation_seven_day_load_and_recovery_trend(self):
         # 近 7 天负荷与恢复：ACWR + 睡眠/HRV 趋势，正确按老→新计算方向

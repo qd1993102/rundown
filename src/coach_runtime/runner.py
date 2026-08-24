@@ -372,6 +372,7 @@ class OpenAICompatibleSkillModel:
             # 实测 7.4KB（≈2000+ tokens）会被 1800 截断导致 JSON 解析失败（503），同样放宽。
             "max_tokens": (
                 4000 if spec.name in {
+                    "review-daily-training",
                     "build-training-framework", "build-near-term-schedule",
                     "revise-training-scheme",
                 }

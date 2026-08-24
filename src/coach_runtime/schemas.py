@@ -40,38 +40,35 @@ def _share_card_text(value: Any, limit: int) -> str:
 
 def _validate_share_card(value: Any) -> dict[str, Any]:
     """Normalize the optional AI-generated share-card summary contract."""
-    if value is None:
-        value = {}
-    item = _mapping(value, "share_card")
+    if value is None or not isinstance(value, dict):
+        return {"headline": "", "sessions": [], "takeaway": "", "conclusion": ""}
+    item = value
+    raw_sessions = item.get("sessions", [])
+    if not isinstance(raw_sessions, list):
+        raw_sessions = []
     sessions: list[dict[str, Any]] = []
     session_indexes: set[int] = set()
-    for index, raw_session in enumerate(_list(item.get("sessions", []), "share_card.sessions")):
+    for index, raw_session in enumerate(raw_sessions):
         if len(sessions) >= 4:
             break
-        session = _mapping(raw_session, f"share_card.sessions[{index}]")
+        # share_card 是可选展示摘要。模型偶尔会把某条摘要返回成字符串或
+        # 使用重复索引；丢弃该条即可，不能让核心 CoachInsight 整体降级。
+        if not isinstance(raw_session, dict):
+            continue
+        session = raw_session
         raw_session_index = session.get("session_index")
         if isinstance(raw_session_index, bool):
-            raise SkillSchemaError(
-                f"share_card.sessions[{index}].session_index 无效"
-            )
+            continue
         if isinstance(raw_session_index, float) and not raw_session_index.is_integer():
-            raise SkillSchemaError(
-                f"share_card.sessions[{index}].session_index 必须为整数"
-            )
+            continue
         try:
             session_index = int(raw_session_index)
-        except (TypeError, ValueError) as exc:
-            raise SkillSchemaError(
-                f"share_card.sessions[{index}].session_index 无效"
-            ) from exc
+        except (TypeError, ValueError):
+            continue
         if session_index <= 0:
-            raise SkillSchemaError(
-                f"share_card.sessions[{index}].session_index 必须为正整数"
-            )
+            continue
         if session_index in session_indexes:
-            raise SkillSchemaError(
-                f"share_card.sessions[{index}].session_index 不能重复"
-            )
+            continue
         session_indexes.add(session_index)
         sessions.append({
             "session_index": session_index,

@@ -57,6 +57,9 @@ def test_daily_insight_uses_one_explicit_skill_and_structured_facts(monkeypatch)
     assert "tools" not in context.to_payload()
     assert result is not None
     assert result["model"] == "example-model"
+    assert result["generation_mode"] == "online_ai"
+    assert result["semantic_status"] == "available"
+    assert result["fallback_reason"] is None
     assert result["conclusion"] == "当日状态稳定"
     assert result["observations"] == ["2026-08-02完成训练"]
     assert result["recommendations"] == ["2026-08-04恢复"]
