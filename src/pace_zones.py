@@ -273,6 +273,15 @@ def _activity_in_hr_zone(avg_hr: float | None, hr_zone: tuple[int, int]) -> bool
     return avg_hr is not None and hr_zone[0] <= avg_hr <= hr_zone[1]
 
 
+def _finite_number(value: Any) -> float:
+    """将活动数值安全转换为有限浮点数，无效值按 0 处理。"""
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return 0.0
+    return number if math.isfinite(number) else 0.0
+
+
 def calibrate_from_recent_activities(
     baseline: dict[str, tuple[float, float]],
     hr_zones: dict[str, tuple[int, int]],
@@ -305,8 +314,8 @@ def calibrate_from_recent_activities(
     hr_high_count = 0
     for act in all_recent:
         avg_hr = act.get("avg_heart_rate")
-        d = act.get("distance_meters", 0)
-        t = act.get("duration_seconds", 0)
+        d = _finite_number(act.get("distance_meters"))
+        t = _finite_number(act.get("duration_seconds"))
         if d > 0 and t > 0 and avg_hr:
             if t / (d / 1000) <= z2_pace[1] and avg_hr > z2_hr[1]:
                 hr_high_count += 1
@@ -330,8 +339,8 @@ def calibrate_from_recent_activities(
 
     actual_paces: list[float] = []
     for act in recent:
-        d = act.get("distance_meters", 0)
-        t = act.get("duration_seconds", 0)
+        d = _finite_number(act.get("distance_meters"))
+        t = _finite_number(act.get("duration_seconds"))
         if d > 0 and t > 0:
             actual_paces.append(t / (d / 1000))
 
@@ -432,17 +441,10 @@ def fallback_from_recent_avg(
     if not activities:
         return None, "无任何跑步记录"
 
-    def finite_number(value: Any) -> float:
-        try:
-            number = float(value)
-        except (TypeError, ValueError):
-            return 0.0
-        return number if math.isfinite(number) else 0.0
-
     running = [
         a for a in activities
-        if finite_number(a.get("distance_meters")) >= 3000
-        and finite_number(a.get("duration_seconds")) > 0
+        if _finite_number(a.get("distance_meters")) >= 3000
+        and _finite_number(a.get("duration_seconds")) > 0
     ]
     running.sort(key=lambda a: str(a.get("activity_date", "")), reverse=True)
     recent = running[:3]
@@ -452,8 +454,8 @@ def fallback_from_recent_avg(
 
     paces = []
     for act in recent:
-        d = finite_number(act.get("distance_meters"))
-        t = finite_number(act.get("duration_seconds"))
+        d = _finite_number(act.get("distance_meters"))
+        t = _finite_number(act.get("duration_seconds"))
         if d > 0 and t > 0:
             paces.append(t / (d / 1000))
 

@@ -10,6 +10,10 @@
 
 ### Fixed
 
+- **改动描述**: 修复近期活动反馈校准遇到 `distance_meters=NULL` 时在数值比较处抛出 `TypeError` 并中断 `calibrate_from_recent_activities()` 的问题；距离和时长现在统一按有限数值校验，无效活动被忽略，其他有效活动仍可继续参与校准。
+- **影响范围**: `src/pace_zones.py`、`tests/test_pace_zones.py`
+- **关联文档**: [Bug 记录](bugfixes/2026-08-25-calibration-null-activity-distance.md)、[模块设计](design/04-modules.md)
+
 - **改动描述**: 继续优化 `GET /api/training/home`：在请求级活动快照之外，对训练方案和记忆 Markdown 增加带 `mtime + size` 校验的进程级 YAML 解析缓存，写入时自动失效；冷读与热读数据口径保持一致。
 - **影响范围**: `src/training_service_factory.py`, `src/training.py`, `src/memory.py`, `tests/test_training_service_factory.py`, `tests/test_memory.py`
 - **关联文档**: [Bug 记录](bugfixes/2026-08-25-training-home-slow-read.md)、[训练系统技术设计](design/training-system.md)

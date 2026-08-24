@@ -359,8 +359,8 @@ Web 数据同步与日报生成是两个独立动作：
   计算 Z1–Z5 配速/心率区间；结果缓存写入 `fitness-assessment.md` front matter 的 `pace_zones` 字段，
   「我的」页配速区间卡片与训练 `pace_calibration_profile()`（`pace_targets` 回填依据）共用该缓存，
   `refresh_pace_zones_if_stale()` 按 7 天新鲜度惰性刷新，同步完成后由 Web 强制刷新；近期平均配速
-  降级只采纳距离不少于 3 km 且距离、时长均为有限数值的活动，力量训练等距离为 `NULL` 的合法
-  缺失活动直接忽略，不得使训练首页或配速刷新失败；PB 时间清洗统一兼容半角与全角冒号，
+  降级与近期反馈校准只采纳距离、时长均为有限正数的有效活动（fallback 另要求距离不少于 3 km），
+  力量训练等距离为 `NULL` 的合法缺失活动直接忽略，不得使训练首页或配速刷新失败；PB 时间清洗统一兼容半角与全角冒号，
   无法解析的单条成绩只作无效样本并保留 warning，不得使训练首页失败；
 - 未配置在线模型或调用失败时，日报仍可使用 `memory.py` 的本地规则洞察完成生成；结果必须标记 `generation_mode=deterministic_fallback`、`semantic_status=unavailable` 和 `fallback_reason`，不能伪装为在线 AI；
 - `session_analyses[].is_running` 表示跑步运动模态，独立于 `primary_type` 课型判定；课型 `unknown` 仍进入跑步教练分析；日报级 ACWR 复用 `training_load` 的统一窗口与计算口径；

@@ -150,6 +150,26 @@ class TestCalibration:
         assert meta["hr_high_count"] >= 2
         assert meta["force_slow_today"] is True
 
+    def test_ignores_null_distance_without_aborting_calibration(self):
+        baseline = {"z2": (350, 365), "z4": (292, 297)}
+        activities = [
+            {"avg_heart_rate": 140, "distance_meters": None,
+             "duration_seconds": 1800, "activity_date": "2026-08-13"},
+            {"avg_heart_rate": 140, "distance_meters": 5000,
+             "duration_seconds": 1800, "activity_date": "2026-08-12"},
+            {"avg_heart_rate": 140, "distance_meters": 5000,
+             "duration_seconds": 1800, "activity_date": "2026-08-11"},
+            {"avg_heart_rate": 140, "distance_meters": 5000,
+             "duration_seconds": 1800, "activity_date": "2026-08-10"},
+        ]
+
+        _, meta, _ = calibrate_from_recent_activities(
+            baseline, {"z2": self.Z2_HR}, activities
+        )
+
+        assert meta["z2_activities_found"] == 4
+        assert meta["samples_used"] == 3
+
 
 class TestEnvironmentCompensation:
     def test_hot_hr_priority_mode(self):
