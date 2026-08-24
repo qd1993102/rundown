@@ -42,6 +42,27 @@ EMPTY_HEALTH: dict = {}
 
 
 class TestFrontMatter:
+    def test_memory_file_cache_reloads_when_file_changes(self, tmp_path):
+        path = tmp_path / "daily.md"
+        path.write_text(
+            build_memory_file({"type": "daily_report", "date": "2026-08-25"}, "old"),
+            encoding="utf-8",
+        )
+
+        first = Memory.from_file(path)
+        second = Memory.from_file(path)
+        assert first is not second
+        assert first.front_matter == second.front_matter
+        assert second.body.strip() == "old"
+
+        path.write_text(
+            build_memory_file({"type": "daily_report", "date": "2026-08-26"}, "new"),
+            encoding="utf-8",
+        )
+        refreshed = Memory.from_file(path)
+        assert str(refreshed.front_matter["date"]) == "2026-08-26"
+        assert refreshed.body.strip() == "new"
+
     def test_parse(self):
         text = "---\ntype: daily_report\ndate: 2026-06-25\n---\n\n# Hello\nWorld"
         fm, body = parse_front_matter(text)

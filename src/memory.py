@@ -12,6 +12,7 @@ from __future__ import annotations
 import copy
 import logging
 import re
+import threading
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
 from enum import Enum
@@ -31,6 +32,10 @@ from .training_day_summary import TrainingDaySummaryBuilder
 from .training_planning import ensure_training_prescription, workout_steps_summary
 
 logger = logging.getLogger(__name__)
+
+_MEMORY_FILE_CACHE: dict[str, tuple[int, int, "Memory"]] = {}
+_MEMORY_FILE_CACHE_MAX = 4096
+_MEMORY_FILE_CACHE_GUARD = threading.Lock()
 
 
 def load_platform_thresholds(
@@ -184,28 +189,45 @@ class Memory:
 
     @classmethod
     def from_file(cls, path: Path) -> Memory | None:
-        """从文件加载记忆。"""
-        if not path.exists():
+        """从文件加载记忆，并按文件签名复用解析结果。"""
+        key = str(path)
+        try:
+            stat = path.stat()
+        except FileNotFoundError:
+            with _MEMORY_FILE_CACHE_GUARD:
+                _MEMORY_FILE_CACHE.pop(key, None)
             return None
+        signature = (stat.st_mtime_ns, stat.st_size)
+        with _MEMORY_FILE_CACHE_GUARD:
+            cached = _MEMORY_FILE_CACHE.get(key)
+            if cached and cached[:2] == signature:
+                return copy.deepcopy(cached[2])
         try:
             text = path.read_text(encoding="utf-8")
             fm, body = parse_front_matter(text)
             memory_id = fm.get("id", path.stem)
             memory_type = MemoryType(fm.get("type", "activity_summary"))
-            return cls(
+            result = cls(
                 id=memory_id,
                 type=memory_type,
                 path=path,
                 front_matter=fm,
                 body=body,
             )
+            with _MEMORY_FILE_CACHE_GUARD:
+                _MEMORY_FILE_CACHE[key] = (signature[0], signature[1], copy.deepcopy(result))
+                while len(_MEMORY_FILE_CACHE) > _MEMORY_FILE_CACHE_MAX:
+                    _MEMORY_FILE_CACHE.pop(next(iter(_MEMORY_FILE_CACHE)))
+            return result
         except Exception as exc:
             logger.warning("加载记忆文件失败 %s: %s", path, exc)
             return None
 
     def save(self) -> None:
-        """保存记忆到文件。"""
+        """保存记忆到文件，并驱逐旧的解析缓存。"""
         content = build_memory_file(self.front_matter, self.body)
+        with _MEMORY_FILE_CACHE_GUARD:
+            _MEMORY_FILE_CACHE.pop(str(self.path), None)
         atomic_write_private(self.path, content)
 
     @property

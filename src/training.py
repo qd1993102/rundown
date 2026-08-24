@@ -71,6 +71,9 @@ class TrainingError(ValueError):
 
 _LOCKS: dict[str, threading.RLock] = {}
 _LOCKS_GUARD = threading.Lock()
+_DOCUMENT_CACHE: dict[str, tuple[int, int, dict[str, Any]]] = {}
+_DOCUMENT_CACHE_MAX = 2048
+_DOCUMENT_CACHE_GUARD = threading.Lock()
 
 
 def _lock_for(root: Path) -> threading.RLock:
@@ -391,13 +394,33 @@ def _coerce_goal_intent(value: Any, *, target_time: Any = None) -> str:
 
 
 def _read_document(path: Path) -> dict[str, Any] | None:
-    if not path.exists():
+    """Read a private YAML document with stat-validated process caching.
+
+    Training home reads the same plan/report documents through several repository
+    projections. The mtime/size signature keeps the cache safe across requests,
+    while writes explicitly evict entries below.
+    """
+    key = str(path)
+    try:
+        stat = path.stat()
+    except FileNotFoundError:
+        with _DOCUMENT_CACHE_GUARD:
+            _DOCUMENT_CACHE.pop(key, None)
         return None
+    signature = (stat.st_mtime_ns, stat.st_size)
+    with _DOCUMENT_CACHE_GUARD:
+        cached = _DOCUMENT_CACHE.get(key)
+        if cached and cached[:2] == signature:
+            return copy.deepcopy(cached[2])
     front_matter, body = parse_front_matter(read_private_text(path))
     if not isinstance(front_matter, dict):
         return None
     result = copy.deepcopy(front_matter)
     result["_body"] = body.strip()
+    with _DOCUMENT_CACHE_GUARD:
+        _DOCUMENT_CACHE[key] = (signature[0], signature[1], copy.deepcopy(result))
+        while len(_DOCUMENT_CACHE) > _DOCUMENT_CACHE_MAX:
+            _DOCUMENT_CACHE.pop(next(iter(_DOCUMENT_CACHE)))
     return result
 
 
@@ -423,6 +446,8 @@ def _document_body(item: dict[str, Any]) -> str:
 
 def _write_document(path: Path, item: dict[str, Any]) -> None:
     payload = {key: value for key, value in item.items() if not key.startswith("_")}
+    with _DOCUMENT_CACHE_GUARD:
+        _DOCUMENT_CACHE.pop(str(path), None)
     atomic_write_private(path, build_memory_file(payload, _document_body(item)))
 
 

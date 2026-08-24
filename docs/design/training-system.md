@@ -1078,7 +1078,7 @@ Web 异步任务卡显示四段本地阶段提示：读取并校验训练事实�
 
 | Method | Path | 用途 |
 |---|---|---|
-| `GET` | `/api/training/home` | 获取训练首页实时读模型；一次请求内对重叠的活动窗口复用同一份请求级快照，setup、能力、配速和周执行投影不得重复查询相同活动范围 |
+| `GET` | `/api/training/home` | 获取训练首页实时读模型；一次请求内对重叠的活动窗口复用同一份请求级快照，setup、能力、配速和周执行投影不得重复查询相同活动范围；训练方案/记忆文档使用带 `mtime + size` 校验的进程级解析缓存，写入自动失效 |
 | `GET` | `/api/training/plan` | 获取完整训练方案和版本 |
 | `POST` | `/api/goals` | 从训练建立向导创建共享 Training Goal |
 | `POST` | `/api/training/plans` | 按 `goal_id`、已有数据和用户约束创建草稿 |
