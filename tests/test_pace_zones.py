@@ -42,6 +42,20 @@ class TestCleanPbData:
         ten_k = next(r for r in records if r.distance == "10k")
         assert ten_k.weight == 0.2  # > 180 天时效衰减
 
+    def test_fullwidth_colons_in_pb_time_are_normalized(self):
+        pbs = {
+            "5k": {"time": "18：50", "updated": TODAY.isoformat()},
+            "half_marathon": {"time": "1：30：00", "updated": TODAY.isoformat()},
+        }
+
+        effective, records, _ = clean_pb_data(pbs, today=TODAY)
+
+        assert effective is not None
+        assert next(r for r in records if r.distance == "5k").time_seconds == 1130
+        assert next(
+            r for r in records if r.distance == "half_marathon"
+        ).time_seconds == 5400
+
     def test_hm_vdot_inconsistency_penalized(self):
         pbs = {
             "5k": {"time": "24:18", "updated": TODAY.isoformat()},
@@ -197,6 +211,25 @@ class TestFallback:
              "activity_date": "2026-08-14"},
         ]
         pace, reason = fallback_from_recent_avg(activities)
+        assert pace == 340
+        assert "平均配速反推" in reason
+
+    def test_ignores_activities_with_missing_distance_or_duration(self):
+        activities = [
+            {"distance_meters": None, "duration_seconds": 1800,
+             "activity_date": "2026-08-19", "activity_type": "strength_training"},
+            {"distance_meters": 5000, "duration_seconds": None,
+             "activity_date": "2026-08-19", "activity_type": "running"},
+            {"distance_meters": 5000, "duration_seconds": 1800,
+             "activity_date": "2026-08-18", "activity_type": "running"},
+            {"distance_meters": 10000, "duration_seconds": 3600,
+             "activity_date": "2026-08-16", "activity_type": "running"},
+            {"distance_meters": 5000, "duration_seconds": 1500,
+             "activity_date": "2026-08-14", "activity_type": "running"},
+        ]
+
+        pace, reason = fallback_from_recent_avg(activities)
+
         assert pace == 340
         assert "平均配速反推" in reason
 

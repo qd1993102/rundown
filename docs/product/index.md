@@ -8,6 +8,7 @@
 | 产品文档 | 配套技术设计 | 状态 |
 |---|---|---|
 | [account.md](account.md) — 应用账号：邀请码注册、邮箱密码登录、退出登录、我的页修改密码 | [04-modules.md](../design/04-modules.md) | 已确认并实现 |
+| [user-data-archive.md](user-data-archive.md) — 服务器管理员通过独立脚本按用户昵称打包脱敏关联数据为 tar；覆盖重名消歧、敏感数据排除与机器可读结果 | [user-data-archive.md](../design/user-data-archive.md) | 已确认并实现；不纳入 neurun 主命令或 MCP |
 | [data-source-sync.md](data-source-sync.md) — Garmin、Coros、Huawei 绑定与同步；Strava OAuth 活动同步（Proposed） | [12-multi-platform.md](../design/12-multi-platform.md) | 三平台已确认并实现；Strava v1 待产品确认 |
 | [daily-report.md](daily-report.md) — 报告中心、日报、周复盘、数据完整性、目标进程与下一阶段建议 | [memory-system.md](../design/memory-system.md) | 报告主线、日报、独立周复盘与报告建议到训练待确认提案的接口/深链已实现；完整自动衔接与真实 Provider 补同步链路待验收 |
 | [share-card.md](share-card.md) — 日报与周复盘的浏览器 Canvas 分享卡、隐私白名单和 PNG 导出 | [share-card.md](../design/share-card.md) | Canvas 已实现，待真实浏览器 E2E 验收；MCP/CLI 分享卡下线，旧图片 URL 过渡为 410 |

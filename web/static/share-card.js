@@ -55,7 +55,46 @@
     return text && !FORBIDDEN_COACH_TEXT.test(text) ? text : '';
   }
 
-  function dailyCoachNotes(insight) {
+  function coachText(value, limit) {
+    var text = safeCoachText(value);
+    return limit ? Array.from(text).slice(0, limit).join('') : text;
+  }
+
+  function structuredDailyCoachNotes(insight, sessionCount) {
+    var shareCard = insight && insight.share_card;
+    if (!shareCard || typeof shareCard !== 'object') return null;
+    var hasStructuredContent = Boolean(
+      (typeof shareCard.headline === 'string' && shareCard.headline.trim()) ||
+      (Array.isArray(shareCard.sessions) && shareCard.sessions.length) ||
+      (typeof shareCard.takeaway === 'string' && shareCard.takeaway.trim()) ||
+      (typeof shareCard.conclusion === 'string' && shareCard.conclusion.trim())
+    );
+    if (!hasStructuredContent) return null;
+    var notes = [];
+    var headline = coachText(shareCard.headline, 90);
+    if (headline) {
+      notes.push({label: '训练摘要', text: headline});
+    }
+    var sessions = Array.isArray(shareCard.sessions) ? shareCard.sessions : [];
+    var seenIndexes = {};
+    sessions.slice(0, 4).forEach(function (session) {
+      if (!session || typeof session !== 'object') return;
+      var sessionIndex = Number(session.session_index);
+      var text = coachText(session.text, 70);
+      if (!text || !Number.isInteger(sessionIndex) || sessionIndex < 1) return;
+      if (sessionCount && sessionIndex > sessionCount) return;
+      if (seenIndexes[sessionIndex]) return;
+      seenIndexes[sessionIndex] = true;
+      notes.push({label: '第' + sessionIndex + '次跑步', text: text});
+    });
+    var takeaway = coachText(shareCard.takeaway, 90);
+    if (takeaway) notes.push({label: '训练提炼', text: takeaway});
+    var conclusion = coachText(shareCard.conclusion, 90) || coachText(insight.conclusion, 90);
+    if (conclusion) notes.push({label: '教练结论', text: conclusion, conclusion: true});
+    return notes;
+  }
+
+  function legacyDailyCoachNotes(insight) {
     var sources = [
       {prefix: '运动概要：', label: '运动概要'},
       {prefix: '强度分布：', label: '强度分布'},
@@ -64,16 +103,32 @@
     ];
     var observations = Array.isArray(insight.observations) ? insight.observations : [];
     var notes = [];
-    sources.forEach(function (source) {
-      var match = observations.find(function (observation) {
-        return typeof observation === 'string' && observation.trim().indexOf(source.prefix) === 0;
+    observations.forEach(function (observation) {
+      if (typeof observation !== 'string') return;
+      var value = observation.trim();
+      var sessionMatch = value.match(/^第(\d+)次跑步\s+/);
+      var sessionIndex = sessionMatch ? Number(sessionMatch[1]) : null;
+      if (sessionMatch) value = value.slice(sessionMatch[0].length);
+      var source = sources.find(function (candidate) {
+        return value.indexOf(candidate.prefix) === 0;
       });
-      var text = match ? safeCoachText(match.trim().slice(source.prefix.length)) : '';
-      if (text) notes.push({label: source.label, text: text});
+      if (!source) return;
+      var text = coachText(value.slice(source.prefix.length), 90);
+      if (text) {
+        notes.push({
+          label: sessionIndex ? '第' + sessionIndex + '次跑步 · ' + source.label : source.label,
+          text: text,
+        });
+      }
     });
-    var conclusion = safeCoachText(insight.conclusion);
+    var conclusion = coachText(insight.conclusion, 90);
     if (conclusion) notes.push({label: '教练结论', text: conclusion, conclusion: true});
     return notes;
+  }
+
+  function dailyCoachNotes(insight, sessionCount) {
+    var structured = structuredDailyCoachNotes(insight, sessionCount);
+    return structured !== null ? structured : legacyDailyCoachNotes(insight);
   }
 
   function weeklyCoachNotes(report) {
@@ -140,7 +195,7 @@
     var cadence = sessions.map(function (session) { return session.cadence; }).filter(Boolean)[0] || 0;
     var weightedPace = sessions.reduce(function (sum, session) { return sum + session.paceSeconds * session.distanceKm; }, 0);
     var insight = report.ai_insight || {};
-    var coachNotes = dailyCoachNotes(insight);
+    var coachNotes = dailyCoachNotes(insight, sessions.length);
     return {
       kind: 'daily',
       theme: PALETTES[theme] ? theme : 'sport',
@@ -218,24 +273,34 @@
     ctx.beginPath(); ctx.moveTo(20, y + .5); ctx.lineTo(355, y + .5); ctx.stroke();
   }
 
-  function wrapText(ctx, text, maxWidth, maxLines) {
+  function wrapText(ctx, text, maxWidth) {
     var lines = [];
     var line = '';
-    Array.from(String(text || '').trim()).some(function (character) {
+    Array.from(String(text || '').trim()).forEach(function (character) {
       var candidate = line + character;
       if (line && ctx.measureText(candidate).width > maxWidth) {
         lines.push(line);
         line = character;
-        return lines.length >= maxLines;
+      } else {
+        line = candidate;
       }
-      line = candidate;
+    });
+    if (line) lines.push(line);
+    return lines;
+  }
+
+  function singleLineText(ctx, text, maxWidth) {
+    var value = String(text || '').trim();
+    if (!value || ctx.measureText(value).width <= maxWidth) return value;
+    var ellipsis = '…';
+    var result = '';
+    Array.from(value).some(function (character) {
+      var candidate = result + character + ellipsis;
+      if (ctx.measureText(candidate).width > maxWidth) return true;
+      result += character;
       return false;
     });
-    if (line && lines.length < maxLines) lines.push(line);
-    if (lines.length === maxLines && ctx.measureText(String(text || '')).width > maxWidth * maxLines) {
-      lines[maxLines - 1] = lines[maxLines - 1].slice(0, -1) + '…';
-    }
-    return lines;
+    return result + ellipsis;
   }
 
   function measureCoachNotes(viewModel, ctx) {
@@ -247,7 +312,7 @@
       return {
         label: note.label,
         conclusion: conclusion,
-        lines: wrapText(ctx, note.text, 290, conclusion ? 3 : 2),
+        lines: wrapText(ctx, note.text, 290),
       };
     }).filter(function (note) { return note.lines.length; });
     var height = notes.reduce(function (total, note) {
@@ -374,7 +439,7 @@
         ctx.fill();
         ctx.fillStyle = palette.secondary;
         var label = detail.label + '  ' + (detail.distance ? detail.distance.toFixed(1) + 'km' : '') + (detail.duration ? '  ' + detail.duration : '') + (detail.pace ? '  ' + detail.pace + '/km' : '');
-        ctx.fillText(wrapText(ctx, label, 305, 1)[0] || '', 42, rowY);
+        ctx.fillText(singleLineText(ctx, label, 305), 42, rowY);
       });
     }
 

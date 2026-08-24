@@ -2,6 +2,38 @@
 
 ## [Unreleased]
 
+### Added
+
+- **改动描述**: 新增独立的单用户脱敏数据导出脚本，可按精确昵称和可选邮箱消歧，将账号白名单字段、用户数据库、memory、同步任务及专属备份打包为带 SHA-256 manifest 的未压缩 `0600` tar；永久排除 API Key、密码哈希和 Token，且不挂载到 `neurun` 主命令或 MCP。
+- **影响范围**: `src/user_data_archive.py`、`scripts/export_user_data.py`、`tests/test_user_data_archive.py`
+- **关联文档**: [技术设计](design/user-data-archive.md)、[开发过程](process/2026-08-24-user-data-tar-export.md)
+
+- **改动描述**: 日报 CoachInsight 新增结构化 `share_card` AI 精简摘要；同一次教练调用基于完整训练事实生成 headline、逐次跑步摘要、训练提炼和分享结论，并限制摘要条数与长度。
+- **影响范围**: `src/coach_runtime/schemas.py`、`src/coach_runtime/runner.py`、`prompts/skills/review-daily-training/SKILL.md`、`web/static/share-card.js`
+- **关联文档**: [分享卡产品方案](product/share-card.md)、[分享卡技术设计](design/share-card.md)、[过程记录](process/2026-08-24-structured-share-card-ai-summary.md)
+
+### Fixed
+
+- **改动描述**: 修复 PB 时间使用全角冒号（如 `18：50`）时配速清洗抛出 `ValueError` 并导致训练首页返回 503 的问题；现在统一兼容全角冒号，并跳过无法解析的单条 PB。
+- **影响范围**: `src/pace_zones.py`、`tests/test_pace_zones.py`
+- **关联文档**: [Bug 记录](bugfixes/2026-08-24-training-home-fullwidth-pb-time.md)、[模块设计](design/04-modules.md)
+
+- **改动描述**: 修复近期活动包含力量训练等无距离记录时，个人配速 fallback 将 `NULL` 直接与数字比较并导致训练首页返回 503 的问题；缺失、非法或非有限的距离/时长现在按无效样本忽略，不修改源活动数据。
+- **影响范围**: `src/pace_zones.py`、`tests/test_pace_zones.py`
+- **关联文档**: [Bug 记录](bugfixes/2026-08-24-training-home-null-activity-distance.md)、[模块设计](design/04-modules.md)
+
+- **改动描述**: 修复分享卡教练分析文字过长时被前端裁切、Canvas 限制为固定行数并显示省略号的问题；安全文本不再二次截断，改为按实际宽度完整换行，卡片高度随内容增长，仍受 2048 px 总高度上限保护。
+- **影响范围**: `web/static/share-card.js`、`tests/test_web.py`
+- **关联文档**: [Bug 记录](bugfixes/2026-08-24-share-card-coach-text-truncation.md)、[分享卡产品方案](product/share-card.md)、[分享卡技术设计](design/share-card.md)
+
+- **改动描述**: 修复多次跑步日报中逐次教练分析因 `第N次跑步` 前缀无法匹配而在分享卡全部漏展示的问题；结构化摘要优先，历史日报保留安全回退并继续执行禁止词过滤。
+- **影响范围**: `web/static/share-card.js`、`src/coach_runtime/schemas.py`、`tests/test_web.py`、`tests/test_coach_runtime.py`
+- **关联文档**: [Bug 记录](bugfixes/2026-08-24-share-card-structured-ai-summary.md)、[分享卡产品方案](product/share-card.md)
+
+- **改动描述**: 修复教练分析在 Canvas 固定行数下被省略的问题；合规 AI 摘要按实际宽度完整换行，异常或历史文本仍受防御性长度限制并受整体高度上限保护。
+- **影响范围**: `web/static/share-card.js`、`tests/test_web.py`
+- **关联文档**: [Bug 记录](bugfixes/2026-08-24-share-card-coach-text-truncation.md)、[分享卡技术设计](design/share-card.md)
+
 ### Changed
 
 - **改动描述**: 分享卡三项训练统计的数值与标签改为按各自等宽栏位居中对齐，消除左侧偏重。

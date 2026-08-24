@@ -1,7 +1,7 @@
 # 技术设计 — 分享卡浏览器 Canvas 生成
 
-> 版本: v1.1 · 日期: 2026-08-23
-> 状态: 已实现，待真实浏览器 E2E 验收
+> 版本: v1.3 · 日期: 2026-08-24
+> 状态: 结构化 AI 分享摘要已实现，待真实浏览器 E2E 验收
 > 产品真相源: [产品方案 — 分享卡](../product/share-card.md)
 
 ## 1. 设计目标与约束
@@ -107,12 +107,12 @@ Canvas 卡片是独立视觉产物。实现不得使用 `drawImage(document...)`
 
 Adapter 必须创建新对象，禁止把原报告对象透传给布局或绘制函数。允许字段如下：
 
-- 日报：日期、跑步活动标签、距离、时长、平均配速、平均步频、强度分布、四类安全 AI 观察（运动概要、强度分布、跑步动力学、跑步分析）、安全 AI 结论、主题。
+- 日报：日期、跑步活动标签、距离、时长、平均配速、平均步频、结构化 AI 分享摘要（headline、逐次 session 摘要、takeaway、conclusion）、旧日报兼容观察、安全 AI 结论、主题。
 - 周复盘：周 ID/范围、跑量、最长单次、平均配速、跑步天数、跑量趋势、质量课事实、三类安全 AI 观察（概览、质量课、近期变化）、安全 AI 结论、主题。
 
 禁止进入 ViewModel 的字段：睡眠、HRV、静息心率、身体电量、恢复评分、训练准备度、ACWR、风险标记、异常提醒、训练建议、方案执行状态、用户昵称、邮箱、Provider 账号和 API Key。
 
-Adapter 必须先按来源白名单选取 AI 文本，再对每条候选文本执行禁止词过滤。包含“睡眠”“恢复”“HRV”“ACWR”“风险”“警告”“异常”或“建议”的文本整体丢弃，大小写不影响英文缩写判断；`warnings`、`recommendations`、`recovery_and_risk` 和 `next_week` 不得读取。无安全观察且无安全结论时，Canvas 不绘制 AI 教练区块。
+Adapter 必须优先读取日报 `ai_insight.share_card`，不得把完整报告对象或 `observations` 原文透传给 Canvas。模型生成的 `share_card.sessions` 最多 4 条，每条包含正整数、唯一且对应真实跑步 session 的 `session_index`，以及最多 70 个字符的 AI 精简摘要；headline、takeaway、conclusion 各最多 90 个字符。合规摘要按 Canvas 实测宽度完整换行；前端仅对绕过 Schema 的异常或历史字段保留防御性长度上限。所有文本仍执行禁止词过滤，包含“睡眠”“恢复”“HRV”“ACWR”“风险”“警告”“异常”或“建议”的整条文本整体丢弃，大小写不影响英文缩写判断。`warnings`、`recommendations`、`recovery_and_risk` 和 `next_week` 不得读取。旧日报缺少 `share_card` 时，Adapter 才按兼容规则识别 `第N次跑步` 后的安全观察。无安全摘要且无安全结论时，Canvas 不绘制 AI 教练区块。
 
 PNG 不包含 metadata 扩展，不上传或写入服务端。Object URL 在预览关闭、被替换和页面卸载时调用 `URL.revokeObjectURL()`；Canvas 不引用跨域图片或字体，避免 tainted canvas 和隐式第三方请求。
 
@@ -123,7 +123,7 @@ PNG 不包含 metadata 扩展，不上传或写入服务端。Object URL 在预�
 - 逻辑宽度固定为 375 px；物理像素缩放固定为 3，导出宽度为 1125 px。
 - 先按逻辑像素测量全部区块，再一次性设置 Canvas 宽高并绘制；不得边绘制边扩容，因为修改尺寸会清空画布。
 - 逻辑高度由内容决定，上限为 2048 px；超出时返回 `content_too_tall`，不得截断或输出部分图片。
-- AI 结论最多 4 行，活动名最多 1 行；均使用 `measureText()` 按实际宽度截断并添加省略号。
+- 教练分析文字使用 `measureText()` 按实际宽度完整换行，不添加省略号；活动名最多 1 行，超出部分才使用 `measureText()` 截断并添加省略号。
 - 日报文件名为 `neurun-daily-YYYY-MM-DD.png`；周复盘文件名为 `neurun-weekly-YYYY-Www.png`。
 - 导出前校验 Canvas 宽高、2D context 和 Blob；任何一项失败均不得进入预览就绪状态。
 
@@ -165,9 +165,9 @@ stateDiagram-v2
 
 ### 6.1 单元和合同测试
 
-- Daily Adapter：多活动排序、非跑步过滤、L0/L1、省略步频、AI 结论有无、禁止字段不进入 ViewModel。
+- Daily Adapter：多活动排序、非跑步过滤、L0/L1、省略步频、结构化 share_card 多 session 全量保留、摘要长度与禁止字段过滤、旧日报前缀回退、AI 结论有无、禁止字段不进入 ViewModel。
 - Weekly Adapter：跑量字段、趋势有无、质量课逐项、零质量课文案、AI 结论有无、禁止字段不进入 ViewModel。
-- 布局：长中文、长活动名、4 行结论、2048 px 边界、超过上限整体失败。
+- 布局：长教练文本完整换行且不含省略号、长活动名保持单行省略、2048 px 边界、超过上限整体失败。
 - 编码：Blob MIME 为 `image/png`，物理宽度 1125 px，空 Blob 失败。
 - 状态：重复点击 singleflight、分享成功、能力不支持下载、用户取消不下载、Object URL 全路径释放。
 - API：两个报告数据接口的现有合同回归；旧路由未鉴权 `401`、已鉴权 `410`、固定错误码、JSON Content-Type、`no-store`。

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import date
+import re
 from typing import Any, Callable
 
 
@@ -20,6 +21,68 @@ def _list(value: Any, field: str) -> list[Any]:
     if not isinstance(value, list):
         raise SkillSchemaError(f"{field} 必须是数组")
     return value
+
+
+def _bounded_text(value: Any, limit: int) -> str:
+    return str(value or "").strip()[:limit]
+
+
+_SHARE_CARD_FORBIDDEN_TEXT = re.compile(
+    r"睡眠|恢复|hrv|acwr|风险|警告|异常|建议",
+    re.IGNORECASE,
+)
+
+
+def _share_card_text(value: Any, limit: int) -> str:
+    text = _bounded_text(value, limit)
+    return "" if _SHARE_CARD_FORBIDDEN_TEXT.search(text) else text
+
+
+def _validate_share_card(value: Any) -> dict[str, Any]:
+    """Normalize the optional AI-generated share-card summary contract."""
+    if value is None:
+        value = {}
+    item = _mapping(value, "share_card")
+    sessions: list[dict[str, Any]] = []
+    session_indexes: set[int] = set()
+    for index, raw_session in enumerate(_list(item.get("sessions", []), "share_card.sessions")):
+        if len(sessions) >= 4:
+            break
+        session = _mapping(raw_session, f"share_card.sessions[{index}]")
+        raw_session_index = session.get("session_index")
+        if isinstance(raw_session_index, bool):
+            raise SkillSchemaError(
+                f"share_card.sessions[{index}].session_index 无效"
+            )
+        if isinstance(raw_session_index, float) and not raw_session_index.is_integer():
+            raise SkillSchemaError(
+                f"share_card.sessions[{index}].session_index 必须为整数"
+            )
+        try:
+            session_index = int(raw_session_index)
+        except (TypeError, ValueError) as exc:
+            raise SkillSchemaError(
+                f"share_card.sessions[{index}].session_index 无效"
+            ) from exc
+        if session_index <= 0:
+            raise SkillSchemaError(
+                f"share_card.sessions[{index}].session_index 必须为正整数"
+            )
+        if session_index in session_indexes:
+            raise SkillSchemaError(
+                f"share_card.sessions[{index}].session_index 不能重复"
+            )
+        session_indexes.add(session_index)
+        sessions.append({
+            "session_index": session_index,
+            "text": _share_card_text(session.get("text"), 70),
+        })
+    return {
+        "headline": _share_card_text(item.get("headline"), 90),
+        "sessions": sessions,
+        "takeaway": _share_card_text(item.get("takeaway"), 90),
+        "conclusion": _share_card_text(item.get("conclusion"), 90),
+    }
 
 
 _WEEKDAY_NAMES = {
@@ -207,6 +270,7 @@ def validate_coach_insight(value: Any) -> dict[str, Any]:
         "observations": [str(part) for part in _list(item.get("observations", []), "observations")],
         "recommendations": [str(part) for part in _list(item.get("recommendations", []), "recommendations")],
         "warnings": [str(part) for part in _list(item.get("warnings", []), "warnings")],
+        "share_card": _validate_share_card(item.get("share_card")),
         "plan_adjusted": False,
         "session_summary": str(item.get("session_summary") or ""),
         "session_characteristics": [

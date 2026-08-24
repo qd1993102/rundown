@@ -110,14 +110,15 @@ def _compute_vdot(distance_m: float, time_seconds: float) -> float:
 
 
 def _parse_time(time_str: str) -> float:
-    """解析 '1:56:47' 或 '24:18' 为秒数。"""
-    parts = time_str.strip().split(":")
+    """解析 '1:56:47' 或 '24:18' 为秒数，兼容全角冒号。"""
+    normalized = str(time_str).strip().replace("：", ":")
+    parts = normalized.split(":")
     if len(parts) == 3:
         return int(parts[0]) * 3600 + int(parts[1]) * 60 + float(parts[2])
     elif len(parts) == 2:
         return int(parts[0]) * 60 + float(parts[1])
     else:
-        return float(time_str)
+        return float(normalized)
 
 
 def clean_pb_data(
@@ -142,8 +143,13 @@ def clean_pb_data(
         time_str = raw.get("time") if isinstance(raw, dict) else str(raw)
         if not time_str:
             continue
-        time_sec = _parse_time(time_str)
-        if time_sec <= 0:
+        try:
+            time_sec = _parse_time(time_str)
+        except (TypeError, ValueError):
+            warnings.append(f"忽略无法解析的 {dist_key} PB 时间")
+            continue
+        if not math.isfinite(time_sec) or time_sec <= 0:
+            warnings.append(f"忽略无效的 {dist_key} PB 时间")
             continue
 
         updated_str = raw.get("updated") if isinstance(raw, dict) else ""
@@ -426,9 +432,18 @@ def fallback_from_recent_avg(
     if not activities:
         return None, "无任何跑步记录"
 
-    running = [a for a in activities
-               if a.get("distance_meters", 0) >= 3000
-               and a.get("duration_seconds", 0) > 0]
+    def finite_number(value: Any) -> float:
+        try:
+            number = float(value)
+        except (TypeError, ValueError):
+            return 0.0
+        return number if math.isfinite(number) else 0.0
+
+    running = [
+        a for a in activities
+        if finite_number(a.get("distance_meters")) >= 3000
+        and finite_number(a.get("duration_seconds")) > 0
+    ]
     running.sort(key=lambda a: str(a.get("activity_date", "")), reverse=True)
     recent = running[:3]
 
@@ -437,8 +452,8 @@ def fallback_from_recent_avg(
 
     paces = []
     for act in recent:
-        d = act.get("distance_meters", 0)
-        t = act.get("duration_seconds", 0)
+        d = finite_number(act.get("distance_meters"))
+        t = finite_number(act.get("duration_seconds"))
         if d > 0 and t > 0:
             paces.append(t / (d / 1000))
 

@@ -13,6 +13,7 @@ from src.coach_runtime import (
     SkillRegistry,
 )
 from src.coach_runtime.runner import SkillRunError
+from src.coach_runtime.schemas import validate_output
 
 
 class FakeModel:
@@ -103,6 +104,63 @@ def test_default_registry_loads_all_internal_skill_packages():
     assert registry.get("review-training-plan").output_model == "TrainingPlanReview"
     assert "不得把基础期重新排到后面" in registry.load_prompt("review-training-plan")
     assert registry.get("revise-training-scheme").version == "1.5.0"
+
+
+def test_coach_insight_share_card_is_bounded_and_optional():
+    result = validate_output("CoachInsight", {
+        "plan_execution": {},
+        "share_card": {
+            "headline": "标题" * 100,
+            "sessions": [
+                {"session_index": 1, "text": "摘要" * 100},
+                {"session_index": 2, "text": "第二条"},
+                {"session_index": 3, "text": "第三条"},
+                {"session_index": 4, "text": "第四条"},
+                {"session_index": 5, "text": "超出上限"},
+            ],
+            "takeaway": "提炼" * 100,
+            "conclusion": "结论" * 100,
+        },
+    })
+
+    share_card = result["share_card"]
+    assert len(share_card["headline"]) == 90
+    assert len(share_card["sessions"]) == 4
+    assert len(share_card["sessions"][0]["text"]) == 70
+    assert len(share_card["takeaway"]) == 90
+    assert len(share_card["conclusion"]) == 90
+
+    missing = validate_output("CoachInsight", {"plan_execution": {}})
+    assert missing["share_card"] == {
+        "headline": "", "sessions": [], "takeaway": "", "conclusion": "",
+    }
+
+    privacy = validate_output("CoachInsight", {
+        "plan_execution": {},
+        "share_card": {
+            "headline": "恢复风险不应持久化",
+            "sessions": [{"session_index": 1, "text": "配速稳定。"}],
+            "takeaway": "建议减少训练。",
+            "conclusion": "状态良好。",
+        },
+    })
+    assert privacy["share_card"] == {
+        "headline": "",
+        "sessions": [{"session_index": 1, "text": "配速稳定。"}],
+        "takeaway": "",
+        "conclusion": "状态良好。",
+    }
+
+    with pytest.raises(ValueError, match="不能重复"):
+        validate_output("CoachInsight", {
+            "plan_execution": {},
+            "share_card": {
+                "sessions": [
+                    {"session_index": 1, "text": "一次"},
+                    {"session_index": 1, "text": "重复"},
+                ],
+            },
+        })
 
 
 def test_runner_loads_only_one_explicit_skill():

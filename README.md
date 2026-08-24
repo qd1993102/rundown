@@ -648,6 +648,23 @@ output/
 | `NEURUN_AI_WAIT_TIMEOUT_SECONDS` | Web | `5` | AI 执行槽位暂满时不占线程等待的最长秒数 |
 | `NEURUN_AI_DEBUG_PROMPTS` | 本地调试 | `false` | 仅用于在终端输出训练草稿两次 AI 调用的完整 Prompt 与事实载荷；含用户训练事实，严禁线上启用 |
 
+## 单用户脱敏数据导出
+
+服务器本地管理员可使用独立脚本，按应用账号昵称生成未压缩 `.tar`。该能力不属于 `neurun` 主命令，也不注册 MCP tool：
+
+```bash
+python scripts/export_user_data.py \
+  --nickname "Runner" \
+  --destination /secure/existing-directory \
+  --output json
+```
+
+`--nickname` 和 `--destination` 必填；目标目录必须已存在且可写。昵称在两端去空白后执行 Unicode 精确、区分大小写匹配。昵称重名时增加 `--email <应用账号邮箱>` 消歧。`--output` 支持 `table`（默认）和适合自动化调用的单行 `json`。
+
+脚本读取 `NEURUN_DATA_DIR`（兼容 `RUNDOWN_DATA_DIR`，默认项目根目录 `data/`），只包含脱敏账号字段、用户 `data.db`、`memory/` regular files、可选 `sync-tasks.json` 和该用户对应的共享备份。归档路径不会暴露 API Key，最终文件名使用随机请求 ID 与 UTC 时间，权限为 `0600`。
+
+导出永久排除 API Key、密码哈希、`garmin_email`、`tokens/`、`huawei-tokens/`、Provider 凭据、其他用户数据、邀请码、配置、日志、源码、symlink 和特殊文件。`data.db` 缺失、源文件读取期间变化或发现不安全成员时会失败，不生成可误认为成功的归档。完整格式、manifest 和退出码见 [技术设计](docs/design/user-data-archive.md)。
+
 AI 配置写在项目根目录 `.env`（可从 [.env.example](.env.example) 复制）或部署环境变量中。例如：
 
 ```dotenv

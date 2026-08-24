@@ -1,7 +1,7 @@
 # 产品方案 — 分享卡
 
-> 版本: v1.5 · 日期: 2026-08-23
-> 状态: Canvas 与安全 AI 观察白名单已实现，待真实浏览器 E2E 验收
+> 版本: v1.7 · 日期: 2026-08-24
+> 状态: Canvas 与结构化 AI 分享摘要已实现，待真实浏览器 E2E 验收
 > 配套技术设计: [分享卡浏览器 Canvas 生成](../design/share-card.md)
 
 > 视觉规范: 分享卡采用“跑步日志页”视觉。页眉标识报告周期，居中距离为主信息，三项训练指标使用分栏记录；一条低饱和虚线路线连接起点与终点。AI 教练区把训练观察作为紧凑证据行，把结论作为独立、较大的收束句；三主题颜色、系统字体栈、10px 工具标签和 10px 圆角与整站设计 token 对齐。视觉服务于跑步记录的可读性，不使用页面截图、渐变背景或装饰性插图。
@@ -17,7 +17,7 @@
 - **In-Scope**:
   1. 日报详情和周复盘归档中的分享入口。
   2. 基于页面已加载报告 JSON 构造白名单数据，并用浏览器 Canvas 2D 专门绘制分享卡；不截取页面 DOM。
-  3. 日报分享卡展示当日跑步事实，以及 AI 观察中的运动概要、强度分布、跑步动力学、跑步分析和结论；周复盘分享卡展示自然周跑步汇总，以及概览、质量课、近期变化和结论。
+  3. 日报分享卡展示当日跑步事实，以及日报生成时由 AI 基于完整训练事实提炼的结构化分享摘要；周复盘分享卡展示自然周跑步汇总，以及概览、质量课、近期变化和结论。
   4. Canvas 生成 PNG、本地预览、支持文件分享时调用系统分享面板、不支持时下载 PNG。
   5. `fresh`、`sport`、`dark` 三种主题跟随当前 Web 主题。
   6. 保持 `GET /api/dashboard` 与 `GET /api/reports/weekly` 的 URL、鉴权和既有 JSON 响应合同不变。
@@ -46,8 +46,10 @@
   - And 主活动为距离最长的跑步活动，其余跑步活动按距离降序全部列入“当日其他训练”
   - And 卡片展示训练类型、距离、时长和配速；有步频时展示步频，无步频时指标列从 3 列变为 2 列
   - And L1 数据展示强度分布，L0 数据不展示强度分布
-  - And `ai_insight.observations` 中以“运动概要：”“强度分布：”“跑步动力学：”或“跑步分析：”开头的观察允许进入 AI 教练区块，其他类别观察不进入分享卡
-  - And 有 `ai_insight.conclusion` 时允许展示 AI 教练结论，无安全观察且无结论时省略 AI 教练区块
+  - And 优先读取 `ai_insight.share_card` 中由 AI 基于完整训练事实生成的 `headline`、逐次 `sessions`、`takeaway` 和 `conclusion`，不依赖中文观察前缀
+  - And `share_card.sessions` 最多展示 4 条，每次跑步最多 1 条，每条摘要最多 70 个中文字符，其他摘要文本最多 90 个字符
+  - And `ai_insight.share_card` 缺失时，兼容读取旧日报的安全运动观察；旧观察中的 `第N次跑步` 前缀必须可以被识别
+  - And 有安全 `share_card.conclusion` 或 `ai_insight.conclusion` 时允许展示教练结论，无安全摘要且无结论时省略 AI 教练区块
   - And `ai_insight.warnings` 与 `ai_insight.recommendations` 始终不读取
   - Given 同一日报的 AI 观察同时包含允许类别和恢复、HRV、ACWR、风险、警告、异常提醒或训练建议
   - When 浏览器构造日报分享卡
@@ -94,7 +96,7 @@
   - Given 报告 JSON 同时包含允许的训练观察，以及睡眠、HRV、恢复、风险、警告、异常提醒和建议数据
   - When 浏览器构造分享卡数据并绘制 PNG
   - Then 分享卡数据对象和绘制调用中均不存在睡眠、HRV、静息心率、身体电量、恢复评分、训练准备度、ACWR、风险标记、警告、异常提醒、方案执行状态或训练建议
-  - And 日报 AI 文本仅来自运动概要、强度分布、跑步动力学、跑步分析和结论，周复盘 AI 文本仅来自概览、质量课、近期变化和结论
+  - And 日报 AI 文本优先来自结构化 `share_card` 摘要；旧日报回退时仅来自运动概要、强度分布、跑步动力学、跑步分析和结论，周复盘 AI 文本仅来自概览、质量课、近期变化和结论
   - And 即使文本来自允许来源，只要单条文本包含“睡眠”“恢复”“HRV”“ACWR”“风险”“警告”“异常”或“建议”（`HRV`、`ACWR` 不区分大小写），该条文本必须整体剔除，不得部分截取后展示
   - And PNG Blob 只存在当前浏览器内，不上传服务器，不写入服务端临时文件
   - And 预览关闭或被替换后释放对应 Object URL
@@ -148,7 +150,7 @@
   3. 无跑步活动: 不生成空卡或休息日卡，使用对应的明确提示文案。
   4. 多活动日: 只保留跑步活动；按距离降序，最长为主活动，其余全部展示。
   5. 缺失可选指标: 省略对应指标或区块，不显示 `null`、`undefined`、`NaN`、`0'00\"/km` 等占位错误。
-  6. 文本过长: AI 结论最多绘制 4 行，每行按 Canvas 实测宽度换行，超出部分以省略号结束；活动名称最多 1 行，超出部分以省略号结束。
+  6. 文本过长: AI 摘要在 CoachInsight Schema 阶段限制长度；Canvas 对合规摘要按实测宽度完整换行，不因固定行数添加省略号。对绕过 Schema 的异常或历史字段保留前端防御性长度限制；活动名称等事实标签最多 1 行，超出部分以省略号结束。
   7. 内容过高: 逻辑高度最大 2048 px；超过时整体失败且不导出部分图片。
   8. 重复点击: “生成中”期间忽略后续点击，只允许一个生成任务；完成、失败或取消后恢复入口。
   9. 主题切换: 每次生成读取点击时的当前主题；已打开的预览不随主题切换重绘，下次生成使用新主题。
@@ -156,13 +158,14 @@
   11. Object URL 生命周期: 新预览替换旧预览或关闭弹窗时立即释放；页面卸载时释放剩余 URL。
   12. 旧图片路由: 登录用户固定返回 `410` JSON；不得按日期、主题或报告存在性继续渲染图片。
   13. AI 观察为空: 保留训练事实卡；日报四类安全观察或周报三类安全观察全部缺失时，只在有安全结论时展示 AI 教练区块。
-  14. AI 观察混合: 先应用允许来源白名单，再逐条检查禁止词；包含“睡眠”“恢复”“HRV”“ACWR”“风险”“警告”“异常”或“建议”的整条文本不展示，禁止规则优先级高于来源白名单。
+  14. AI 观察混合: 结构化分享摘要优先；无结构化摘要时再应用旧来源白名单。所有候选文本都必须执行禁止词过滤；包含“睡眠”“恢复”“HRV”“ACWR”“风险”“警告”“异常”或“建议”的整条文本不展示，禁止规则优先级高于来源白名单。
+  15. AI 分享摘要: 日报生成时一次教练调用同时产出完整 `CoachInsight` 和 `share_card`；`share_card` 只描述训练成果，不包含恢复、健康风险或训练建议。模型漏传该字段时按空摘要兼容，前端可使用旧日报安全回退。
 
 ## 4. 数据实体草案
 
 - **ShareCardRequest**: { card_type: Enum(daily/weekly), Required: Yes; reference_date: String(YYYY-MM-DD), Required: Yes; theme: Enum(fresh/sport/dark), Required: Yes }
 - **ShareCardActivity**: { label: String, Required: Yes; distance_km: Number, Required: Yes; duration_seconds: Int, Required: Yes; average_pace_seconds_per_km: Int, Required: No; average_cadence_spm: Int, Required: No; intensity_distribution: Object<String, Number>, Required: No }
-- **DailyShareCardData**: { kind: Enum(daily), Required: Yes; report_date: String(YYYY-MM-DD), Required: Yes; primary_activity: ShareCardActivity, Required: Yes; additional_activities: Array<ShareCardActivity>, Required: Yes; coach_observations: Array<String (运动概要/强度分布/跑步动力学/跑步分析)>, Required: No; ai_conclusion: String, Required: No; theme: Enum(fresh/sport/dark), Required: Yes }
+- **DailyShareCardData**: { kind: Enum(daily), Required: Yes; report_date: String(YYYY-MM-DD), Required: Yes; primary_activity: ShareCardActivity, Required: Yes; additional_activities: Array<ShareCardActivity>, Required: Yes; coach_summary: Object(headline/sessions/takeaway/conclusion), Required: No; coach_observations: Array<String (旧日报兼容回退)>, Required: No; ai_conclusion: String, Required: No; theme: Enum(fresh/sport/dark), Required: Yes }
 - **WeeklyQualitySession**: { date: String(YYYY-MM-DD), Required: Yes; label: String, Required: Yes; distance_km: Number, Required: No; average_pace_seconds_per_km: Int, Required: No; aerobic_effect: Number, Required: No; anaerobic_effect: Number, Required: No }
 - **WeeklyShareCardData**: { kind: Enum(weekly), Required: Yes; week_id: String(YYYY-Www), Required: Yes; week_start: String(YYYY-MM-DD), Required: Yes; week_end: String(YYYY-MM-DD), Required: Yes; running_distance_km: Number, Required: Yes; longest_run_km: Number, Required: No; average_pace_seconds_per_km: Int, Required: No; running_days: Int, Required: Yes; trend: Object, Required: No; quality_sessions: Array<WeeklyQualitySession>, Required: Yes; coach_observations: Array<String (概览/质量课/近期变化)>, Required: No; ai_conclusion: String, Required: No; theme: Enum(fresh/sport/dark), Required: Yes }
 - **ShareCardResult**: { state: Enum(preview_ready/shared/downloaded/cancelled/failed), Required: Yes; blob: Blob(image/png), Required: No; filename: String, Required: No; error_code: Enum(no_running_activity/canvas_unavailable/content_too_tall/png_encode_failed/share_failed), Required: No }

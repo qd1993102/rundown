@@ -173,7 +173,8 @@ _OUTPUT_JSON_EXAMPLES = {
         '"today_match":"status","comparison_status":"applicable",'
         '"week_completion":"summary","on_track":true,"deviation_note":""},'
         '"conclusion":"summary","observations":[],"recommendations":[],'
-        '"warnings":[],"plan_adjusted":false,"session_summary":"",'
+        '"warnings":[],"share_card":{"headline":"","sessions":[],"takeaway":"",'
+        '"conclusion":""},"plan_adjusted":false,"session_summary":"",'
         '"session_characteristics":[],"training_effect":"","recovery_response":"",'
         '"capability_signals":[],"next_day_constraints":[],"evidence":[],"gaps":[],"confidence":0.5}'
     ),

@@ -961,6 +961,45 @@ def test_daily_templates_are_mobile_first_and_support_local_png_export():
     assert "function modeBannerMarkup" not in training
 
 
+def test_share_card_renders_long_coach_text_without_ellipsis():
+    script = """
+const fs = require('fs');
+global.window = {};
+const calls = [];
+const ctx = {
+  measureText: text => ({width: Array.from(String(text)).length * 7}),
+  scale() {}, fillRect() {}, beginPath() {}, roundRect() {}, fill() {}, save() {},
+  restore() {}, setLineDash() {}, moveTo() {}, bezierCurveTo() {}, stroke() {},
+  arc() {}, lineTo() {}, fillText(text) { calls.push(String(text)); },
+};
+const canvas = {
+  getContext: () => ctx,
+  toBlob: callback => callback(new Blob(['png'], {type: 'image/png'})),
+};
+global.window.document = {createElement: () => canvas};
+global.document = global.window.document;
+eval(fs.readFileSync('web/static/share-card.js', 'utf8'));
+const longText = '训练节奏稳定'.repeat(30);
+(async () => {
+  await window.NeurunShareCard.createShareCard({
+    type: 'daily', theme: 'sport', report: {
+      report_date: '2026-08-23',
+      daily_activities: {sessions: [{type: 'running', name: '跑步', distance_km: 8, duration_seconds: 2700}]},
+      ai_insight: {share_card: {headline: longText, sessions: [], takeaway: '', conclusion: ''}},
+    },
+  });
+  process.stdout.write(JSON.stringify({calls, longText}));
+})().catch(error => { console.error(error); process.exit(1); });
+"""
+    result = subprocess.run(
+        ["node", "-e", script], check=True, capture_output=True, text=True,
+    )
+    rendered = json.loads(result.stdout)
+    assert "…" not in "".join(rendered["calls"])
+    assert rendered["longText"][:41] in rendered["calls"]
+    assert rendered["longText"][82:90] in rendered["calls"]
+
+
 def test_share_card_keeps_only_safe_daily_coach_observations():
     view_model = _share_card_view_model("daily", {
         "report_date": "2026-08-23",
@@ -991,6 +1030,134 @@ def test_share_card_keeps_only_safe_daily_coach_observations():
     assert "HRV" not in serialized
     assert "警告" not in serialized
     assert "建议" not in serialized
+
+
+def test_share_card_prefers_ai_generated_structured_summaries():
+    view_model = _share_card_view_model("daily", {
+        "report_date": "2026-08-23",
+        "daily_activities": {"sessions": [
+            {"type": "running", "name": "晨跑", "distance_km": 16.5,
+             "duration_seconds": 5979, "pace_sec_per_km": 362},
+            {"type": "running", "name": "晚跑", "distance_km": 10.0,
+             "duration_seconds": 3238, "pace_sec_per_km": 324},
+        ]},
+        "ai_insight": {
+            "observations": ["运动概要：旧格式不应覆盖结构化摘要。"],
+            "conclusion": "旧结论作为结构化结论缺失时的安全回退。",
+            "share_card": {
+                "headline": "双跑完成 26.5 km，第二次跑步配速更快。",
+                "sessions": [
+                    {"session_index": 1, "text": "16.5 km 有氧跑，配速稳定，步频保持良好。"},
+                    {"session_index": 2, "text": "10.0 km 配速更快，后程心率漂移明显。"},
+                ],
+                "takeaway": "当天训练完成度高，两次跑步形成递进刺激。",
+                "conclusion": "训练量充足，第二次跑步更能体现疲劳变化。",
+            },
+        },
+    })
+
+    assert [note["label"] for note in view_model["coachNotes"]] == [
+        "训练摘要", "第1次跑步", "第2次跑步", "训练提炼", "教练结论",
+    ]
+    assert view_model["coachNotes"][1]["text"].startswith("16.5 km")
+    assert "旧格式" not in json.dumps(view_model, ensure_ascii=False)
+
+
+def test_share_card_drops_forbidden_structured_summary_without_dropping_other_sessions():
+    view_model = _share_card_view_model("daily", {
+        "report_date": "2026-08-23",
+        "daily_activities": {"sessions": [
+            {"type": "running", "name": "晨跑", "distance_km": 8,
+             "duration_seconds": 2700},
+            {"type": "running", "name": "晚跑", "distance_km": 8,
+             "duration_seconds": 2700},
+        ]},
+        "ai_insight": {
+            "share_card": {
+                "sessions": [
+                    {"session_index": 1, "text": "恢复不足，今天不宜训练。"},
+                    {"session_index": 2, "text": "8 km 配速稳定，技术节奏保持良好。"},
+                ],
+                "takeaway": "建议减少训练。",
+                "conclusion": "训练节奏稳定。",
+            },
+        },
+    })
+
+    assert [note["label"] for note in view_model["coachNotes"]] == [
+        "第2次跑步", "教练结论",
+    ]
+    serialized = json.dumps(view_model, ensure_ascii=False)
+    assert "恢复" not in serialized
+    assert "建议" not in serialized
+
+
+def test_share_card_validates_session_indexes_and_fallback_conclusion_length():
+    view_model = _share_card_view_model("daily", {
+        "report_date": "2026-08-23",
+        "daily_activities": {"sessions": [
+            {"type": "running", "name": "晨跑", "distance_km": 8, "duration_seconds": 2700},
+            {"type": "running", "name": "晚跑", "distance_km": 8, "duration_seconds": 2700},
+        ]},
+        "ai_insight": {
+            "share_card": {
+                "sessions": [
+                    {"session_index": 1, "text": "第一次"},
+                    {"session_index": 1, "text": "重复序号"},
+                    {"session_index": 99, "text": "不存在的训练"},
+                    {"session_index": 2, "text": "第二次"},
+                ],
+            },
+            "conclusion": "结论" * 100,
+        },
+    })
+
+    assert [note["label"] for note in view_model["coachNotes"]] == [
+        "第1次跑步", "第2次跑步", "教练结论",
+    ]
+    assert len(view_model["coachNotes"][-1]["text"]) == 90
+
+
+def test_share_card_legacy_daily_observations_support_session_prefixes():
+    view_model = _share_card_view_model("daily", {
+        "report_date": "2026-08-23",
+        "daily_activities": {"sessions": [{
+            "type": "running", "name": "跑步", "distance_km": 8,
+            "duration_seconds": 2700,
+        }]},
+        "ai_insight": {
+            "observations": [
+                "第1次跑步 强度分布：配速稳定。",
+                "第2次跑步 强度分布：后程略快。",
+            ],
+            "conclusion": "训练完成。",
+        },
+    })
+
+    assert [note["label"] for note in view_model["coachNotes"]] == [
+        "第1次跑步 · 强度分布", "第2次跑步 · 强度分布", "教练结论",
+    ]
+
+
+def test_share_card_empty_structured_summary_falls_back_to_legacy_observations():
+    view_model = _share_card_view_model("daily", {
+        "report_date": "2026-08-23",
+        "daily_activities": {"sessions": [{
+            "type": "running", "name": "跑步", "distance_km": 8,
+            "duration_seconds": 2700,
+        }]},
+        "ai_insight": {
+            "share_card": {
+                "headline": "", "sessions": [], "takeaway": "", "conclusion": "",
+            },
+            "observations": ["第1次跑步 跑步分析：后程配速稳定。"],
+            "conclusion": "训练完成。",
+        },
+    })
+
+    assert [note["label"] for note in view_model["coachNotes"]] == [
+        "第1次跑步 · 跑步分析", "教练结论",
+    ]
 
 
 def test_share_card_keeps_only_safe_weekly_coach_observations():

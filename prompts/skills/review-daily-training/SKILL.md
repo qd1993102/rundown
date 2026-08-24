@@ -22,6 +22,8 @@ description: 汇总指定日期的训练、恢复、当前方案执行和可操�
    四块之间同一事实只出现一次，不与 `conclusion`/`warnings`/`recommendations` 重复强调；低置信结构判定不得表述为确定结论。
 8. `daily_facts.athlete_context` 是训练域固化的只读能力背景：可持续周跑量参考、长距离参考、近期参考配速、历史已证能力与中断背景、负荷边界、置信度与 `facts_cutoff`。用它解释当日/近期负荷相对个人可持续容量的相对位置；不得重新计算能力画像。能力字段为 0、null 或缺失，`status=unavailable`，或 `confidence=low` 时，相关能力/负荷相对结论保持未知，不得编造能力数值。
 9. 同一次输出同时填充 `session_summary`、`session_characteristics`、`training_effect`、`recovery_response`、`capability_signals`、`next_day_constraints`、结构化 `evidence`、`gaps` 和 `confidence`。`session_characteristics` 最多 5 项，每项必须包含中文结论、1–3 个关键数据和 evidence 来源；不要只输出“有氧/节奏”标签。
-10. 严格输出 `CoachInsight`：包含 `plan_execution`、`conclusion`、`observations`、`recommendations`、`warnings` 和恒为 `false` 的 `plan_adjusted`。
+10. 严格输出 `CoachInsight`：包含 `plan_execution`、`conclusion`、`observations`、`recommendations`、`warnings`、`share_card` 和恒为 `false` 的 `plan_adjusted`。
+11. 在同一次输出中生成 `share_card`，它是基于完整训练事实的 AI 精简提炼，不是对 `observations` 的字符串复制。`share_card` 固定包含 `headline`、`sessions`、`takeaway` 和 `conclusion`：每个跑步 session 最多一条摘要，`sessions` 最多 4 条，每条摘要最多 70 个中文字符，其他文本最多 90 个字符。每条摘要必须引用已有训练事实，优先保留距离/配速/强度/步频/步幅/动力学/有氧漂移等运动表现信息；不得编造、不得依赖“第 N 次跑步 强度分布：”等中文前缀格式。
+12. `share_card` 只允许描述可分享的训练成果，不得包含睡眠、恢复、HRV、ACWR、风险、警告、异常或训练建议；不得读取或改写 `warnings`、`recommendations`、`recovery`、`next_day_constraints`。即使完整观察中包含这些字段，也必须在分享摘要中省略。没有足够安全事实时返回空字符串或空数组，不要补造内容。
 
-完成条件：结论只引用报告日期事实；数据缺失明确保留未知；没有生效方案时 `plan_execution.comparison_status=not_applicable`；输出不包含工具请求或训练方案写入；含间歇/变速/混合课型且 `work_recovery_groups` 非空时，`observations` 的运动概要必须逐组列出每组配速明细（不允许只写“N 组快慢交替”而不列每组配速）；`session_summary.effect` 可用时运动概要必须给出训练效果解释，估算值带“估算，依据心率/配速”标注。
+完成条件：结论只引用报告日期事实；数据缺失明确保留未知；没有生效方案时 `plan_execution.comparison_status=not_applicable`；输出不包含工具请求或训练方案写入；含间歇/变速/混合课型且 `work_recovery_groups` 非空时，`observations` 的运动概要必须逐组列出每组配速明细（不允许只写“N 组快慢交替”而不列每组配速）；`session_summary.effect` 可用时运动概要必须给出训练效果解释，估算值带“估算，依据心率/配速”标注；`share_card` 必须是独立的短摘要对象，并满足上述条数、长度和隐私规则。
